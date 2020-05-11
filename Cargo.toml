@@ -1,0 +1,40 @@
+[package]
+authors = ["Bryant Luk <code@bryantluk.com>"]
+description = "A sloppy distributed hash table library"
+edition = "2021"
+include = [
+  "src/**/*.rs",
+  "Cargo.toml",
+  "README.md",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+]
+license = "MIT OR Apache-2.0"
+name = "sloppy"
+readme = "README.md"
+repository = "https://github.com/bluk/sloppy"
+rust-version = "1.70.0"
+version = "0.1.0"
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.6"
+bt_bencode = { version = "0.7", default-features = false }
+clap = { version = "4.4.7", features = ["derive", "env"] }
+cloudburst = { version = "0.0.4" }
+rand = "0.8"
+serde = { version = "1", default-features = false }
+serde_bytes = "0.11"
+serde_derive = { version = "1", default-features = false }
+serde_json = { version = "1", default-features = false }
+thiserror = "1.0"
+tokio = { version = "1.25.0", features = ["macros", "net", "rt", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libsystemd = "0.6.0"
+tracing-journald = "0.3.0"
