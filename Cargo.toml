@@ -1,0 +1,18 @@
+[package]
+name = "bt_dht"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+authors = ["Bryant Luk <code@bryantluk.com>"]
+edition = "2018"
+description = "A Micro Transport Protocol (or uTP) implementation"
+repository = "https://github.com/bluk/micro_tp"
+readme = "README.md"
+include = [
+  "src/**/*.rs",
+  "Cargo.toml",
+  "README.md",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+]
+
+[dependencies]
