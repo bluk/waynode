@@ -4,8 +4,8 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Bryant Luk <code@bryantluk.com>"]
 edition = "2018"
-description = "A Micro Transport Protocol (or uTP) implementation"
-repository = "https://github.com/bluk/micro_tp"
+description = "A distributed hash table library"
+repository = "https://github.com/bluk/bt_dht"
 readme = "README.md"
 include = [
   "src/**/*.rs",
@@ -16,3 +16,13 @@ include = [
 ]
 
 [dependencies]
+bt_bencode = "0.2"
+serde = { version = "1", features=["derive"] }
+serde_bytes = "0.11"
+itoa = "0.4"
+rand = "0.7"
+crc32c = "0.4"
+
+[dev-dependencies]
+mio = {version = "0.7", features = ["os-poll", "udp"] }
+clap = "2"
