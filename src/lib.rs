@@ -6,20 +6,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! BtDht is a library which can help build an application using the [BitTorrent][bittorent]
+//! BtDht is a library which can help build an application using the [BitTorrent][bittorrent]
 //! [Distributed Hash Table][bep_0005].
 //!
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
 pub(crate) mod addr;
-pub mod config;
 pub mod error;
 pub mod krpc;
 pub mod node;
 pub(crate) mod routing;
 pub(crate) mod transaction;
 
+use crate::{krpc::QueryArgs, node::Id};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::collections::VecDeque;
@@ -27,23 +27,17 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-#[derive(Debug)]
-pub struct Dht {
-    config: config::Config,
-    ipv4_routing_table: routing::Table,
-    ipv6_routing_table: routing::Table,
-    transactions: VecDeque<transaction::Transaction>,
-    next_transaction_id: transaction::Id,
-
-    inbound_msgs: VecDeque<InboundMsg>,
-    outbound_msgs: VecDeque<OutboundMsg>,
+#[derive(Clone, Debug, PartialEq)]
+struct OutboundMsg {
+    transaction_id: Option<ByteBuf>,
+    remote_id: node::remote::RemoteNodeId,
+    msg_data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct OutboundMsg {
-    transaction_id: ByteBuf,
-    remote_id: node::remote::RemoteNodeId,
-    msg: krpc::Msg,
+pub struct SendInfo {
+    pub len: usize,
+    pub addr: SocketAddr,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,34 +47,71 @@ pub struct InboundMsg {
     pub msg: Value,
 }
 
+impl InboundMsg {
+    pub fn return_remote_id(&self) -> node::remote::RemoteNodeId {
+        self.remote_id
+            .as_ref()
+            .map(|r| r.clone())
+            .unwrap_or_else(|| node::remote::RemoteNodeId {
+                addr: node::remote::RemoteAddr::SocketAddr(self.addr),
+                node_id: None,
+            })
+    }
+}
+
+/// The configuration for the local DHT node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Config {
+    /// Local node id
+    pub id: Id,
+    /// Client version identifier
+    pub client_version: Option<ByteBuf>,
+    /// The amount of time before a query without a response is considered timed out
+    pub query_timeout: Duration,
+    /// If the node is read only
+    pub is_read_only_node: bool,
+    /// The max amount of nodes in a routing table bucket
+    pub max_node_count_per_bucket: usize,
+}
+
+/// The distributed hash table.
+#[derive(Debug)]
+pub struct Dht {
+    config: Config,
+    routing_table: routing::Table,
+
+    transactions: VecDeque<transaction::Transaction>,
+    next_transaction_id: transaction::Id,
+
+    inbound_msgs: VecDeque<InboundMsg>,
+    outbound_msgs: VecDeque<OutboundMsg>,
+}
+
 impl Dht {
-    pub fn new(config: config::Config) -> Self {
+    pub fn new_with_config(config: Config) -> Self {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
-        let ipv4_id = config.ipv4_id;
-        let ipv6_id = config.ipv6_id;
+        let id = config.id;
         Self {
             config,
-            ipv4_routing_table: routing::Table::new(ipv4_id, max_node_count_per_bucket),
-            ipv6_routing_table: routing::Table::new(ipv6_id, max_node_count_per_bucket),
+            routing_table: routing::Table::new(id, max_node_count_per_bucket),
             transactions: VecDeque::new(),
             next_transaction_id: transaction::Id(0),
-
-            outbound_msgs: VecDeque::new(),
             inbound_msgs: VecDeque::new(),
+            outbound_msgs: VecDeque::new(),
         }
     }
 
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     pub fn on_recv(&mut self, bytes: &[u8], addr: SocketAddr) -> Result<(), error::Error> {
-        use crate::krpc::{Kind, KrpcMsg};
+        use crate::krpc::{Kind, Msg};
         use crate::node::remote::RemoteNodeId;
 
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
         if let Some(kind) = value.kind() {
-            let table = match addr {
-                SocketAddr::V4(_) => &mut self.ipv4_routing_table,
-                SocketAddr::V6(_) => &mut self.ipv6_routing_table,
-            };
             let transactions = &mut self.transactions;
             if let Some(transaction) = value
                 .transaction_id()
@@ -93,8 +124,8 @@ impl Dht {
             {
                 match kind {
                     Kind::Response => {
-                        use krpc::KrpcRespMsg;
-                        let queried_node_id = KrpcRespMsg::queried_node_id(&value);
+                        use krpc::RespMsg;
+                        let queried_node_id = RespMsg::queried_node_id(&value);
                         if transaction
                             .remote_id
                             .node_id
@@ -103,7 +134,8 @@ impl Dht {
                             })
                             .unwrap_or(true)
                         {
-                            table.on_response_received(&transaction.remote_id);
+                            self.routing_table
+                                .on_response_received(&transaction.remote_id);
                             self.inbound_msgs.push_back(InboundMsg {
                                 remote_id: Some(transaction.remote_id),
                                 addr,
@@ -112,7 +144,7 @@ impl Dht {
                         }
                     }
                     Kind::Error => {
-                        table.on_error_received(&transaction.remote_id);
+                        self.routing_table.on_error_received(&transaction.remote_id);
                         self.inbound_msgs.push_back(InboundMsg {
                             remote_id: Some(transaction.remote_id),
                             addr,
@@ -125,13 +157,13 @@ impl Dht {
             } else {
                 match kind {
                     Kind::Query => {
-                        use krpc::KrpcQueryMsg;
-                        let querying_node_id = KrpcQueryMsg::querying_node_id(&value);
+                        use krpc::QueryMsg;
+                        let querying_node_id = QueryMsg::querying_node_id(&value);
                         let remote_id = RemoteNodeId {
                             addr: node::remote::RemoteAddr::SocketAddr(addr),
                             node_id: querying_node_id,
                         };
-                        table.on_query_received(&remote_id);
+                        self.routing_table.on_query_received(&remote_id);
                         self.inbound_msgs.push_back(InboundMsg {
                             remote_id: Some(remote_id),
                             addr,
@@ -146,7 +178,7 @@ impl Dht {
         Ok(())
     }
 
-    pub fn on_recv_complete(&mut self) {}
+    // pub fn on_recv_complete(&mut self) {}
 
     pub fn read(&mut self) -> Option<InboundMsg> {
         self.inbound_msgs.pop_front()
@@ -169,6 +201,7 @@ impl Dht {
     pub fn on_timeout(&mut self) {
         // Go through the transactions and declare timeouts
         // Go through the routing table and flip bits if necessary
+        unimplemented!();
     }
 
     #[inline]
@@ -179,41 +212,47 @@ impl Dht {
         transaction::Id(transaction_id)
     }
 
-    pub fn write_query(
+    pub fn write_query<T>(
         &mut self,
-        method_name: ByteBuf,
-        args: Option<Value>,
+        args: &T,
         remote_id: node::remote::RemoteNodeId,
-    ) -> ByteBuf {
+    ) -> Result<ByteBuf, error::Error>
+    where
+        T: QueryArgs,
+    {
         let transaction_id = ByteBuf::from(self.next_transaction_id().0.to_be_bytes());
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: transaction_id.clone(),
             remote_id,
-            msg: krpc::Msg::Query(krpc::QueryMsg {
-                a: args,
-                q: method_name,
-                t: transaction_id.clone(),
-                v: Some(self.config.client_version.clone()),
-            }),
+            msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
+                a: Some(&args.as_value()),
+                q: &ByteBuf::from(T::method_name()),
+                t: &transaction_id,
+                v: self.config.client_version.as_ref(),
+            })
+            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
+            transaction_id: Some(transaction_id.clone()),
         });
-        transaction_id
+
+        Ok(transaction_id)
     }
 
     pub fn write_resp(
         &mut self,
-        transaction_id: ByteBuf,
+        transaction_id: &ByteBuf,
         resp: Option<Value>,
         remote_id: node::remote::RemoteNodeId,
-    ) {
+    ) -> Result<(), error::Error> {
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: transaction_id.clone(),
+            transaction_id: None,
             remote_id,
-            msg: krpc::Msg::Response(krpc::RespMsg {
-                r: resp,
-                t: transaction_id.clone(),
-                v: Some(self.config.client_version.clone()),
-            }),
+            msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
+                r: resp.as_ref(),
+                t: &transaction_id,
+                v: self.config.client_version.as_ref(),
+            })
+            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
+        Ok(())
     }
 
     pub fn write_err(
@@ -221,22 +260,21 @@ impl Dht {
         transaction_id: ByteBuf,
         details: Option<Value>,
         remote_id: node::remote::RemoteNodeId,
-    ) {
+    ) -> Result<(), error::Error> {
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: transaction_id.clone(),
+            transaction_id: None,
             remote_id,
-            msg: krpc::Msg::Error(krpc::ErrMsg {
-                e: details,
-                t: transaction_id.clone(),
-                v: Some(self.config.client_version.clone()),
-            }),
+            msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
+                e: details.as_ref(),
+                t: &transaction_id,
+                v: self.config.client_version.as_ref(),
+            })
+            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
+        Ok(())
     }
 
-    pub fn send_to(
-        &mut self,
-        mut buf: &mut [u8],
-    ) -> Result<Option<(usize, SocketAddr)>, error::Error> {
+    pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
         if let Some(out_msg) = self.outbound_msgs.pop_front() {
             let addr = match &out_msg.remote_id.addr {
                 node::remote::RemoteAddr::SocketAddr(s) => *s,
@@ -251,40 +289,102 @@ impl Dht {
             let OutboundMsg {
                 transaction_id,
                 remote_id,
-                msg,
+                msg_data,
             } = out_msg;
-            let transaction = transaction::Transaction {
-                id: transaction_id,
-                remote_id,
-                resolved_addr: addr,
-                sent: Instant::now(),
-            };
-            self.transactions.push_back(transaction);
-            match msg {
-                krpc::Msg::Response(msg) => {
-                    let bytes = bt_bencode::to_vec(&msg)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    buf.write_all(&bytes)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    return Ok(Some((bytes.len(), addr)));
-                }
-                krpc::Msg::Error(msg) => {
-                    let bytes = bt_bencode::to_vec(&msg)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    buf.write_all(&bytes)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    return Ok(Some((bytes.len(), addr)));
-                }
-                krpc::Msg::Query(msg) => {
-                    let bytes = bt_bencode::to_vec(&msg)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    buf.write_all(&bytes)
-                        .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-                    return Ok(Some((bytes.len(), addr)));
-                }
+            if let Some(transaction_id) = transaction_id {
+                let transaction = transaction::Transaction {
+                    id: transaction_id,
+                    remote_id,
+                    resolved_addr: addr,
+                    sent: Instant::now(),
+                };
+                self.transactions.push_back(transaction);
             }
+            buf.write_all(&msg_data)
+                .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
+            Ok(Some(SendInfo {
+                len: msg_data.len(),
+                addr,
+            }))
         } else {
             Ok(None)
+        }
+    }
+
+    pub fn find_neighbors<'a>(
+        &'a self,
+        id: node::Id,
+        bootstrap_nodes: &'a [node::remote::RemoteNodeId],
+        include_all_bootstrap_nodes: bool,
+        want: Option<usize>,
+    ) -> Vec<&'a node::remote::RemoteNodeId> {
+        self.routing_table.find_nearest_neighbor(
+            id,
+            bootstrap_nodes,
+            include_all_bootstrap_nodes,
+            want,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::krpc::{
+        ping::{PingQueryArgs, METHOD_PING},
+        Kind, Msg, QueryMsg,
+    };
+
+    fn new_config() -> Result<Config, error::Error> {
+        Ok(Config {
+            id: node::Id::rand()?,
+            client_version: None,
+            query_timeout: Duration::from_secs(60),
+            is_read_only_node: true,
+            max_node_count_per_bucket: 10,
+        })
+    }
+
+    fn remote_addr() -> SocketAddr {
+        use std::net::{Ipv4Addr, SocketAddrV4};
+
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6532))
+    }
+
+    fn node_id() -> node::Id {
+        node::Id::rand().unwrap()
+    }
+
+    #[test]
+    fn test_send_ping() -> Result<(), error::Error> {
+        let id = node_id();
+        let remote_addr = remote_addr();
+        let remote_id = node::remote::RemoteNodeId {
+            addr: node::remote::RemoteAddr::SocketAddr(remote_addr),
+            node_id: Some(id.clone()),
+        };
+
+        let args = PingQueryArgs::new_with_id(id);
+
+        let mut dht: Dht = Dht::new_with_config(new_config()?);
+        let tx_id = dht.write_query(&args, remote_id).unwrap();
+
+        let mut out: [u8; 65535] = [0; 65535];
+        match dht.send_to(&mut out)? {
+            Some(send_info) => {
+                assert_eq!(send_info.addr, remote_addr);
+
+                let filled_buf = &out[..send_info.len];
+                let msg_sent: Value = bt_bencode::from_slice(filled_buf)
+                    .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
+                assert_eq!(msg_sent.kind(), Some(Kind::Query));
+                assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
+                assert_eq!(msg_sent.transaction_id(), Some(&tx_id));
+
+                Ok(())
+            }
+            None => panic!(),
         }
     }
 }

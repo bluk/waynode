@@ -19,7 +19,10 @@ use clap::{App, Arg};
 
 use mio::{Events, Interest, Poll, Token};
 
-use bt_dht::Dht;
+use bt_dht::{
+    krpc::{ping, Kind, Msg, QueryMsg},
+    Dht,
+};
 
 fn main() -> io::Result<()> {
     let matches = App::new("Example node program")
@@ -52,10 +55,9 @@ fn main() -> io::Result<()> {
     let local_addr: net::SocketAddr = format!("{}:{}", ip, port).parse().unwrap();
     let mut socket = mio::net::UdpSocket::bind(local_addr)?;
 
-    let mut dht: Dht = Dht::new(bt_dht::config::Config {
-        ipv4_id: bt_dht::node::Id::rand().unwrap(),
-        ipv6_id: bt_dht::node::Id::rand().unwrap(),
-        client_version: serde_bytes::ByteBuf::from("ab12".as_bytes()),
+    let mut dht: Dht = Dht::new_with_config(bt_dht::Config {
+        id: bt_dht::node::Id::rand().unwrap(),
+        client_version: Some(serde_bytes::ByteBuf::from("ab12")),
         query_timeout: Duration::from_secs(60),
         is_read_only_node: true,
         max_node_count_per_bucket: 10,
@@ -112,6 +114,30 @@ fn main() -> io::Result<()> {
 
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
+                    let msg = &inbound_msg.msg;
+                    match msg.kind() {
+                        Some(Kind::Query) => {
+                            match msg.method_name_str() {
+                                Some(ping::METHOD_PING) => {
+                                    // write back
+                                    let ping_resp =
+                                        ping::PingRespValues::new_with_id(dht.config().id);
+                                    if let Some(tx_id) = msg.transaction_id() {
+                                        match dht.write_resp(
+                                            tx_id,
+                                            Some(ping_resp.into()),
+                                            inbound_msg.return_remote_id(),
+                                        ) {
+                                            Ok(()) => {}
+                                            Err(_) => panic!(),
+                                        };
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
                     // dbg!("Read:");
                     // dbg!(inbound_msg);
                 }
@@ -135,7 +161,7 @@ fn main() -> io::Result<()> {
             }
         }
 
-        dht.on_recv_complete();
+        // dht.on_recv_complete();
 
         // dbg!("Sending data:");
 
@@ -158,12 +184,12 @@ fn send_packets(dht: &mut Dht, socket: &mio::net::UdpSocket, out: &mut [u8]) -> 
     loop {
         match dht.send_to(out) {
             Ok(v) => {
-                if let Some((bytes_written, addr)) = v {
-                    if bytes_written == 0 {
+                if let Some(send_info) = v {
+                    if send_info.len == 0 {
                         return Ok(false);
                     }
 
-                    match socket.send_to(&out[..bytes_written], addr) {
+                    match socket.send_to(&out[..send_info.len], send_info.addr) {
                         Ok(v) => v,
                         Err(e) => {
                             if e.kind() == io::ErrorKind::WouldBlock {

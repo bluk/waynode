@@ -13,3 +13,13 @@ pub enum Error {
     UnknownMessageKind,
     CannotResolveSocketAddr,
 }
+
+impl From<bt_bencode::Error> for Error {
+    fn from(e: bt_bencode::Error) -> Self {
+        match e {
+            bt_bencode::Error::Serialize(_) => Error::CannotSerializeKrpcMessage,
+            bt_bencode::Error::Deserialize(_) => Error::CannotDeserializeKrpcMessage,
+            _ => Error::CannotDeserializeKrpcMessage,
+        }
+    }
+}

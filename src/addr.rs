@@ -1,33 +1,98 @@
 use crate::{error::Error, node::Id};
 use rand::Rng;
 use std::convert::TryFrom;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
-pub trait ToContactData: ToSocketAddrs {
-    fn to_contact_data(&self) -> Result<Vec<u8>, Error>;
+// pub trait ToCompactAddress: ToSocketAddrs {
+//     fn to_compact_address(&self) -> Result<Vec<u8>, Error>;
+// }
+//
+// impl<T> ToCompactAddress for T
+// where
+//     T: ToSocketAddrs,
+// {
+//     fn to_compact_address(&self) -> Result<Vec<u8>, Error> {
+//         let mut addrs = self.to_socket_addrs().map_err(|_| Error::InvalidNodeId)?;
+//
+//         match addrs.next().ok_or_else(|| Error::InvalidNodeId)? {
+//             SocketAddr::V4(addr) => {
+//                 let mut data = Vec::<u8>::new();
+//                 data.extend_from_slice(&addr.ip().octets());
+//                 data.extend_from_slice(&addr.port().to_be_bytes());
+//                 Ok(data)
+//             }
+//             SocketAddr::V6(addr) => {
+//                 let mut data = Vec::<u8>::new();
+//                 data.extend_from_slice(&addr.ip().octets());
+//                 data.extend_from_slice(&addr.port().to_be_bytes());
+//                 Ok(data)
+//             }
+//         }
+//     }
+// }
+
+pub struct CompactNodeInfo<T: CompactAddr> {
+    pub id: Id,
+    pub addr: T,
 }
 
-impl<T> ToContactData for T
-where
-    T: ToSocketAddrs,
-{
-    fn to_contact_data(&self) -> Result<Vec<u8>, Error> {
-        let mut addrs = self.to_socket_addrs().map_err(|_| Error::InvalidNodeId)?;
+pub trait CompactAddr {}
 
-        match addrs.next().ok_or_else(|| Error::InvalidNodeId)? {
-            SocketAddr::V4(addr) => {
-                let mut data = Vec::<u8>::new();
-                data.extend_from_slice(&addr.ip().octets());
-                data.extend_from_slice(&addr.port().to_be_bytes());
-                Ok(data)
-            }
-            SocketAddr::V6(addr) => {
-                let mut data = Vec::<u8>::new();
-                data.extend_from_slice(&addr.ip().octets());
-                data.extend_from_slice(&addr.port().to_be_bytes());
-                Ok(data)
-            }
-        }
+pub trait CompactAddressV4: CompactAddr {
+    fn to_compact_address(&self) -> [u8; 6];
+
+    fn from_compact_address(bytes: [u8; 6]) -> Self;
+}
+
+impl CompactAddr for SocketAddrV4 {}
+
+impl CompactAddressV4 for SocketAddrV4 {
+    fn to_compact_address(&self) -> [u8; 6] {
+        let mut a: [u8; 6] = [0; 6];
+        a[0..4].copy_from_slice(&self.ip().octets());
+        a[4..6].copy_from_slice(&self.port().to_be_bytes());
+        a
+    }
+
+    fn from_compact_address(bytes: [u8; 6]) -> Self {
+        let mut ip: [u8; 4] = [0; 4];
+        ip[0..4].copy_from_slice(&bytes[0..4]);
+        let ip = Ipv4Addr::from(ip);
+
+        let mut port: [u8; 2] = [0; 2];
+        port[0..2].copy_from_slice(&bytes[4..6]);
+        let port = u16::from_be_bytes(port);
+
+        SocketAddrV4::new(ip, port)
+    }
+}
+
+pub trait CompactAddressV6: CompactAddr {
+    fn to_compact_address(&self) -> [u8; 18];
+
+    fn from_compact_address(bytes: [u8; 18]) -> Self;
+}
+
+impl CompactAddr for SocketAddrV6 {}
+
+impl CompactAddressV6 for SocketAddrV6 {
+    fn to_compact_address(&self) -> [u8; 18] {
+        let mut a: [u8; 18] = [0; 18];
+        a[0..16].copy_from_slice(&self.ip().octets());
+        a[16..18].copy_from_slice(&self.port().to_be_bytes());
+        a
+    }
+
+    fn from_compact_address(bytes: [u8; 18]) -> Self {
+        let mut ip: [u8; 16] = [0; 16];
+        ip[0..16].copy_from_slice(&bytes[0..16]);
+        let ip = Ipv6Addr::from(ip);
+
+        let mut port: [u8; 2] = [0; 2];
+        port[0..2].copy_from_slice(&bytes[16..18]);
+        let port = u16::from_be_bytes(port);
+
+        SocketAddrV6::new(ip, port, 0, 0)
     }
 }
 

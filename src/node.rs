@@ -38,45 +38,45 @@ impl Id {
         Ok(Id(arr))
     }
 
-    pub(crate) fn rand_in_range(rng: std::ops::Range<Id>) -> Result<Id, Error> {
-        let data_bit_diff = rng.end.difference(&rng.start);
-        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, false)?;
-        let _ = rand_bits.overflowing_add(&rng.start.0);
-        Ok(Id(rand_bits))
-    }
-
-    pub(crate) fn rand_in_inclusive_range(rng: std::ops::RangeInclusive<Id>) -> Result<Id, Error> {
-        let data_bit_diff = rng.end().difference(rng.start());
-        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true)?;
-        let _ = rand_bits.overflowing_add(&rng.start().0);
-        Ok(Id(rand_bits))
-    }
-
-    #[must_use]
-    fn difference(&self, other: &Id) -> Id {
-        let mut bigger: [u8; 20];
-        let mut smaller: [u8; 20];
-        if self < other {
-            bigger = other.0.clone();
-            smaller = self.0.clone();
-        } else {
-            bigger = self.0.clone();
-            smaller = other.0.clone();
-        }
-        smaller.twos_complement();
-        let _ = bigger.overflowing_add(&smaller);
-        Id(bigger)
-    }
-
-    /// Determines the distance between this node ID and the node ID argument.
-    #[must_use]
-    pub(crate) fn distance(&self, other: &Id) -> Id {
-        let mut data = [0; 20];
-        for idx in 0..self.0.len() {
-            data[idx] = self.0[idx] ^ other.0[idx];
-        }
-        Id(data)
-    }
+    // pub(crate) fn rand_in_range(rng: std::ops::Range<Id>) -> Result<Id, Error> {
+    //     let data_bit_diff = rng.end.difference(&rng.start);
+    //     let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, false)?;
+    //     let _ = rand_bits.overflowing_add(&rng.start.0);
+    //     Ok(Id(rand_bits))
+    // }
+    //
+    // pub(crate) fn rand_in_inclusive_range(rng: std::ops::RangeInclusive<Id>) -> Result<Id, Error> {
+    //     let data_bit_diff = rng.end().difference(rng.start());
+    //     let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true)?;
+    //     let _ = rand_bits.overflowing_add(&rng.start().0);
+    //     Ok(Id(rand_bits))
+    // }
+    //
+    // #[must_use]
+    // fn difference(&self, other: &Id) -> Id {
+    //     let mut bigger: [u8; 20];
+    //     let mut smaller: [u8; 20];
+    //     if self < other {
+    //         bigger = other.0.clone();
+    //         smaller = self.0.clone();
+    //     } else {
+    //         bigger = self.0.clone();
+    //         smaller = other.0.clone();
+    //     }
+    //     smaller.twos_complement();
+    //     let _ = bigger.overflowing_add(&smaller);
+    //     Id(bigger)
+    // }
+    //
+    // /// Determines the distance between this node ID and the node ID argument.
+    // #[must_use]
+    // pub(crate) fn distance(&self, other: &Id) -> Id {
+    //     let mut data = [0; 20];
+    //     for idx in 0..self.0.len() {
+    //         data[idx] = self.0[idx] ^ other.0[idx];
+    //     }
+    //     Id(data)
+    // }
 
     /// Finds the middle id between this node ID and the node ID argument.
     #[must_use]
@@ -90,28 +90,34 @@ impl Id {
         Id(data)
     }
 
-    #[must_use]
-    pub(crate) fn prev(&self) -> Id {
-        let mut data: [u8; 20] = [0; 20];
-        let mut data_idx = 0;
-        let offset_from_end = self.0.iter().rposition(|v| *v != 0).unwrap_or(0);
-        for idx in 0..offset_from_end {
-            data[data_idx] = self.0[idx];
-            data_idx += 1;
-        }
+    // #[must_use]
+    // pub(crate) fn prev(&self) -> Id {
+    //     let mut data: [u8; 20] = [0; 20];
+    //     let mut data_idx = 0;
+    //     let offset_from_end = self.0.iter().rposition(|v| *v != 0).unwrap_or(0);
+    //     for idx in 0..offset_from_end {
+    //         data[data_idx] = self.0[idx];
+    //         data_idx += 1;
+    //     }
+    //
+    //     data[data_idx] = if self.0[offset_from_end] == 0 {
+    //         0xff
+    //     } else {
+    //         self.0[offset_from_end] - 1
+    //     };
+    //
+    //     for idx in (offset_from_end + 1)..self.0.len() {
+    //         data[idx] = 0xff;
+    //         data_idx += 1;
+    //     }
+    //
+    //     Id(data)
+    // }
+}
 
-        data[data_idx] = if self.0[offset_from_end] == 0 {
-            0xff
-        } else {
-            self.0[offset_from_end] - 1
-        };
-
-        for idx in (offset_from_end + 1)..self.0.len() {
-            data[idx] = 0xff;
-            data_idx += 1;
-        }
-
-        Id(data)
+impl Into<Vec<u8>> for Id {
+    fn into(self) -> Vec<u8> {
+        Vec::from(self.0)
     }
 }
 

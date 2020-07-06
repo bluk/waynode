@@ -11,8 +11,8 @@ pub enum RemoteAddr {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct RemoteNodeId {
-    pub(crate) addr: RemoteAddr,
-    pub(crate) node_id: Option<Id>,
+    pub addr: RemoteAddr,
+    pub node_id: Option<Id>,
 }
 
 impl RemoteNodeId {
