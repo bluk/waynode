@@ -126,13 +126,3 @@ impl RemoteNode {
         self.last_query = Some(Instant::now());
     }
 }
-//
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn test_1() {
-//         let v = Vec::<RemoteNodeId>::new();
-//     }
-// }

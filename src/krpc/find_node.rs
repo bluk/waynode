@@ -21,20 +21,30 @@ impl FindNodeQueryArgs {
         Self { id, target }
     }
 
-    pub fn id(&self) -> &Id {
-        &self.id
-    }
-
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
-    }
-
     pub fn target(&self) -> &Id {
         &self.target
     }
 
     pub fn set_target(&mut self, target: Id) {
         self.target = target;
+    }
+}
+
+impl super::QueryArgs for FindNodeQueryArgs {
+    fn method_name() -> &'static [u8] {
+        METHOD_FIND_NODE.as_bytes()
+    }
+
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
+
+    fn to_value(&self) -> Value {
+        Value::from(self)
     }
 }
 
@@ -80,6 +90,12 @@ impl From<FindNodeQueryArgs> for Value {
             Value::ByteStr(ByteBuf::from(args.target)),
         );
         Value::Dict(d)
+    }
+}
+
+impl From<&FindNodeQueryArgs> for Value {
+    fn from(args: &FindNodeQueryArgs) -> Self {
+        Value::from(*args)
     }
 }
 
@@ -226,7 +242,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryMsg, RespMsg};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg};
 
     #[test]
     fn test_serde_find_node_query() -> Result<(), Error> {

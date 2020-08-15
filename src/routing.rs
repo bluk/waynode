@@ -7,7 +7,7 @@ use std::ops::RangeInclusive;
 use std::time::Instant;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct Bucket {
+pub(crate) struct Bucket {
     range: RangeInclusive<Id>,
     nodes: Vec<RemoteNode>,
     max_nodes: usize,
@@ -27,24 +27,28 @@ impl Bucket {
     fn on_query_received(&mut self, id: &RemoteNodeId) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_query();
+            self.sort_node_ids();
         }
     }
 
     fn on_response_received(&mut self, id: &RemoteNodeId) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_response();
+            self.sort_node_ids();
         }
     }
 
     fn on_error_received(&mut self, id: &RemoteNodeId) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_error();
+            self.sort_node_ids();
         }
     }
 
     fn on_response_timeout(&mut self, id: &RemoteNodeId) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_response_timeout();
+            self.sort_node_ids();
         }
     }
 
@@ -74,6 +78,7 @@ impl Bucket {
         }
 
         self.nodes.push(RemoteNode::new_with_id(id));
+        self.sort_node_ids();
         self.last_changed = Instant::now();
     }
 
@@ -95,60 +100,77 @@ impl Bucket {
             }
         }
 
+        lower_bucket.sort_node_ids();
+        upper_bucket.sort_node_ids();
+
         (lower_bucket, upper_bucket)
     }
 
-    fn contains(&self, id: &RemoteNodeId) -> bool {
+    pub(crate) fn contains(&self, id: &RemoteNodeId) -> bool {
         self.nodes.iter().find(|n| n.id == *id).is_some()
     }
 
-    fn is_full(&self) -> bool {
+    pub(crate) fn is_full(&self) -> bool {
         self.nodes.len() >= self.max_nodes
     }
 
-    fn is_all_good_nodes(&self) -> bool {
-        self.nodes.iter().all(|n| n.state() == RemoteState::Good)
-    }
+    // pub(crate) fn is_all_good_nodes(&self) -> bool {
+    //     self.nodes.iter().all(|n| n.state() == RemoteState::Good)
+    // }
+    //
+    // pub(crate) fn possible_node_ids_to_replace(&self) -> impl Iterator<Item = &RemoteNodeId> {
+    //     self.nodes
+    //         .iter()
+    //         .rev()
+    //         .filter(|n| n.state() == RemoteState::Bad || n.state() == RemoteState::Questionable)
+    //         .map(|n| &n.id)
+    // }
 
-    fn bad_nodes_remote_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
-        self.nodes.iter().filter_map(|n| {
-            if n.state() == RemoteState::Bad {
-                Some(&n.id)
-            } else {
-                None
-            }
-        })
-    }
-
-    fn least_recently_seen_questionable_node_ids(&self) -> Vec<&RemoteNodeId> {
-        let mut questionable_nodes = self
-            .nodes
+    pub(crate) fn bad_nodes_remote_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
+        self.nodes
             .iter()
+            .rev()
+            .filter(|n| n.state() == RemoteState::Bad)
+            .map(|n| &n.id)
+    }
+
+    pub(crate) fn questionable_node_remote_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
+        self.nodes
+            .iter()
+            .rev()
             .filter(|n| n.state() == RemoteState::Questionable)
-            .collect::<Vec<&RemoteNode>>();
-        questionable_nodes.sort_by(|a, b| match (a.last_interaction(), b.last_interaction()) {
-            (None, None) => Ordering::Equal,
-            (Some(_), None) => Ordering::Greater,
-            (None, Some(_)) => Ordering::Less,
-            (Some(first), Some(second)) => first.cmp(&second),
-        });
-        questionable_nodes.iter().map(|n| &n.id).collect()
+            .map(|n| &n.id)
     }
 
-    fn prioritized_node_ids(&self) -> Vec<&RemoteNodeId> {
-        let mut nodes = self
-            .nodes
+    fn prioritized_node_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
+        self.nodes
             .iter()
+            .rev()
             .filter(|n| n.state() == RemoteState::Questionable || n.state() == RemoteState::Good)
-            .collect::<Vec<&RemoteNode>>();
-        nodes.sort_by(|a, b| match (a.state(), b.state()) {
-            (RemoteState::Good, RemoteState::Questionable) => Ordering::Less,
-            (RemoteState::Questionable, RemoteState::Good) => Ordering::Greater,
-            (RemoteState::Questionable, RemoteState::Questionable) => Ordering::Equal,
-            (RemoteState::Good, RemoteState::Good) => Ordering::Equal,
-            _ => unreachable!(),
+            .map(|n| &n.id)
+    }
+
+    fn sort_node_ids(&mut self) {
+        self.nodes.sort_by(|a, b| {
+            match (a.state(), b.state()) {
+                (RemoteState::Good, RemoteState::Questionable)
+                | (RemoteState::Good, RemoteState::Bad)
+                | (RemoteState::Questionable, RemoteState::Bad) => return Ordering::Less,
+                (RemoteState::Questionable, RemoteState::Good)
+                | (RemoteState::Bad, RemoteState::Questionable)
+                | (RemoteState::Bad, RemoteState::Good) => return Ordering::Greater,
+                (RemoteState::Good, RemoteState::Good)
+                | (RemoteState::Questionable, RemoteState::Questionable)
+                | (RemoteState::Bad, RemoteState::Bad) => {}
+            }
+
+            match (a.last_interaction(), b.last_interaction()) {
+                (None, None) => Ordering::Equal,
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(first), Some(second)) => second.cmp(&first),
+            }
         });
-        nodes.iter().map(|n| &n.id).collect()
     }
 }
 
@@ -200,13 +222,22 @@ impl Table {
         }
     }
 
-    pub fn contains(&self, remote_id: &RemoteNodeId) -> bool {
+    pub(crate) fn contains(&self, remote_id: &RemoteNodeId) -> bool {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter().find(|n| n.range.contains(&id)) {
                 return bucket.contains(remote_id);
             }
         }
         false
+    }
+
+    pub(crate) fn find_bucket(&self, id: &Id) -> (&Bucket, bool) {
+        let bucket = self
+            .buckets
+            .iter()
+            .find(|n| n.range.contains(&id))
+            .expect("a bucket should exist which contains the id");
+        (bucket, Some(bucket) == self.buckets.last())
     }
 
     pub fn on_query_received(&mut self, remote_id: &RemoteNodeId) {
@@ -241,6 +272,7 @@ impl Table {
         }
     }
 
+    // TODO: Replace with RemoteNode instead
     pub fn add(&mut self, remote_id: RemoteNodeId, replaced_id: Option<&RemoteNodeId>) {
         if let Some(id) = remote_id.node_id {
             if id == self.pivot {

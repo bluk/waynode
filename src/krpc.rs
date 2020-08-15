@@ -35,7 +35,6 @@ impl<'a> Kind<'a> {
     }
 }
 
-// pub const METHOD_FIND_NODE: &str = "find_node";
 // pub const METHOD_GET_PEERS: &str = "get_peers";
 // pub const METHOD_ANNOUNCE_PEER: &str = "announce_peer";
 
@@ -137,7 +136,7 @@ pub trait QueryArgs {
     fn set_id(&mut self, id: Id);
 
     /// Represents the arguments as a Bencoded Value.
-    fn as_value(&self) -> Value;
+    fn to_value(&self) -> Value;
 }
 
 /// A KPRC response message.
@@ -169,6 +168,3 @@ impl RespMsg for Value {
 pub mod find_node;
 pub mod ping;
 pub(crate) mod ser;
-
-#[cfg(test)]
-mod tests {}

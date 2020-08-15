@@ -30,7 +30,7 @@ impl super::QueryArgs for PingQueryArgs {
         self.id = id;
     }
 
-    fn as_value(&self) -> Value {
+    fn to_value(&self) -> Value {
         Value::from(self)
     }
 }
@@ -60,19 +60,19 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingQueryArgs {
 }
 
 impl From<PingQueryArgs> for Value {
-    fn from(ping_args: PingQueryArgs) -> Self {
-        let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
-        args.insert(
+    fn from(args: PingQueryArgs) -> Self {
+        let mut d: BTreeMap<ByteBuf, Value> = BTreeMap::new();
+        d.insert(
             ByteBuf::from(String::from("id")),
-            Value::ByteStr(ByteBuf::from(ping_args.id)),
+            Value::ByteStr(ByteBuf::from(args.id)),
         );
-        Value::Dict(args)
+        Value::Dict(d)
     }
 }
 
 impl From<&PingQueryArgs> for Value {
-    fn from(ping_args: &PingQueryArgs) -> Self {
-        Value::from(*ping_args)
+    fn from(args: &PingQueryArgs) -> Self {
+        Value::from(*args)
     }
 }
 

@@ -3,34 +3,6 @@ use rand::Rng;
 use std::convert::TryFrom;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
-// pub trait ToCompactAddress: ToSocketAddrs {
-//     fn to_compact_address(&self) -> Result<Vec<u8>, Error>;
-// }
-//
-// impl<T> ToCompactAddress for T
-// where
-//     T: ToSocketAddrs,
-// {
-//     fn to_compact_address(&self) -> Result<Vec<u8>, Error> {
-//         let mut addrs = self.to_socket_addrs().map_err(|_| Error::InvalidNodeId)?;
-//
-//         match addrs.next().ok_or_else(|| Error::InvalidNodeId)? {
-//             SocketAddr::V4(addr) => {
-//                 let mut data = Vec::<u8>::new();
-//                 data.extend_from_slice(&addr.ip().octets());
-//                 data.extend_from_slice(&addr.port().to_be_bytes());
-//                 Ok(data)
-//             }
-//             SocketAddr::V6(addr) => {
-//                 let mut data = Vec::<u8>::new();
-//                 data.extend_from_slice(&addr.ip().octets());
-//                 data.extend_from_slice(&addr.port().to_be_bytes());
-//                 Ok(data)
-//             }
-//         }
-//     }
-// }
-
 pub struct CompactNodeInfo<T: CompactAddr> {
     pub id: Id,
     pub addr: T,

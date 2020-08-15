@@ -114,32 +114,33 @@ fn main() -> io::Result<()> {
 
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
-                    let msg = &inbound_msg.msg;
-                    match msg.kind() {
-                        Some(Kind::Query) => {
-                            match msg.method_name_str() {
-                                Some(ping::METHOD_PING) => {
-                                    // write back
-                                    let ping_resp =
-                                        ping::PingRespValues::new_with_id(dht.config().id);
-                                    if let Some(tx_id) = msg.transaction_id() {
-                                        match dht.write_resp(
-                                            tx_id,
-                                            Some(ping_resp.into()),
-                                            inbound_msg.return_remote_id(),
-                                        ) {
-                                            Ok(()) => {}
-                                            Err(_) => panic!(),
-                                        };
+                    if let Some(msg) = &inbound_msg.msg {
+                        match msg.kind() {
+                            Some(Kind::Query) => {
+                                match msg.method_name_str() {
+                                    Some(ping::METHOD_PING) => {
+                                        // write back
+                                        let ping_resp =
+                                            ping::PingRespValues::new_with_id(dht.config().id);
+                                        if let Some(tx_id) = msg.transaction_id() {
+                                            match dht.write_resp(
+                                                tx_id,
+                                                Some(ping_resp.into()),
+                                                inbound_msg.return_remote_id(),
+                                            ) {
+                                                Ok(()) => {}
+                                                Err(_) => panic!(),
+                                            };
+                                        }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
+                            _ => {}
                         }
-                        _ => {}
+                        // dbg!("Read:");
+                        // dbg!(inbound_msg);
                     }
-                    // dbg!("Read:");
-                    // dbg!(inbound_msg);
                 }
 
                 if bytes_read == 0 {
