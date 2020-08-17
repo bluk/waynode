@@ -49,6 +49,13 @@ struct NodeToReplace {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct FindNodeOp {
+    transaction_ids: Vec<ByteBuf>,
+    remote_ids: Vec<RemoteNodeId>,
+    id_to_find: Id,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SendInfo {
     pub len: usize,
     pub addr: SocketAddr,
@@ -96,6 +103,8 @@ pub struct Dht {
     routing_table: routing::Table,
     probed_nodes: Vec<NodeToReplace>,
 
+    find_node_ops: Vec<FindNodeOp>,
+
     transactions: VecDeque<transaction::Transaction>,
     next_transaction_id: transaction::Id,
 
@@ -111,11 +120,39 @@ impl Dht {
             config,
             routing_table: routing::Table::new(id, max_node_count_per_bucket),
             probed_nodes: Vec::new(),
+            find_node_ops: Vec::new(),
             transactions: VecDeque::new(),
             next_transaction_id: transaction::Id(0),
             inbound_msgs: VecDeque::new(),
             outbound_msgs: VecDeque::new(),
         }
+    }
+
+    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [node::remote::RemoteNodeId]) {
+        let neighbors = self
+            .find_neighbors(self.config.id.clone(), bootstrap_nodes, true, None)
+            .iter()
+            .map(|&n| n.clone())
+            .collect::<Vec<RemoteNodeId>>();
+        let mut find_node_op = FindNodeOp {
+            transaction_ids: Vec::new(),
+            remote_ids: Vec::new(),
+            id_to_find: self.config.id.clone(),
+        };
+        for n in neighbors {
+            use krpc::find_node::FindNodeQueryArgs;
+            if let Ok(transaction_id) = self.write_query(
+                &FindNodeQueryArgs::new_with_id_and_target(
+                    self.config.id.clone(),
+                    self.config.id.clone(),
+                ),
+                n.clone(),
+            ) {
+                find_node_op.transaction_ids.push(transaction_id);
+                find_node_op.remote_ids.push(n.clone());
+            }
+        }
+        self.find_node_ops.push(find_node_op);
     }
 
     pub fn config(&self) -> &Config {
@@ -483,10 +520,16 @@ impl Dht {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::convert::TryFrom;
+    use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use crate::krpc::{
-        ping::{PingQueryArgs, METHOD_PING},
-        Kind, Msg, QueryMsg,
+    use crate::{
+        krpc::{
+            find_node::{FindNodeQueryArgs, METHOD_FIND_NODE},
+            ping::{PingQueryArgs, METHOD_PING},
+            Kind, Msg, QueryMsg,
+        },
+        node::remote::RemoteAddr,
     };
 
     fn new_config() -> Result<Config, error::Error> {
@@ -499,14 +542,19 @@ mod tests {
         })
     }
 
-    fn remote_addr() -> SocketAddr {
-        use std::net::{Ipv4Addr, SocketAddrV4};
-
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6532))
+    fn remote_addr() -> RemoteAddr {
+        node::remote::RemoteAddr::SocketAddr(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(127, 0, 0, 1),
+            6532,
+        )))
     }
 
     fn node_id() -> node::Id {
         node::Id::rand().unwrap()
+    }
+
+    fn bootstrap_remote_addr() -> RemoteAddr {
+        RemoteAddr::HostPort(String::from("127.0.0.1:6881"))
     }
 
     #[test]
@@ -514,7 +562,7 @@ mod tests {
         let id = node_id();
         let remote_addr = remote_addr();
         let remote_id = node::remote::RemoteNodeId {
-            addr: node::remote::RemoteAddr::SocketAddr(remote_addr),
+            addr: remote_addr.clone(),
             node_id: Some(id.clone()),
         };
 
@@ -526,7 +574,12 @@ mod tests {
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {
             Some(send_info) => {
-                assert_eq!(send_info.addr, remote_addr);
+                match remote_addr {
+                    RemoteAddr::SocketAddr(socket_addr) => {
+                        assert_eq!(send_info.addr, socket_addr);
+                    }
+                    _ => panic!(),
+                }
 
                 let filled_buf = &out[..send_info.len];
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
@@ -534,6 +587,58 @@ mod tests {
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
                 assert_eq!(msg_sent.transaction_id(), Some(&tx_id));
+
+                Ok(())
+            }
+            None => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_bootstrap() -> Result<(), error::Error> {
+        let mut dht: Dht = Dht::new_with_config(new_config()?);
+        let bootstrap_remote_addr = bootstrap_remote_addr();
+        dht.bootstrap(&[RemoteNodeId {
+            addr: bootstrap_remote_addr.clone(),
+            node_id: None,
+        }]);
+
+        let mut out: [u8; 65535] = [0; 65535];
+        match dht.send_to(&mut out)? {
+            Some(send_info) => {
+                match bootstrap_remote_addr.clone() {
+                    RemoteAddr::HostPort(host_port) => {
+                        use std::net::ToSocketAddrs;
+                        let socket_addr: SocketAddr =
+                            host_port.to_socket_addrs().unwrap().next().unwrap();
+                        assert_eq!(send_info.addr, socket_addr);
+                    }
+                    _ => panic!(),
+                }
+
+                let find_node_op = dht.find_node_ops.first().unwrap();
+                assert_eq!(
+                    &RemoteNodeId {
+                        addr: bootstrap_remote_addr.clone(),
+                        node_id: None,
+                    },
+                    find_node_op.remote_ids.first().unwrap()
+                );
+
+                let filled_buf = &out[..send_info.len];
+                let msg_sent: Value = bt_bencode::from_slice(filled_buf)
+                    .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
+                assert_eq!(msg_sent.kind(), Some(Kind::Query));
+                assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
+                assert_eq!(
+                    msg_sent.transaction_id(),
+                    Some(find_node_op.transaction_ids.first().unwrap())
+                );
+                dbg!(&msg_sent);
+                let find_node_query_args =
+                    FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
+                assert_eq!(find_node_query_args.target(), &dht.config.id);
+                assert_eq!(find_node_query_args.id(), &dht.config.id);
 
                 Ok(())
             }

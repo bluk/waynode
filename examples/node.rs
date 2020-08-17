@@ -62,6 +62,26 @@ fn main() -> io::Result<()> {
         is_read_only_node: true,
         max_node_count_per_bucket: 10,
     });
+    dht.bootstrap(&[
+        bt_dht::node::remote::RemoteNodeId {
+            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
+                "router.magnets.im:6881",
+            )),
+            node_id: None,
+        },
+        bt_dht::node::remote::RemoteNodeId {
+            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
+                "router.bittorrent.com:6881",
+            )),
+            node_id: None,
+        },
+        bt_dht::node::remote::RemoteNodeId {
+            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
+                "dht.transmissionbt.com:6881",
+            )),
+            node_id: None,
+        },
+    ]);
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
