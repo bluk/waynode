@@ -29,20 +29,21 @@ use crate::{
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::collections::VecDeque;
+use std::convert::TryFrom;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq)]
 struct OutboundMsg {
-    local_tx_id: Option<ByteBuf>,
+    local_tx_id: Option<transaction::Id>,
     remote_id: RemoteNodeId,
     resolved_addr: SocketAddr,
     msg_data: Vec<u8>,
 }
 
 impl OutboundMsg {
-    fn to_transaction(self) -> Option<transaction::Transaction> {
+    fn into_transaction(self) -> Option<transaction::Transaction> {
         let remote_id = self.remote_id;
         let resolved_addr = self.resolved_addr;
         self.local_tx_id.map(|id| transaction::Transaction {
@@ -56,7 +57,7 @@ impl OutboundMsg {
 
 #[derive(Clone, Debug, PartialEq)]
 struct NodeToReplace {
-    transaction_id: ByteBuf,
+    transaction_id: transaction::Id,
     probe_node_id: RemoteNodeId,
     new_node: RemoteNode,
     timeout_count: u8,
@@ -71,7 +72,7 @@ struct FindNodeOp {
 
 #[derive(Debug, PartialEq)]
 struct FindNodeTx {
-    id: ByteBuf,
+    id: transaction::Id,
     remote_id: RemoteNodeId,
     resolved_addr: SocketAddr,
 }
@@ -199,6 +200,7 @@ impl Dht {
             let transactions = &mut self.transactions;
             if let Some(transaction) = value
                 .transaction_id()
+                .and_then(|tx_id| transaction::Id::try_from(tx_id).ok())
                 .and_then(|id| {
                     transactions
                         .iter()
@@ -243,13 +245,12 @@ impl Dht {
                                 .map(|idx| self.find_node_ops.swap_remove(idx))
                             {
                                 find_node_op.transactions.retain(|tx| {
-                                    tx.id != &transaction.id
+                                    tx.id != transaction.id
                                         || tx.resolved_addr != transaction.resolved_addr
-                                    // TODO
+                                    // TODO: Also look at remote ID
                                 });
                                 use krpc::find_node::FindNodeRespValues;
                                 use node::remote::RemoteAddr;
-                                use std::convert::TryFrom;
                                 if let Some(values) = value.values() {
                                     if let Ok(response) = FindNodeRespValues::try_from(values) {
                                         if let Some(new_node_ids) =
@@ -490,18 +491,17 @@ impl Dht {
     }
 
     #[inline]
-    fn next_transaction_id(&mut self) -> ByteBuf {
-        let transaction_id = self.next_transaction_id.0;
-        let (next_id, _) = transaction_id.overflowing_add(1);
-        self.next_transaction_id.0 = next_id;
-        ByteBuf::from(transaction_id.to_be_bytes())
+    fn next_transaction_id(&mut self) -> transaction::Id {
+        let transaction_id = self.next_transaction_id;
+        self.next_transaction_id = self.next_transaction_id.next();
+        transaction_id
     }
 
     pub fn write_query<T>(
         &mut self,
         args: &T,
         remote_id: &RemoteNodeId,
-    ) -> Result<(ByteBuf, SocketAddr), error::Error>
+    ) -> Result<(transaction::Id, SocketAddr), error::Error>
     where
         T: QueryArgs,
     {
@@ -514,12 +514,11 @@ impl Dht {
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
-                t: &transaction_id,
+                t: &transaction_id.to_bytebuf(),
                 v: self.config.client_version.as_ref(),
             })
             .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
-
         Ok((transaction_id, resolved_addr))
     }
 
@@ -573,7 +572,7 @@ impl Dht {
                 len: out_msg.msg_data.len(),
                 addr: out_msg.resolved_addr,
             });
-            if let Some(tx) = out_msg.to_transaction() {
+            if let Some(tx) = out_msg.into_transaction() {
                 self.transactions.push_back(tx);
             }
             Ok(result)
@@ -601,7 +600,6 @@ impl Dht {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::convert::TryFrom;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::{
@@ -713,7 +711,7 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 assert_eq!(
                     msg_sent.transaction_id(),
-                    Some(&find_node_op.transactions.first().unwrap().id)
+                    Some(&find_node_op.transactions.first().unwrap().id.to_bytebuf())
                 );
                 dbg!(&msg_sent);
                 let find_node_query_args =

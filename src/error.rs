@@ -12,6 +12,7 @@ pub enum Error {
     CannotSerializeKrpcMessage,
     UnknownMessageKind,
     CannotResolveSocketAddr,
+    InvalidLocalTransactionId,
 }
 
 impl From<bt_bencode::Error> for Error {
