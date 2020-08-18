@@ -142,7 +142,7 @@ fn main() -> io::Result<()> {
                                                 Some(ping_resp.into()),
                                                 inbound_msg.remote_id(),
                                             ) {
-                                                Ok(socket_addr) => {}
+                                                Ok(()) => {}
                                                 Err(_) => panic!(),
                                             };
                                         }

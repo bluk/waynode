@@ -34,19 +34,19 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq)]
 struct OutboundMsg {
-    local_tx_id: Option<transaction::Id>,
+    tx_id: Option<transaction::Id>,
+    addr: SocketAddr,
     remote_id: RemoteNodeId,
-    resolved_addr: SocketAddr,
     msg_data: Vec<u8>,
 }
 
 impl OutboundMsg {
     fn into_transaction(self) -> Option<transaction::Transaction> {
         let remote_id = self.remote_id;
-        let resolved_addr = self.resolved_addr;
-        self.local_tx_id.map(|id| transaction::Transaction {
+        let resolved_addr = self.addr;
+        self.tx_id.map(|tx_id| transaction::Transaction {
             local_id: transaction::LocalId {
-                id,
+                id: tx_id,
                 addr: resolved_addr,
             },
             remote_id,
@@ -483,12 +483,12 @@ impl Dht {
     where
         T: QueryArgs,
     {
-        let resolved_addr = remote_id.resolve_addr()?;
+        let addr = remote_id.resolve_addr()?;
         let transaction_id = self.next_transaction_id();
         self.outbound_msgs.push_back(OutboundMsg {
-            local_tx_id: Some(transaction_id.clone()),
+            tx_id: Some(transaction_id.clone()),
             remote_id: remote_id.clone(),
-            resolved_addr,
+            addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
@@ -499,7 +499,7 @@ impl Dht {
         });
         Ok(transaction::LocalId {
             id: transaction_id,
-            addr: resolved_addr,
+            addr,
         })
     }
 
@@ -508,12 +508,12 @@ impl Dht {
         transaction_id: &ByteBuf,
         resp: Option<Value>,
         remote_id: &RemoteNodeId,
-    ) -> Result<SocketAddr, error::Error> {
-        let resolved_addr = remote_id.resolve_addr()?;
+    ) -> Result<(), error::Error> {
+        let addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
-            local_tx_id: None,
+            tx_id: None,
             remote_id: remote_id.clone(),
-            resolved_addr,
+            addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.as_ref(),
                 t: &transaction_id,
@@ -521,7 +521,7 @@ impl Dht {
             })
             .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
-        Ok(resolved_addr)
+        Ok(())
     }
 
     pub fn write_err(
@@ -529,12 +529,12 @@ impl Dht {
         transaction_id: &ByteBuf,
         details: Option<Value>,
         remote_id: &RemoteNodeId,
-    ) -> Result<SocketAddr, error::Error> {
-        let resolved_addr = remote_id.resolve_addr()?;
+    ) -> Result<(), error::Error> {
+        let addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
-            local_tx_id: None,
+            tx_id: None,
             remote_id: remote_id.clone(),
-            resolved_addr,
+            addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: details.as_ref(),
                 t: &transaction_id,
@@ -542,7 +542,7 @@ impl Dht {
             })
             .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
-        Ok(resolved_addr)
+        Ok(())
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
@@ -551,7 +551,7 @@ impl Dht {
                 .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
             let result = Some(SendInfo {
                 len: out_msg.msg_data.len(),
-                addr: out_msg.resolved_addr,
+                addr: out_msg.addr,
             });
             if let Some(tx) = out_msg.into_transaction() {
                 self.transactions.push_back(tx);
