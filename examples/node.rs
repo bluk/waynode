@@ -136,7 +136,7 @@ fn main() -> io::Result<()> {
                                         // write back
                                         let ping_resp =
                                             ping::PingRespValues::new_with_id(dht.config().id);
-                                        if let Some(tx_id) = msg.transaction_id() {
+                                        if let Some(tx_id) = msg.tx_id() {
                                             match dht.write_resp(
                                                 tx_id,
                                                 Some(ping_resp.into()),

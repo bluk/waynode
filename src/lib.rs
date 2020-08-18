@@ -14,6 +14,7 @@
 
 pub mod addr;
 pub mod error;
+pub(crate) mod find_node_op;
 pub mod krpc;
 pub mod node;
 pub(crate) mod routing;
@@ -21,7 +22,12 @@ pub(crate) mod transaction;
 
 use crate::{
     addr::Addr,
-    krpc::QueryArgs,
+    find_node_op::FindNodeOp,
+    krpc::{
+        find_node::{FindNodeQueryArgs, FindNodeRespValues},
+        ping::PingQueryArgs,
+        Kind, Msg, QueryArgs, QueryMsg, RespMsg,
+    },
     node::remote::{RemoteNode, RemoteNodeId},
 };
 use bt_bencode::Value;
@@ -55,7 +61,7 @@ impl OutboundMsg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct NodeToReplace {
     tx_local_id: transaction::LocalId,
     probe_node_id: RemoteNodeId,
@@ -63,20 +69,13 @@ struct NodeToReplace {
     timeout_count: u8,
 }
 
-#[derive(Debug, PartialEq)]
-struct FindNodeOp {
-    tx_local_ids: Vec<transaction::LocalId>,
-    queried_remote_nodes: Vec<RemoteNodeId>,
-    id_to_find: node::Id,
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct SendInfo {
     pub len: usize,
     pub addr: SocketAddr,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InboundMsg {
     remote_id: RemoteNodeId,
     tx_local_id: Option<transaction::LocalId>,
@@ -155,19 +154,14 @@ impl Dht {
             .iter()
             .map(|&n| n.clone())
             .collect::<Vec<RemoteNodeId>>();
-        let mut find_node_op = FindNodeOp {
-            tx_local_ids: Vec::new(),
-            queried_remote_nodes: Vec::new(),
-            id_to_find: self.config.id,
-        };
+        let mut find_node_op = FindNodeOp::new_with_id(self.config.id);
         for n in neighbors {
-            use krpc::find_node::FindNodeQueryArgs;
             if let Ok(tx_local_id) = self.write_query(
                 &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
                 &n,
             ) {
-                find_node_op.tx_local_ids.push(tx_local_id);
-                find_node_op.queried_remote_nodes.push(n);
+                find_node_op.add_tx_local_id(tx_local_id);
+                find_node_op.add_queried_node_id(n);
             }
         }
         self.find_node_ops.push(find_node_op);
@@ -181,129 +175,98 @@ impl Dht {
         self.on_recv_with_now(bytes, addr, Instant::now())
     }
 
+    fn find_local_tx(
+        &mut self,
+        tx_id: &ByteBuf,
+        addr: SocketAddr,
+    ) -> Option<transaction::Transaction> {
+        transaction::Id::try_from(tx_id)
+            .map(|tx_id| transaction::LocalId { id: tx_id, addr })
+            .ok()
+            .and_then(|tx_local_id| {
+                self.transactions
+                    .iter()
+                    .position(|t| t.local_id == tx_local_id)
+            })
+            .and_then(|idx| self.transactions.swap_remove_back(idx))
+    }
+
+    fn find_find_node_op(&mut self, tx_local_id: transaction::LocalId) -> Option<FindNodeOp> {
+        self.find_node_ops
+            .iter()
+            .position(|op| op.contains_tx_local_id(tx_local_id))
+            .map(|idx| self.find_node_ops.swap_remove(idx))
+    }
+
+    fn handle_resp_or_err(
+        &mut self,
+        value: Value,
+        tx: transaction::Transaction,
+        now: Instant,
+    ) -> Result<(), error::Error> {
+        self.probed_nodes.retain(|n| n.tx_local_id != tx.local_id);
+        self.add_node_to_table(&tx.remote_id, Some(now), None);
+        if let Some(mut find_node_op) = self.find_find_node_op(tx.local_id) {
+            find_node_op.remove_tx_local_id(tx.local_id);
+            match value.kind().unwrap() {
+                Kind::Response => {
+                    if let Some(new_node_ids) = value
+                        .values()
+                        .and_then(|values| FindNodeRespValues::try_from(values).ok())
+                        .and_then(|resp| find_node_op.filter_new_nodes(&resp))
+                    {
+                        for id in new_node_ids {
+                            if let Ok(tx_local_id) = self.write_query(
+                                &FindNodeQueryArgs::new_with_id_and_target(
+                                    self.config.id,
+                                    find_node_op.id_to_find(),
+                                ),
+                                &id,
+                            ) {
+                                find_node_op.add_queried_node_id(id.clone());
+                                find_node_op.add_tx_local_id(tx_local_id);
+                            }
+                        }
+                    }
+                }
+                Kind::Error => {}
+                Kind::Query | Kind::Unknown(_) => unreachable!(),
+            }
+            self.find_node_ops.push(find_node_op);
+        } else {
+            self.inbound_msgs.push_back(InboundMsg {
+                remote_id: tx.remote_id,
+                tx_local_id: Some(tx.local_id),
+                msg: Some(value),
+                is_timeout: false,
+            });
+        }
+        Ok(())
+    }
+
     fn on_recv_with_now(
         &mut self,
         bytes: &[u8],
         addr: SocketAddr,
         now: Instant,
     ) -> Result<(), error::Error> {
-        use crate::krpc::{Kind, Msg};
-
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
         if let Some(kind) = value.kind() {
-            let transactions = &mut self.transactions;
-            if let Some(transaction) = value
-                .transaction_id()
-                .and_then(|tx_id| {
-                    transaction::Id::try_from(tx_id)
-                        .map(|tx_id| transaction::LocalId { id: tx_id, addr })
-                        .ok()
-                })
-                .and_then(|tx_local_id| transactions.iter().position(|t| t.local_id == tx_local_id))
-                .and_then(|idx| transactions.swap_remove_back(idx))
+            if let Some(tx) = value
+                .tx_id()
+                .and_then(|tx_id| self.find_local_tx(tx_id, addr))
             {
                 match kind {
                     Kind::Response => {
-                        use krpc::RespMsg;
-                        let queried_node_id = RespMsg::queried_node_id(&value);
-                        if transaction
-                            .remote_id
-                            .node_id
-                            .and_then(|id| {
-                                Some(queried_node_id.and_then(|q| Some(q == id)).unwrap_or(false))
-                            })
-                            .unwrap_or(true)
-                        {
-                            self.routing_table
-                                .on_response_received(&transaction.remote_id);
-                            self.probed_nodes
-                                .retain(|n| n.tx_local_id != transaction.local_id);
-                            self.add_node_to_table(&transaction.remote_id, Some(now), None);
-                            if let Some(mut find_node_op) = self
-                                .find_node_ops
-                                .iter()
-                                .position(|op| {
-                                    op.tx_local_ids
-                                        .iter()
-                                        .any(|&tx_local_id| tx_local_id == transaction.local_id)
-                                })
-                                .map(|idx| self.find_node_ops.swap_remove(idx))
-                            {
-                                find_node_op
-                                    .tx_local_ids
-                                    .retain(|&tx_local_id| tx_local_id != transaction.local_id);
-                                use krpc::find_node::FindNodeRespValues;
-                                if let Some(values) = value.values() {
-                                    if let Ok(response) = FindNodeRespValues::try_from(values) {
-                                        if let Some(new_node_ids) =
-                                            response.nodes().as_ref().map(|nodes| {
-                                                nodes
-                                                    .iter()
-                                                    .filter(|n| {
-                                                        !find_node_op
-                                                            .queried_remote_nodes
-                                                            .iter()
-                                                            .any(|existing_n| {
-                                                                existing_n
-                                                                    .node_id
-                                                                    .map(|e_nid| e_nid == n.id)
-                                                                    .unwrap_or(false)
-                                                                    || existing_n.addr
-                                                                        == Addr::SocketAddr(
-                                                                            SocketAddr::V4(n.addr),
-                                                                        )
-                                                            })
-                                                    })
-                                                    .map(|cn| RemoteNodeId {
-                                                        addr: Addr::SocketAddr(SocketAddr::V4(
-                                                            cn.addr,
-                                                        )),
-                                                        node_id: Some(cn.id),
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            })
-                                        {
-                                            use krpc::find_node::FindNodeQueryArgs;
-                                            for id in new_node_ids {
-                                                if let Ok(tx_local_id) = self.write_query(
-                                                    &FindNodeQueryArgs::new_with_id_and_target(
-                                                        self.config.id,
-                                                        find_node_op.id_to_find,
-                                                    ),
-                                                    &id,
-                                                ) {
-                                                    find_node_op.tx_local_ids.push(tx_local_id);
-                                                    find_node_op
-                                                        .queried_remote_nodes
-                                                        .push(id.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                self.find_node_ops.push(find_node_op);
-                            } else {
-                                self.inbound_msgs.push_back(InboundMsg {
-                                    remote_id: transaction.remote_id,
-                                    tx_local_id: Some(transaction.local_id),
-                                    msg: Some(value),
-                                    is_timeout: false,
-                                });
-                            }
+                        if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
+                            self.routing_table.on_response_received(&tx.remote_id);
+                            self.handle_resp_or_err(value, tx, now)?;
                         }
                     }
                     Kind::Error => {
-                        self.routing_table.on_error_received(&transaction.remote_id);
-                        self.probed_nodes
-                            .retain(|n| n.tx_local_id != transaction.local_id);
-                        self.add_node_to_table(&transaction.remote_id, None, None);
-                        self.inbound_msgs.push_back(InboundMsg {
-                            remote_id: transaction.remote_id,
-                            tx_local_id: Some(transaction.local_id),
-                            msg: Some(value),
-                            is_timeout: false,
-                        });
+                        self.routing_table.on_error_received(&tx.remote_id);
+                        self.handle_resp_or_err(value, tx, now)?;
                     }
                     // unexpected
                     Kind::Query | Kind::Unknown(_) => {}
@@ -311,7 +274,6 @@ impl Dht {
             } else {
                 match kind {
                     Kind::Query => {
-                        use krpc::QueryMsg;
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let remote_id = RemoteNodeId {
                             addr: Addr::SocketAddr(addr),
@@ -378,7 +340,6 @@ impl Dht {
                 .next()
                 .map(|n| n.clone());
             if let Some(questionable_node_remote_id) = questionable_node_remote_id {
-                use krpc::ping::PingQueryArgs;
                 if let Ok(tx_local_id) = self.write_query(
                     &PingQueryArgs::new_with_id(self.config.id),
                     &questionable_node_remote_id,
@@ -455,7 +416,6 @@ impl Dht {
         }
 
         reping.into_iter().for_each(|mut p| {
-            use krpc::ping::PingQueryArgs;
             if let Ok(tx_local_id) = self.write_query(
                 &PingQueryArgs::new_with_id(self.config.id),
                 &p.probe_node_id,
@@ -584,7 +544,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::krpc::{
-        find_node::{FindNodeQueryArgs, METHOD_FIND_NODE},
+        find_node::METHOD_FIND_NODE,
         ping::{PingQueryArgs, METHOD_PING},
         Kind, Msg, QueryMsg,
     };
@@ -643,10 +603,7 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
-                assert_eq!(
-                    msg_sent.transaction_id(),
-                    Some(&tx_local_id.id.to_bytebuf())
-                );
+                assert_eq!(msg_sent.tx_id(), Some(&tx_local_id.id.to_bytebuf()));
 
                 Ok(())
             }
@@ -691,7 +648,7 @@ mod tests {
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 assert_eq!(
-                    msg_sent.transaction_id(),
+                    msg_sent.tx_id(),
                     Some(&find_node_op.tx_local_ids.first().unwrap().id.to_bytebuf())
                 );
                 dbg!(&msg_sent);

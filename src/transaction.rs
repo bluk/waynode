@@ -52,3 +52,16 @@ impl std::hash::Hash for Transaction {
         self.remote_id.hash(state)
     }
 }
+
+impl Transaction {
+    pub(crate) fn is_node_id_match(&self, node_id: Option<crate::node::Id>) -> bool {
+        self.remote_id
+            .node_id
+            .map(|tx_node_id| {
+                node_id
+                    .map(|node_id| node_id == tx_node_id)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true)
+    }
+}

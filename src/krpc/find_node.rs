@@ -255,7 +255,7 @@ mod tests {
             Some(&ByteBuf::from(METHOD_FIND_NODE.as_bytes()))
         );
         assert_eq!(msg_value.method_name_str(), Some(METHOD_FIND_NODE));
-        assert_eq!(msg_value.transaction_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| FindNodeQueryArgs::try_from(a).ok())
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.transaction_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
 
         if let Some(values) = msg_value
             .values()

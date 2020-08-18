@@ -41,7 +41,7 @@ impl<'a> Kind<'a> {
 /// A KRPC message.
 pub trait Msg {
     /// The transaction id for the message.
-    fn transaction_id(&self) -> Option<&ByteBuf>;
+    fn tx_id(&self) -> Option<&ByteBuf>;
 
     /// The type of message.
     fn kind(&self) -> Option<Kind>;
@@ -54,7 +54,7 @@ pub trait Msg {
 }
 
 impl Msg for Value {
-    fn transaction_id(&self) -> Option<&ByteBuf> {
+    fn tx_id(&self) -> Option<&ByteBuf> {
         self.as_dict()
             .and_then(|dict| dict.get(&ByteBuf::from(String::from("t"))))
             .and_then(|t| t.as_byte_str())
