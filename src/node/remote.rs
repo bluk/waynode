@@ -1,6 +1,6 @@
-use crate::{addr::NodeIdGenerator, node::Id};
+use crate::{error::Error, node::Id};
 use serde::{Deserialize, Serialize};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -16,30 +16,46 @@ pub struct RemoteNodeId {
 }
 
 impl RemoteNodeId {
-    pub(crate) fn is_valid_node_id(&self) -> bool {
-        if let Some(id) = self.node_id.as_ref() {
-            match self.addr {
-                RemoteAddr::HostPort(ref host) => {
-                    let addrs = host.to_socket_addrs();
-                    match addrs {
-                        Ok(mut addrs) => match addrs.next() {
-                            Some(addr) => match addr {
-                                SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-                                SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-                            },
-                            None => return false,
-                        },
-                        Err(_) => return false,
-                    }
-                }
-                RemoteAddr::SocketAddr(addr) => match addr {
-                    SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-                    SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-                },
+    pub fn resolve_addr(&self) -> Result<SocketAddr, Error> {
+        Ok(match &self.addr {
+            RemoteAddr::SocketAddr(s) => *s,
+            RemoteAddr::HostPort(s) => {
+                use std::net::ToSocketAddrs;
+                s.to_socket_addrs()
+                    .map_err(|_| Error::CannotResolveSocketAddr)?
+                    .next()
+                    .ok_or(Error::CannotResolveSocketAddr)?
             }
-        }
-        false
+        })
     }
+
+    // use crate::{addr::NodeIdGenerator, node::Id};
+    // use serde::{Deserialize, Serialize};
+    // use std::net::{SocketAddr, ToSocketAddrs};
+    // pub(crate) fn is_valid_node_id(&self) -> bool {
+    //     if let Some(id) = self.node_id.as_ref() {
+    //         match self.addr {
+    //             RemoteAddr::HostPort(ref host) => {
+    //                 let addrs = host.to_socket_addrs();
+    //                 match addrs {
+    //                     Ok(mut addrs) => match addrs.next() {
+    //                         Some(addr) => match addr {
+    //                             SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+    //                             SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+    //                         },
+    //                         None => return false,
+    //                     },
+    //                     Err(_) => return false,
+    //                 }
+    //             }
+    //             RemoteAddr::SocketAddr(addr) => match addr {
+    //                 SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+    //                 SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+    //             },
+    //         }
+    //     }
+    //     false
+    // }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]

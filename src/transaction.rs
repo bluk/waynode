@@ -14,6 +14,17 @@ pub(crate) struct Transaction {
     pub sent: Instant,
 }
 
+impl Transaction {
+    pub(crate) fn new_with_id_and_outbound_msg(id: ByteBuf, msg: crate::OutboundMsg) -> Self {
+        Self {
+            id,
+            remote_id: msg.remote_id,
+            resolved_addr: msg.resolved_addr,
+            sent: Instant::now(),
+        }
+    }
+}
+
 impl std::hash::Hash for Transaction {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);

@@ -148,7 +148,7 @@ fn main() -> io::Result<()> {
                                                 Some(ping_resp.into()),
                                                 inbound_msg.return_remote_id(),
                                             ) {
-                                                Ok(()) => {}
+                                                Ok((socket_addr)) => {}
                                                 Err(_) => panic!(),
                                             };
                                         }
