@@ -35,10 +35,23 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq)]
 struct OutboundMsg {
-    transaction_id: Option<ByteBuf>,
+    local_tx_id: Option<ByteBuf>,
     remote_id: RemoteNodeId,
     resolved_addr: SocketAddr,
     msg_data: Vec<u8>,
+}
+
+impl OutboundMsg {
+    fn to_transaction(self) -> Option<transaction::Transaction> {
+        let remote_id = self.remote_id;
+        let resolved_addr = self.resolved_addr;
+        self.local_tx_id.map(|id| transaction::Transaction {
+            id,
+            remote_id,
+            resolved_addr,
+            sent: Instant::now(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -495,7 +508,7 @@ impl Dht {
         let resolved_addr = remote_id.resolve_addr()?;
         let transaction_id = self.next_transaction_id();
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: Some(transaction_id.clone()),
+            local_tx_id: Some(transaction_id.clone()),
             remote_id: remote_id.clone(),
             resolved_addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
@@ -518,7 +531,7 @@ impl Dht {
     ) -> Result<SocketAddr, error::Error> {
         let resolved_addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: None,
+            local_tx_id: None,
             remote_id,
             resolved_addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
@@ -539,7 +552,7 @@ impl Dht {
     ) -> Result<SocketAddr, error::Error> {
         let resolved_addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
-            transaction_id: None,
+            local_tx_id: None,
             remote_id,
             resolved_addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
@@ -554,27 +567,16 @@ impl Dht {
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
         if let Some(out_msg) = self.outbound_msgs.pop_front() {
-            let OutboundMsg {
-                transaction_id,
-                remote_id,
-                resolved_addr,
-                msg_data,
-            } = out_msg;
-            if let Some(transaction_id) = transaction_id {
-                let transaction = transaction::Transaction {
-                    id: transaction_id,
-                    remote_id,
-                    resolved_addr,
-                    sent: Instant::now(),
-                };
-                self.transactions.push_back(transaction);
-            }
-            buf.write_all(&msg_data)
+            buf.write_all(&out_msg.msg_data)
                 .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-            Ok(Some(SendInfo {
-                len: msg_data.len(),
-                addr: resolved_addr,
-            }))
+            let result = Some(SendInfo {
+                len: out_msg.msg_data.len(),
+                addr: out_msg.resolved_addr,
+            });
+            if let Some(tx) = out_msg.to_transaction() {
+                self.transactions.push_back(tx);
+            }
+            Ok(result)
         } else {
             Ok(None)
         }
