@@ -12,7 +12,7 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-pub(crate) mod addr;
+pub mod addr;
 pub mod error;
 pub mod krpc;
 pub mod node;
@@ -20,11 +20,9 @@ pub(crate) mod routing;
 pub(crate) mod transaction;
 
 use crate::{
+    addr::Addr,
     krpc::QueryArgs,
-    node::{
-        remote::{RemoteNode, RemoteNodeId},
-        Id,
-    },
+    node::remote::{RemoteNode, RemoteNodeId},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -67,7 +65,7 @@ struct NodeToReplace {
 struct FindNodeOp {
     transactions: Vec<FindNodeTx>,
     remote_ids: Vec<RemoteNodeId>,
-    id_to_find: Id,
+    id_to_find: node::Id,
 }
 
 #[derive(Debug, PartialEq)]
@@ -97,7 +95,7 @@ impl InboundMsg {
             .as_ref()
             .map(|r| r.clone())
             .unwrap_or_else(|| RemoteNodeId {
-                addr: node::remote::RemoteAddr::SocketAddr(self.addr),
+                addr: Addr::SocketAddr(self.addr),
                 node_id: None,
             })
     }
@@ -107,7 +105,7 @@ impl InboundMsg {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Local node id
-    pub id: Id,
+    pub id: node::Id,
     /// Client version identifier
     pub client_version: Option<ByteBuf>,
     /// The amount of time before a query without a response is considered timed out
@@ -250,7 +248,6 @@ impl Dht {
                                     // TODO: Also look at remote ID
                                 });
                                 use krpc::find_node::FindNodeRespValues;
-                                use node::remote::RemoteAddr;
                                 if let Some(values) = value.values() {
                                     if let Ok(response) = FindNodeRespValues::try_from(values) {
                                         if let Some(new_node_ids) =
@@ -265,16 +262,16 @@ impl Dht {
                                                                     .map(|e_nid| e_nid == n.id)
                                                                     .unwrap_or(false)
                                                                     || existing_n.addr
-                                                                        == RemoteAddr::SocketAddr(
+                                                                        == Addr::SocketAddr(
                                                                             SocketAddr::V4(n.addr),
                                                                         )
                                                             },
                                                         )
                                                     })
                                                     .map(|cn| RemoteNodeId {
-                                                        addr: RemoteAddr::SocketAddr(
-                                                            SocketAddr::V4(cn.addr),
-                                                        ),
+                                                        addr: Addr::SocketAddr(SocketAddr::V4(
+                                                            cn.addr,
+                                                        )),
                                                         node_id: Some(cn.id),
                                                     })
                                                     .collect::<Vec<_>>()
@@ -336,7 +333,7 @@ impl Dht {
                         use krpc::QueryMsg;
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let remote_id = RemoteNodeId {
-                            addr: node::remote::RemoteAddr::SocketAddr(addr),
+                            addr: Addr::SocketAddr(addr),
                             node_id: querying_node_id,
                         };
                         self.routing_table.on_query_received(&remote_id);
@@ -602,13 +599,10 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use crate::{
-        krpc::{
-            find_node::{FindNodeQueryArgs, METHOD_FIND_NODE},
-            ping::{PingQueryArgs, METHOD_PING},
-            Kind, Msg, QueryMsg,
-        },
-        node::remote::RemoteAddr,
+    use crate::krpc::{
+        find_node::{FindNodeQueryArgs, METHOD_FIND_NODE},
+        ping::{PingQueryArgs, METHOD_PING},
+        Kind, Msg, QueryMsg,
     };
 
     fn new_config() -> Result<Config, error::Error> {
@@ -621,8 +615,8 @@ mod tests {
         })
     }
 
-    fn remote_addr() -> RemoteAddr {
-        node::remote::RemoteAddr::SocketAddr(SocketAddr::V4(SocketAddrV4::new(
+    fn remote_addr() -> Addr {
+        Addr::SocketAddr(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(127, 0, 0, 1),
             6532,
         )))
@@ -632,8 +626,8 @@ mod tests {
         node::Id::rand().unwrap()
     }
 
-    fn bootstrap_remote_addr() -> RemoteAddr {
-        RemoteAddr::HostPort(String::from("127.0.0.1:6881"))
+    fn bootstrap_remote_addr() -> Addr {
+        Addr::HostPort(String::from("127.0.0.1:6881"))
     }
 
     #[test]
@@ -654,7 +648,7 @@ mod tests {
         match dht.send_to(&mut out)? {
             Some(send_info) => {
                 match remote_addr {
-                    RemoteAddr::SocketAddr(socket_addr) => {
+                    Addr::SocketAddr(socket_addr) => {
                         assert_eq!(send_info.addr, socket_addr);
                     }
                     _ => panic!(),
@@ -665,7 +659,7 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
-                assert_eq!(msg_sent.transaction_id(), Some(&tx_id));
+                assert_eq!(msg_sent.transaction_id(), Some(&tx_id.to_bytebuf()));
 
                 Ok(())
             }
@@ -686,7 +680,7 @@ mod tests {
         match dht.send_to(&mut out)? {
             Some(send_info) => {
                 match bootstrap_remote_addr.clone() {
-                    RemoteAddr::HostPort(host_port) => {
+                    Addr::HostPort(host_port) => {
                         use std::net::ToSocketAddrs;
                         let socket_addr: SocketAddr =
                             host_port.to_socket_addrs().unwrap().next().unwrap();

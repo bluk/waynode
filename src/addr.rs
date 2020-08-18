@@ -1,7 +1,15 @@
 use crate::{error::Error, node::Id};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+use std::net::SocketAddr;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum Addr {
+    HostPort(String),
+    SocketAddr(SocketAddr),
+}
 
 pub struct CompactNodeInfo<T: CompactAddr> {
     pub id: Id,
@@ -114,7 +122,7 @@ impl Crc32cMaker for Ipv6Addr {
     }
 }
 
-pub trait NodeIdGenerator {
+pub(crate) trait NodeIdGenerator {
     fn make_node_id(&self, rand: Option<u8>) -> Result<Id, Error>;
 
     fn is_valid_node_id(&self, id: &Id) -> bool;

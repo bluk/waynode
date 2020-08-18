@@ -64,21 +64,15 @@ fn main() -> io::Result<()> {
     });
     dht.bootstrap(&[
         bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
-                "router.magnets.im:6881",
-            )),
+            addr: bt_dht::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
             node_id: None,
         },
         bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
-                "router.bittorrent.com:6881",
-            )),
+            addr: bt_dht::addr::Addr::HostPort(String::from("router.bittorrent.com:6881")),
             node_id: None,
         },
         bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::node::remote::RemoteAddr::HostPort(String::from(
-                "dht.transmissionbt.com:6881",
-            )),
+            addr: bt_dht::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
             node_id: None,
         },
     ]);
