@@ -65,15 +65,9 @@ struct NodeToReplace {
 
 #[derive(Debug, PartialEq)]
 struct FindNodeOp {
-    transactions: Vec<FindNodeTx>,
-    remote_ids: Vec<RemoteNodeId>,
+    tx_local_ids: Vec<transaction::LocalId>,
+    queried_remote_nodes: Vec<RemoteNodeId>,
     id_to_find: node::Id,
-}
-
-#[derive(Debug, PartialEq)]
-struct FindNodeTx {
-    tx_local_id: transaction::LocalId,
-    remote_id: RemoteNodeId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,23 +76,29 @@ pub struct SendInfo {
     pub addr: SocketAddr,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub struct InboundMsg {
-    pub remote_id: Option<RemoteNodeId>,
-    pub addr: SocketAddr,
-    pub msg: Option<Value>,
-    pub is_timeout: bool,
+    remote_id: RemoteNodeId,
+    tx_local_id: Option<transaction::LocalId>,
+    msg: Option<Value>,
+    is_timeout: bool,
 }
 
 impl InboundMsg {
-    pub fn return_remote_id(&self) -> RemoteNodeId {
-        self.remote_id
-            .as_ref()
-            .map(|r| r.clone())
-            .unwrap_or_else(|| RemoteNodeId {
-                addr: Addr::SocketAddr(self.addr),
-                node_id: None,
-            })
+    pub fn remote_id(&self) -> &RemoteNodeId {
+        &self.remote_id
+    }
+
+    pub fn tx_local_id(&self) -> Option<transaction::LocalId> {
+        self.tx_local_id
+    }
+
+    pub fn msg(&self) -> &Option<Value> {
+        &self.msg
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        self.is_timeout
     }
 }
 
@@ -156,8 +156,8 @@ impl Dht {
             .map(|&n| n.clone())
             .collect::<Vec<RemoteNodeId>>();
         let mut find_node_op = FindNodeOp {
-            transactions: Vec::new(),
-            remote_ids: Vec::new(),
+            tx_local_ids: Vec::new(),
+            queried_remote_nodes: Vec::new(),
             id_to_find: self.config.id,
         };
         for n in neighbors {
@@ -166,11 +166,8 @@ impl Dht {
                 &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
                 &n,
             ) {
-                find_node_op.transactions.push(FindNodeTx {
-                    tx_local_id,
-                    remote_id: n.clone(),
-                });
-                find_node_op.remote_ids.push(n);
+                find_node_op.tx_local_ids.push(tx_local_id);
+                find_node_op.queried_remote_nodes.push(n);
             }
         }
         self.find_node_ops.push(find_node_op);
@@ -227,15 +224,15 @@ impl Dht {
                                 .find_node_ops
                                 .iter()
                                 .position(|op| {
-                                    op.transactions
+                                    op.tx_local_ids
                                         .iter()
-                                        .any(|tx| tx.tx_local_id == transaction.local_id)
+                                        .any(|&tx_local_id| tx_local_id == transaction.local_id)
                                 })
                                 .map(|idx| self.find_node_ops.swap_remove(idx))
                             {
                                 find_node_op
-                                    .transactions
-                                    .retain(|tx| tx.tx_local_id != transaction.local_id);
+                                    .tx_local_ids
+                                    .retain(|&tx_local_id| tx_local_id != transaction.local_id);
                                 use krpc::find_node::FindNodeRespValues;
                                 if let Some(values) = value.values() {
                                     if let Ok(response) = FindNodeRespValues::try_from(values) {
@@ -244,8 +241,10 @@ impl Dht {
                                                 nodes
                                                     .iter()
                                                     .filter(|n| {
-                                                        !find_node_op.remote_ids.iter().any(
-                                                            |existing_n| {
+                                                        !find_node_op
+                                                            .queried_remote_nodes
+                                                            .iter()
+                                                            .any(|existing_n| {
                                                                 existing_n
                                                                     .node_id
                                                                     .map(|e_nid| e_nid == n.id)
@@ -254,8 +253,7 @@ impl Dht {
                                                                         == Addr::SocketAddr(
                                                                             SocketAddr::V4(n.addr),
                                                                         )
-                                                            },
-                                                        )
+                                                            })
                                                     })
                                                     .map(|cn| RemoteNodeId {
                                                         addr: Addr::SocketAddr(SocketAddr::V4(
@@ -275,11 +273,10 @@ impl Dht {
                                                     ),
                                                     &id,
                                                 ) {
-                                                    find_node_op.transactions.push(FindNodeTx {
-                                                        tx_local_id,
-                                                        remote_id: id.clone(),
-                                                    });
-                                                    find_node_op.remote_ids.push(id.clone());
+                                                    find_node_op.tx_local_ids.push(tx_local_id);
+                                                    find_node_op
+                                                        .queried_remote_nodes
+                                                        .push(id.clone());
                                                 }
                                             }
                                         }
@@ -288,8 +285,8 @@ impl Dht {
                                 self.find_node_ops.push(find_node_op);
                             } else {
                                 self.inbound_msgs.push_back(InboundMsg {
-                                    remote_id: Some(transaction.remote_id),
-                                    addr,
+                                    remote_id: transaction.remote_id,
+                                    tx_local_id: Some(transaction.local_id),
                                     msg: Some(value),
                                     is_timeout: false,
                                 });
@@ -302,8 +299,8 @@ impl Dht {
                             .retain(|n| n.tx_local_id != transaction.local_id);
                         self.add_node_to_table(&transaction.remote_id, None, None);
                         self.inbound_msgs.push_back(InboundMsg {
-                            remote_id: Some(transaction.remote_id),
-                            addr,
+                            remote_id: transaction.remote_id,
+                            tx_local_id: Some(transaction.local_id),
                             msg: Some(value),
                             is_timeout: false,
                         });
@@ -323,8 +320,8 @@ impl Dht {
                         self.routing_table.on_query_received(&remote_id);
                         self.add_node_to_table(&remote_id, None, Some(now));
                         self.inbound_msgs.push_back(InboundMsg {
-                            remote_id: Some(remote_id),
-                            addr,
+                            remote_id,
+                            tx_local_id: None,
                             msg: Some(value),
                             is_timeout: false,
                         });
@@ -434,8 +431,8 @@ impl Dht {
             .filter(|tx| tx.sent + timeout <= now)
         {
             self.inbound_msgs.push_back(InboundMsg {
-                remote_id: Some(tx.remote_id.clone()),
-                addr: tx.local_id.addr,
+                remote_id: tx.remote_id.clone(),
+                tx_local_id: Some(tx.local_id),
                 msg: None,
                 is_timeout: true,
             });
@@ -510,12 +507,12 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<Value>,
-        remote_id: RemoteNodeId,
+        remote_id: &RemoteNodeId,
     ) -> Result<SocketAddr, error::Error> {
         let resolved_addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
             local_tx_id: None,
-            remote_id,
+            remote_id: remote_id.clone(),
             resolved_addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.as_ref(),
@@ -531,12 +528,12 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         details: Option<Value>,
-        remote_id: RemoteNodeId,
+        remote_id: &RemoteNodeId,
     ) -> Result<SocketAddr, error::Error> {
         let resolved_addr = remote_id.resolve_addr()?;
         self.outbound_msgs.push_back(OutboundMsg {
             local_tx_id: None,
-            remote_id,
+            remote_id: remote_id.clone(),
             resolved_addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: details.as_ref(),
@@ -685,7 +682,7 @@ mod tests {
                         addr: bootstrap_remote_addr.clone(),
                         node_id: None,
                     },
-                    find_node_op.remote_ids.first().unwrap()
+                    find_node_op.queried_remote_nodes.first().unwrap()
                 );
 
                 let filled_buf = &out[..send_info.len];
@@ -695,15 +692,7 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 assert_eq!(
                     msg_sent.transaction_id(),
-                    Some(
-                        &find_node_op
-                            .transactions
-                            .first()
-                            .unwrap()
-                            .tx_local_id
-                            .id
-                            .to_bytebuf()
-                    )
+                    Some(&find_node_op.tx_local_ids.first().unwrap().id.to_bytebuf())
                 );
                 dbg!(&msg_sent);
                 let find_node_query_args =

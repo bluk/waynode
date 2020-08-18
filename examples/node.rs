@@ -128,7 +128,7 @@ fn main() -> io::Result<()> {
 
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
-                    if let Some(msg) = &inbound_msg.msg {
+                    if let Some(msg) = &inbound_msg.msg() {
                         match msg.kind() {
                             Some(Kind::Query) => {
                                 match msg.method_name_str() {
@@ -140,7 +140,7 @@ fn main() -> io::Result<()> {
                                             match dht.write_resp(
                                                 tx_id,
                                                 Some(ping_resp.into()),
-                                                inbound_msg.return_remote_id(),
+                                                inbound_msg.remote_id(),
                                             ) {
                                                 Ok(socket_addr) => {}
                                                 Err(_) => panic!(),
