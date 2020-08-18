@@ -49,18 +49,19 @@ struct NodeToReplace {
     timeout_count: u8,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 struct FindNodeOp {
-    transaction_ids: Vec<ByteBuf>,
+    transactions: Vec<FindNodeTx>,
     remote_ids: Vec<RemoteNodeId>,
     id_to_find: Id,
 }
 
-// struct FindNodeTx {
-//     id: ByteBuf,
-//     remote_id: RemoteNodeId,
-//     resolved_addr: SocketAddr,
-// }
+#[derive(Debug, PartialEq)]
+struct FindNodeTx {
+    id: ByteBuf,
+    remote_id: RemoteNodeId,
+    resolved_addr: SocketAddr,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SendInfo {
@@ -137,26 +138,27 @@ impl Dht {
 
     pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [RemoteNodeId]) {
         let neighbors = self
-            .find_neighbors(self.config.id.clone(), bootstrap_nodes, true, None)
+            .find_neighbors(self.config.id, bootstrap_nodes, true, None)
             .iter()
             .map(|&n| n.clone())
             .collect::<Vec<RemoteNodeId>>();
         let mut find_node_op = FindNodeOp {
-            transaction_ids: Vec::new(),
+            transactions: Vec::new(),
             remote_ids: Vec::new(),
-            id_to_find: self.config.id.clone(),
+            id_to_find: self.config.id,
         };
         for n in neighbors {
             use krpc::find_node::FindNodeQueryArgs;
             if let Ok((transaction_id, resolved_addr)) = self.write_query(
-                &FindNodeQueryArgs::new_with_id_and_target(
-                    self.config.id.clone(),
-                    self.config.id.clone(),
-                ),
+                &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
                 &n,
             ) {
-                find_node_op.transaction_ids.push(transaction_id);
-                find_node_op.remote_ids.push(n.clone());
+                find_node_op.transactions.push(FindNodeTx {
+                    id: transaction_id,
+                    remote_id: n.clone(),
+                    resolved_addr,
+                });
+                find_node_op.remote_ids.push(n);
             }
         }
         self.find_node_ops.push(find_node_op);
@@ -218,12 +220,20 @@ impl Dht {
                             if let Some(mut find_node_op) = self
                                 .find_node_ops
                                 .iter()
-                                .position(|op| op.transaction_ids.contains(&transaction.id))
+                                .position(|op| {
+                                    op.transactions.iter().any(|tx| {
+                                        tx.id == transaction.id
+                                            && tx.resolved_addr == transaction.resolved_addr
+                                        // && tx.remote_id == transaction.remote_id
+                                    })
+                                })
                                 .map(|idx| self.find_node_ops.swap_remove(idx))
                             {
-                                find_node_op
-                                    .transaction_ids
-                                    .retain(|id| id != &transaction.id);
+                                find_node_op.transactions.retain(|tx| {
+                                    tx.id != &transaction.id
+                                        || tx.resolved_addr != transaction.resolved_addr
+                                    // TODO
+                                });
                                 use krpc::find_node::FindNodeRespValues;
                                 use node::remote::RemoteAddr;
                                 use std::convert::TryFrom;
@@ -261,15 +271,17 @@ impl Dht {
                                                 if let Ok((transaction_id, resolved_addr)) = self
                                                     .write_query(
                                                         &FindNodeQueryArgs::new_with_id_and_target(
-                                                            self.config.id.clone(),
-                                                            find_node_op.id_to_find.clone(),
+                                                            self.config.id,
+                                                            find_node_op.id_to_find,
                                                         ),
                                                         &id,
                                                     )
                                                 {
-                                                    find_node_op
-                                                        .transaction_ids
-                                                        .push(transaction_id);
+                                                    find_node_op.transactions.push(FindNodeTx {
+                                                        id: transaction_id,
+                                                        remote_id: id.clone(),
+                                                        resolved_addr,
+                                                    });
                                                     find_node_op.remote_ids.push(id.clone());
                                                 }
                                             }
@@ -375,13 +387,10 @@ impl Dht {
                 .map(|n| n.clone());
             if let Some(questionable_node_remote_id) = questionable_node_remote_id {
                 use krpc::ping::PingQueryArgs;
-                if let Some((transaction_id, resolved_addr)) = self
-                    .write_query(
-                        &PingQueryArgs::new_with_id(self.config.id),
-                        &questionable_node_remote_id,
-                    )
-                    .ok()
-                {
+                if let Ok((transaction_id, resolved_addr)) = self.write_query(
+                    &PingQueryArgs::new_with_id(self.config.id),
+                    &questionable_node_remote_id,
+                ) {
                     self.probed_nodes.push(NodeToReplace {
                         transaction_id,
                         probe_node_id: questionable_node_remote_id,
@@ -468,11 +477,11 @@ impl Dht {
     }
 
     #[inline]
-    fn next_transaction_id(&mut self) -> transaction::Id {
+    fn next_transaction_id(&mut self) -> ByteBuf {
         let transaction_id = self.next_transaction_id.0;
         let (next_id, _) = transaction_id.overflowing_add(1);
         self.next_transaction_id.0 = next_id;
-        transaction::Id(transaction_id)
+        ByteBuf::from(transaction_id.to_be_bytes())
     }
 
     pub fn write_query<T>(
@@ -484,7 +493,7 @@ impl Dht {
         T: QueryArgs,
     {
         let resolved_addr = remote_id.resolve_addr()?;
-        let transaction_id = ByteBuf::from(self.next_transaction_id().0.to_be_bytes());
+        let transaction_id = self.next_transaction_id();
         self.outbound_msgs.push_back(OutboundMsg {
             transaction_id: Some(transaction_id.clone()),
             remote_id: remote_id.clone(),
@@ -633,7 +642,7 @@ mod tests {
         let remote_addr = remote_addr();
         let remote_id = RemoteNodeId {
             addr: remote_addr.clone(),
-            node_id: Some(id.clone()),
+            node_id: Some(id),
         };
 
         let args = PingQueryArgs::new_with_id(id);
@@ -702,7 +711,7 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 assert_eq!(
                     msg_sent.transaction_id(),
-                    Some(find_node_op.transaction_ids.first().unwrap())
+                    Some(&find_node_op.transactions.first().unwrap().id)
                 );
                 dbg!(&msg_sent);
                 let find_node_query_args =
