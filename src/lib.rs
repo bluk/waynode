@@ -34,7 +34,6 @@ use crate::{
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::collections::VecDeque;
-use std::convert::TryFrom;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -52,10 +51,7 @@ impl OutboundMsg {
         let remote_id = self.remote_id;
         let resolved_addr = self.addr;
         self.tx_id.map(|tx_id| transaction::Transaction {
-            local_id: transaction::LocalId {
-                id: tx_id,
-                addr: resolved_addr,
-            },
+            local_id: transaction::LocalId::with_id_and_addr(tx_id, resolved_addr),
             remote_id,
             sent: Instant::now(),
         })
@@ -126,8 +122,7 @@ pub struct Dht {
 
     find_node_ops: Vec<FindNodeOp>,
 
-    transactions: VecDeque<transaction::Transaction>,
-    next_transaction_id: transaction::Id,
+    tx_manager: transaction::Manager,
 
     inbound_msgs: VecDeque<InboundMsg>,
     outbound_msgs: VecDeque<OutboundMsg>,
@@ -142,8 +137,7 @@ impl Dht {
             routing_table: routing::Table::new(id, max_node_count_per_bucket),
             probed_nodes: Vec::new(),
             find_node_ops: Vec::new(),
-            transactions: VecDeque::new(),
-            next_transaction_id: transaction::Id(0),
+            tx_manager: transaction::Manager::new(),
             inbound_msgs: VecDeque::new(),
             outbound_msgs: VecDeque::new(),
         }
@@ -174,22 +168,6 @@ impl Dht {
 
     pub fn on_recv(&mut self, bytes: &[u8], addr: SocketAddr) -> Result<(), error::Error> {
         self.on_recv_with_now(bytes, addr, Instant::now())
-    }
-
-    fn find_local_tx(
-        &mut self,
-        tx_id: &ByteBuf,
-        addr: SocketAddr,
-    ) -> Option<transaction::Transaction> {
-        transaction::Id::try_from(tx_id)
-            .map(|tx_id| transaction::LocalId { id: tx_id, addr })
-            .ok()
-            .and_then(|tx_local_id| {
-                self.transactions
-                    .iter()
-                    .position(|t| t.local_id == tx_local_id)
-            })
-            .and_then(|idx| self.transactions.swap_remove_back(idx))
     }
 
     fn find_find_node_op(&mut self, tx_local_id: transaction::LocalId) -> Option<FindNodeOp> {
@@ -238,7 +216,7 @@ impl Dht {
         if let Some(kind) = value.kind() {
             if let Some(tx) = value
                 .tx_id()
-                .and_then(|tx_id| self.find_local_tx(tx_id, addr))
+                .and_then(|tx_id| self.tx_manager.find(tx_id, addr))
             {
                 match kind {
                     Kind::Response => {
@@ -356,17 +334,15 @@ impl Dht {
     }
 
     pub fn timeout(&self) -> Option<Duration> {
-        if let Some(earliest_sent) = self.transactions.iter().map(|t| t.sent).min() {
+        self.tx_manager.min_sent_instant().map(|earliest_sent| {
             let now = Instant::now();
             let timeout = earliest_sent + self.config.query_timeout;
             if now > timeout {
-                Some(Duration::from_secs(0))
+                Duration::from_secs(0)
             } else {
-                Some(timeout - now)
+                timeout - now
             }
-        } else {
-            None
-        }
+        })
     }
 
     pub fn on_timeout(&mut self) {
@@ -377,20 +353,17 @@ impl Dht {
         let timeout = self.config.query_timeout;
         let mut reping: Vec<NodeToReplace> = vec![];
 
-        for tx in self
-            .transactions
-            .iter()
-            .filter(|tx| tx.sent + timeout <= now)
-        {
-            self.inbound_msgs.push_back(InboundMsg {
-                remote_id: tx.remote_id.clone(),
-                tx_local_id: Some(tx.local_id),
-                msg: None,
-                is_timeout: true,
-            });
+        if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(timeout, now) {
+            for tx in timed_out_txs {
+                self.inbound_msgs.push_back(InboundMsg {
+                    remote_id: tx.remote_id.clone(),
+                    tx_local_id: Some(tx.local_id),
+                    msg: None,
+                    is_timeout: true,
+                });
 
-            self.routing_table.on_response_timeout(&tx.remote_id);
-            if let Some(position) = self
+                self.routing_table.on_response_timeout(&tx.remote_id);
+                if let Some(position) = self
                 .probed_nodes
                 .iter()
                 .position(|p| p.tx_local_id == tx.local_id /* redundant: && p.probe_node_id == tx.remote_id */)
@@ -404,6 +377,7 @@ impl Dht {
                     reping.push(probed_node);
                 }
             }
+            }
         }
 
         reping.into_iter().for_each(|mut p| {
@@ -415,15 +389,6 @@ impl Dht {
                 self.probed_nodes.push(p);
             }
         });
-
-        self.transactions.retain(|tx| tx.sent + timeout > now);
-    }
-
-    #[inline]
-    fn next_transaction_id(&mut self) -> transaction::Id {
-        let transaction_id = self.next_transaction_id;
-        self.next_transaction_id = self.next_transaction_id.next();
-        transaction_id
     }
 
     pub fn write_query<T>(
@@ -435,7 +400,7 @@ impl Dht {
         T: QueryArgs + std::fmt::Debug,
     {
         let addr = remote_id.resolve_addr()?;
-        let transaction_id = self.next_transaction_id();
+        let transaction_id = self.tx_manager.next_transaction_id();
 
         debug!(
             "write_query tx_id={:?} method_name={:?} remote_id={:?} args={:?}",
@@ -457,10 +422,7 @@ impl Dht {
             })
             .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
         });
-        Ok(transaction::LocalId {
-            id: transaction_id,
-            addr,
-        })
+        Ok(transaction::LocalId::with_id_and_addr(transaction_id, addr))
     }
 
     pub fn write_resp(
@@ -514,7 +476,7 @@ impl Dht {
                 addr: out_msg.addr,
             });
             if let Some(tx) = out_msg.into_transaction() {
-                self.transactions.push_back(tx);
+                self.tx_manager.on_send_to(tx);
             }
             Ok(result)
         } else {
@@ -541,6 +503,7 @@ impl Dht {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::convert::TryFrom;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::krpc::{
@@ -603,7 +566,7 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
-                assert_eq!(msg_sent.tx_id(), Some(&tx_local_id.id.to_bytebuf()));
+                assert_eq!(msg_sent.tx_id(), Some(&tx_local_id.id().to_bytebuf()));
 
                 Ok(())
             }
@@ -649,7 +612,7 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 assert_eq!(
                     msg_sent.tx_id(),
-                    Some(&find_node_op.tx_local_ids.first().unwrap().id.to_bytebuf())
+                    Some(&find_node_op.tx_local_ids.first().unwrap().id().to_bytebuf())
                 );
                 dbg!(&msg_sent);
                 let find_node_query_args =
