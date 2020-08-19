@@ -221,16 +221,14 @@ impl Dht {
                 match kind {
                     Kind::Response => {
                         if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
+                            self.routing_table.on_msg_received(&tx.remote_id, &kind);
                             debug!("Received response for tx_local_id={:?}", tx.local_id);
-
-                            self.routing_table.on_response_received(&tx.remote_id);
                             self.handle_resp_or_err(value, tx, now)?;
                         }
                     }
                     Kind::Error => {
+                        self.routing_table.on_msg_received(&tx.remote_id, &kind);
                         debug!("Received error for tx_local_id={:?}", tx.local_id);
-
-                        self.routing_table.on_error_received(&tx.remote_id);
                         self.handle_resp_or_err(value, tx, now)?;
                     }
                     // unexpected
@@ -245,7 +243,7 @@ impl Dht {
                             addr: Addr::SocketAddr(addr),
                             node_id: querying_node_id,
                         };
-                        self.routing_table.on_query_received(&remote_id);
+                        self.routing_table.on_msg_received(&remote_id, &kind);
                         self.add_node_to_table(&remote_id, None, Some(now));
                         self.inbound_msgs.push_back(InboundMsg {
                             remote_id,

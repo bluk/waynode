@@ -1,6 +1,9 @@
-use crate::node::{
-    remote::{RemoteNode, RemoteNodeId, RemoteState},
-    Id,
+use crate::{
+    krpc::Kind,
+    node::{
+        remote::{RemoteNode, RemoteNodeId, RemoteState},
+        Id,
+    },
 };
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
@@ -24,23 +27,14 @@ impl Bucket {
         }
     }
 
-    fn on_query_received(&mut self, id: &RemoteNodeId) {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
-            node.on_query();
-            self.sort_node_ids();
-        }
-    }
-
-    fn on_response_received(&mut self, id: &RemoteNodeId) {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
-            node.on_response();
-            self.sort_node_ids();
-        }
-    }
-
-    fn on_error_received(&mut self, id: &RemoteNodeId) {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
-            node.on_error();
+    fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *remote_id) {
+            match kind {
+                Kind::Response => node.on_response(),
+                Kind::Query => node.on_query(),
+                Kind::Error => node.on_error(),
+                Kind::Unknown(_) => {}
+            }
             self.sort_node_ids();
         }
     }
@@ -240,26 +234,10 @@ impl Table {
         (bucket, Some(bucket) == self.buckets.last())
     }
 
-    pub(crate) fn on_query_received(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>) {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                bucket.on_query_received(remote_id)
-            }
-        }
-    }
-
-    pub(crate) fn on_response_received(&mut self, remote_id: &RemoteNodeId) {
-        if let Some(id) = remote_id.node_id {
-            if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                bucket.on_response_received(remote_id)
-            }
-        }
-    }
-
-    pub(crate) fn on_error_received(&mut self, remote_id: &RemoteNodeId) {
-        if let Some(id) = remote_id.node_id {
-            if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                bucket.on_error_received(remote_id)
+                bucket.on_msg_received(remote_id, kind);
             }
         }
     }
