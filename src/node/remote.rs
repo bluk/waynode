@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct RemoteNodeId {
-    pub addr: Addr,
     pub node_id: Option<Id>,
+    pub addr: Addr,
 }
 
 impl RemoteNodeId {
-    pub fn resolve_addr(&self) -> Result<SocketAddr, Error> {
+    pub(crate) fn resolve_addr(&self) -> Result<SocketAddr, Error> {
         Ok(match &self.addr {
             Addr::SocketAddr(s) => *s,
             Addr::HostPort(s) => {

@@ -1,9 +1,14 @@
 use crate::{
     addr::Addr,
-    krpc::find_node::FindNodeRespValues,
+    krpc::{
+        find_node::{FindNodeQueryArgs, FindNodeRespValues},
+        Kind, Msg, RespMsg,
+    },
     node::{self, remote::RemoteNodeId},
     transaction,
 };
+use bt_bencode::Value;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 
 #[derive(Clone, Debug)]
@@ -61,5 +66,41 @@ impl FindNodeOp {
                 })
                 .collect::<Vec<_>>()
         })
+    }
+
+    pub(crate) fn process_msg(
+        &mut self,
+        dht: &mut crate::Dht,
+        tx: transaction::Transaction,
+        msg: Value,
+    ) {
+        self.remove_tx_local_id(tx.local_id);
+
+        if let Some(kind) = msg.kind() {
+            match kind {
+                Kind::Response => {
+                    if let Some(new_node_ids) = msg
+                        .values()
+                        .and_then(|values| FindNodeRespValues::try_from(values).ok())
+                        .and_then(|resp| self.filter_new_nodes(&resp))
+                    {
+                        for id in new_node_ids {
+                            if let Ok(tx_local_id) = dht.write_query(
+                                &FindNodeQueryArgs::new_with_id_and_target(
+                                    dht.config.id,
+                                    self.id_to_find(),
+                                ),
+                                &id,
+                            ) {
+                                self.add_queried_node_id(id.clone());
+                                self.add_tx_local_id(tx_local_id);
+                            }
+                        }
+                    }
+                }
+                Kind::Error => {}
+                Kind::Query | Kind::Unknown(_) => unreachable!(),
+            }
+        }
     }
 }

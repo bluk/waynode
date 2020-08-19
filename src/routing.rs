@@ -181,14 +181,14 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn new(pivot: Id, max_nodes: usize) -> Self {
+    pub(crate) fn new(pivot: Id, max_nodes: usize) -> Self {
         Self {
             pivot,
             buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes)],
         }
     }
 
-    pub fn find_nearest_neighbor<'a>(
+    pub(crate) fn find_nearest_neighbor<'a>(
         &'a self,
         id: Id,
         bootstrap_nodes: &'a [RemoteNodeId],
@@ -240,7 +240,7 @@ impl Table {
         (bucket, Some(bucket) == self.buckets.last())
     }
 
-    pub fn on_query_received(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_query_received(&mut self, remote_id: &RemoteNodeId) {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
                 bucket.on_query_received(remote_id)
@@ -248,7 +248,7 @@ impl Table {
         }
     }
 
-    pub fn on_response_received(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_response_received(&mut self, remote_id: &RemoteNodeId) {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
                 bucket.on_response_received(remote_id)
@@ -256,7 +256,7 @@ impl Table {
         }
     }
 
-    pub fn on_error_received(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_error_received(&mut self, remote_id: &RemoteNodeId) {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
                 bucket.on_error_received(remote_id)
@@ -264,7 +264,7 @@ impl Table {
         }
     }
 
-    pub fn on_response_timeout(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_response_timeout(&mut self, remote_id: &RemoteNodeId) {
         if let Some(id) = remote_id.node_id {
             if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
                 bucket.on_response_timeout(remote_id)
@@ -273,7 +273,7 @@ impl Table {
     }
 
     // TODO: Replace with RemoteNode instead
-    pub fn add(&mut self, remote_id: RemoteNodeId, replaced_id: Option<&RemoteNodeId>) {
+    pub(crate) fn add(&mut self, remote_id: RemoteNodeId, replaced_id: Option<&RemoteNodeId>) {
         if let Some(id) = remote_id.node_id {
             if id == self.pivot {
                 return;

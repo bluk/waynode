@@ -12,6 +12,9 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
+#[macro_use]
+extern crate log;
+
 pub mod addr;
 pub mod error;
 pub(crate) mod find_node_op;
@@ -24,9 +27,7 @@ use crate::{
     addr::Addr,
     find_node_op::FindNodeOp,
     krpc::{
-        find_node::{FindNodeQueryArgs, FindNodeRespValues},
-        ping::PingQueryArgs,
-        Kind, Msg, QueryArgs, QueryMsg, RespMsg,
+        find_node::FindNodeQueryArgs, ping::PingQueryArgs, Kind, Msg, QueryArgs, QueryMsg, RespMsg,
     },
     node::remote::{RemoteNode, RemoteNodeId},
 };
@@ -207,31 +208,12 @@ impl Dht {
         self.probed_nodes.retain(|n| n.tx_local_id != tx.local_id);
         self.add_node_to_table(&tx.remote_id, Some(now), None);
         if let Some(mut find_node_op) = self.find_find_node_op(tx.local_id) {
-            find_node_op.remove_tx_local_id(tx.local_id);
-            match value.kind().unwrap() {
-                Kind::Response => {
-                    if let Some(new_node_ids) = value
-                        .values()
-                        .and_then(|values| FindNodeRespValues::try_from(values).ok())
-                        .and_then(|resp| find_node_op.filter_new_nodes(&resp))
-                    {
-                        for id in new_node_ids {
-                            if let Ok(tx_local_id) = self.write_query(
-                                &FindNodeQueryArgs::new_with_id_and_target(
-                                    self.config.id,
-                                    find_node_op.id_to_find(),
-                                ),
-                                &id,
-                            ) {
-                                find_node_op.add_queried_node_id(id.clone());
-                                find_node_op.add_tx_local_id(tx_local_id);
-                            }
-                        }
-                    }
-                }
-                Kind::Error => {}
-                Kind::Query | Kind::Unknown(_) => unreachable!(),
-            }
+            debug!(
+                "transaction part of FindNodeOp. tx_local_ids.len()={:?} queried_remote_nodes.len()={:?}",
+                find_node_op.tx_local_ids.len(),
+                find_node_op.queried_remote_nodes.len(),
+            );
+            find_node_op.process_msg(self, tx, value);
             self.find_node_ops.push(find_node_op);
         } else {
             self.inbound_msgs.push_back(InboundMsg {
@@ -250,6 +232,7 @@ impl Dht {
         addr: SocketAddr,
         now: Instant,
     ) -> Result<(), error::Error> {
+        debug!("on_recv_with_now addr={}", addr);
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
         if let Some(kind) = value.kind() {
@@ -260,11 +243,15 @@ impl Dht {
                 match kind {
                     Kind::Response => {
                         if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
+                            debug!("Received response for tx_local_id={:?}", tx.local_id);
+
                             self.routing_table.on_response_received(&tx.remote_id);
                             self.handle_resp_or_err(value, tx, now)?;
                         }
                     }
                     Kind::Error => {
+                        debug!("Received error for tx_local_id={:?}", tx.local_id);
+
                         self.routing_table.on_error_received(&tx.remote_id);
                         self.handle_resp_or_err(value, tx, now)?;
                     }
@@ -274,6 +261,7 @@ impl Dht {
             } else {
                 match kind {
                     Kind::Query => {
+                        debug!("Recieved query");
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let remote_id = RemoteNodeId {
                             addr: Addr::SocketAddr(addr),
@@ -319,6 +307,7 @@ impl Dht {
             let (bucket, is_last_bucket) = self.routing_table.find_bucket(&id);
             if !bucket.is_full() || is_last_bucket {
                 self.routing_table.add(remote_id.clone(), None);
+                // debug!("routing table: {:?}", self.routing_table);
                 return;
             }
 
@@ -326,6 +315,7 @@ impl Dht {
             if let Some(bad_node_id) = bad_node_id {
                 self.routing_table
                     .add(remote_id.clone(), Some(&bad_node_id));
+                // debug!("routing table: {:?}", self.routing_table);
                 return;
             }
 
@@ -344,6 +334,7 @@ impl Dht {
                     &PingQueryArgs::new_with_id(self.config.id),
                     &questionable_node_remote_id,
                 ) {
+                    debug!("adding to probed_nodes");
                     self.probed_nodes.push(NodeToReplace {
                         tx_local_id,
                         probe_node_id: questionable_node_remote_id,
@@ -366,12 +357,12 @@ impl Dht {
 
     pub fn timeout(&self) -> Option<Duration> {
         if let Some(earliest_sent) = self.transactions.iter().map(|t| t.sent).min() {
-            let timeout = earliest_sent + self.config.query_timeout;
             let now = Instant::now();
+            let timeout = earliest_sent + self.config.query_timeout;
             if now > timeout {
                 Some(Duration::from_secs(0))
             } else {
-                Some(now - timeout)
+                Some(timeout - now)
             }
         } else {
             None
@@ -441,12 +432,21 @@ impl Dht {
         remote_id: &RemoteNodeId,
     ) -> Result<transaction::LocalId, error::Error>
     where
-        T: QueryArgs,
+        T: QueryArgs + std::fmt::Debug,
     {
         let addr = remote_id.resolve_addr()?;
         let transaction_id = self.next_transaction_id();
+
+        debug!(
+            "write_query tx_id={:?} method_name={:?} remote_id={:?} args={:?}",
+            transaction_id,
+            String::from_utf8(Vec::from(T::method_name().clone())),
+            &remote_id,
+            &args
+        );
+
         self.outbound_msgs.push_back(OutboundMsg {
-            tx_id: Some(transaction_id.clone()),
+            tx_id: Some(transaction_id),
             remote_id: remote_id.clone(),
             addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {

@@ -11,7 +11,10 @@
 //! Run the example.
 //! $ cargo run --example node
 
-use std::io::{self, BufWriter, Write};
+#[macro_use]
+extern crate log;
+
+use std::io;
 use std::net;
 use std::time::Duration;
 
@@ -25,6 +28,8 @@ use bt_dht::{
 };
 
 fn main() -> io::Result<()> {
+    env_logger::init();
+
     let matches = App::new("Example node program")
         .version("1.0")
         .about("Demonstrates running a DHT node.")
@@ -48,8 +53,8 @@ fn main() -> io::Result<()> {
         )
         .get_matches();
 
-    let ip = matches.value_of("ip").unwrap_or("127.0.0.1");
-    let port = matches.value_of("port").unwrap_or("6532");
+    let ip = matches.value_of("ip").unwrap_or("0.0.0.0");
+    let port = matches.value_of("port").unwrap_or("6881");
     eprintln!("Listening on: {}:{}", ip, port);
 
     let local_addr: net::SocketAddr = format!("{}:{}", ip, port).parse().unwrap();
@@ -63,18 +68,18 @@ fn main() -> io::Result<()> {
         max_node_count_per_bucket: 10,
     });
     dht.bootstrap(&[
-        bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
-            node_id: None,
-        },
+        // bt_dht::node::remote::RemoteNodeId {
+        //     addr: bt_dht::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
+        //     node_id: None,
+        // },
         bt_dht::node::remote::RemoteNodeId {
             addr: bt_dht::addr::Addr::HostPort(String::from("router.bittorrent.com:6881")),
             node_id: None,
         },
-        bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
-            node_id: None,
-        },
+        // bt_dht::node::remote::RemoteNodeId {
+        //     addr: bt_dht::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
+        //     node_id: None,
+        // },
     ]);
     let dht_token = Token(0);
 
@@ -90,7 +95,7 @@ fn main() -> io::Result<()> {
     let mut buf = [0; 65535];
     let mut out = [0; 65535];
 
-    let stdout = io::stdout();
+    // let stdout = io::stdout();
     // let mut buf_writer = BufWriter::new(stdout.lock());
 
     'event: loop {
@@ -100,6 +105,7 @@ fn main() -> io::Result<()> {
 
         'recv: loop {
             if events.is_empty() {
+                debug!("Timed out");
                 dht.on_timeout();
                 break 'recv;
             }
@@ -111,58 +117,51 @@ fn main() -> io::Result<()> {
                         break 'recv;
                     }
 
-                    panic!("io error: {}", e);
+                    error!("recv_from io error: {}", e);
+                    continue;
                 }
             };
 
             let filled_buf = &buf[..bytes_read];
 
-            // dbg!("Received:");
-            //
-            // dbg!(filled_buf);
-
             match dht.on_recv(filled_buf, src_addr) {
                 Ok(()) => {}
-                Err(e) => {}
+                Err(e) => {
+                    error!("on_recv error: {:?}", e);
+                }
             }
 
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
+                    debug!("Read message: {:?}", inbound_msg);
                     if let Some(msg) = &inbound_msg.msg() {
                         match msg.kind() {
-                            Some(Kind::Query) => {
-                                match msg.method_name_str() {
-                                    Some(ping::METHOD_PING) => {
-                                        // write back
-                                        let ping_resp =
-                                            ping::PingRespValues::new_with_id(dht.config().id);
-                                        if let Some(tx_id) = msg.tx_id() {
-                                            match dht.write_resp(
-                                                tx_id,
-                                                Some(ping_resp.into()),
-                                                inbound_msg.remote_id(),
-                                            ) {
-                                                Ok(()) => {}
-                                                Err(_) => panic!(),
-                                            };
-                                        }
+                            Some(Kind::Query) => match msg.method_name_str() {
+                                Some(ping::METHOD_PING) => {
+                                    let ping_resp =
+                                        ping::PingRespValues::new_with_id(dht.config().id);
+                                    if let Some(tx_id) = msg.tx_id() {
+                                        match dht.write_resp(
+                                            tx_id,
+                                            Some(ping_resp.into()),
+                                            inbound_msg.remote_id(),
+                                        ) {
+                                            Ok(()) => {}
+                                            Err(e) => error!("ping write_resp error: {:?}", e),
+                                        };
                                     }
-                                    _ => {}
                                 }
-                            }
+                                _ => {}
+                            },
                             _ => {}
                         }
-                        // dbg!("Read:");
-                        // dbg!(inbound_msg);
                     }
-                }
-
-                if bytes_read == 0 {
+                } else {
                     break 'read;
                 }
             }
 
-            // dbg!("Sending after recv:");
+            debug!("Sending after read");
 
             match send_packets(&mut dht, &socket, &mut out) {
                 Ok(break_event) => {
@@ -171,6 +170,7 @@ fn main() -> io::Result<()> {
                     }
                 }
                 Err(e) => {
+                    error!("send_packets error: {:?}", e);
                     return Err(e);
                 }
             }
@@ -178,7 +178,7 @@ fn main() -> io::Result<()> {
 
         // dht.on_recv_complete();
 
-        // dbg!("Sending data:");
+        debug!("Sending after recv");
 
         match send_packets(&mut dht, &socket, &mut out) {
             Ok(break_event) => {
@@ -187,6 +187,7 @@ fn main() -> io::Result<()> {
                 }
             }
             Err(e) => {
+                error!("send_packets error: {:?}", e);
                 return Err(e);
             }
         }
@@ -211,14 +212,18 @@ fn send_packets(dht: &mut Dht, socket: &mio::net::UdpSocket, out: &mut [u8]) -> 
                                 return Ok(false);
                             }
 
-                            panic!("io error: {}", e);
+                            error!("send_to io error: {}", e);
+                            continue;
                         }
                     };
                 } else {
-                    return Ok(true);
+                    return Ok(false);
                 }
             }
-            Err(_) => return Ok(true),
+            Err(e) => {
+                error!("send_to error: {:?}", e);
+                return Ok(true);
+            }
         };
     }
 }
