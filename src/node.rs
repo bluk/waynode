@@ -67,16 +67,16 @@ impl Id {
     //     let _ = bigger.overflowing_add(&smaller);
     //     Id(bigger)
     // }
-    //
-    // /// Determines the distance between this node ID and the node ID argument.
-    // #[must_use]
-    // pub(crate) fn distance(&self, other: &Id) -> Id {
-    //     let mut data = [0; 20];
-    //     for idx in 0..self.0.len() {
-    //         data[idx] = self.0[idx] ^ other.0[idx];
-    //     }
-    //     Id(data)
-    // }
+
+    /// Determines the distance between this node ID and the node ID argument.
+    #[must_use]
+    pub(crate) fn distance(&self, other: &Id) -> Id {
+        let mut data = [0; 20];
+        for idx in 0..self.0.len() {
+            data[idx] = self.0[idx] ^ other.0[idx];
+        }
+        Id(data)
+    }
 
     /// Finds the middle id between this node ID and the node ID argument.
     #[must_use]
@@ -142,7 +142,7 @@ impl PartialOrd for Id {
 impl fmt::Debug for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for b in self.0.iter() {
-            write!(f, "{:x}", b)?;
+            write!(f, "{:02x}", b)?;
         }
         Ok(())
     }
@@ -300,6 +300,46 @@ mod test {
         assert_eq!(
             bytes,
             [0, 0, 129, 1, 130, 2, 131, 3, 132, 4, 133, 5, 134, 6, 135, 7, 136, 8, 137, 9]
+        );
+    }
+
+    #[test]
+    fn test_id_ord() {
+        let mut node_ids = vec![
+            Id([0xff; 20]),
+            Id([0x00; 20]),
+            Id([0xff; 20]).middle(&Id([0x00; 20])),
+        ];
+        node_ids.sort();
+        assert_eq!(
+            node_ids,
+            vec![
+                Id([0x00; 20]),
+                Id([0xff; 20]).middle(&Id([0x00; 20])),
+                Id([0xff; 20]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_id_distance_ord() {
+        let mut node_ids = vec![
+            Id([0x00; 20]),
+            Id([0xff; 20]).middle(&Id([0x00; 20])),
+            Id([0xff; 20]),
+        ];
+        let pivot_id = Id([0xef; 20]).middle(&Id([0x00; 20]));
+        node_ids.sort_by(|a, b| a.distance(&pivot_id).cmp(&b.distance(&pivot_id)));
+        node_ids.iter().for_each(|n| {
+            dbg!(n.distance(&pivot_id));
+        });
+        assert_eq!(
+            node_ids,
+            vec![
+                Id([0xff; 20]).middle(&Id([0x00; 20])),
+                Id([0x00; 20]),
+                Id([0xff; 20]),
+            ]
         );
     }
 }
