@@ -106,7 +106,10 @@ fn main() -> io::Result<()> {
         'recv: loop {
             if events.is_empty() {
                 debug!("Timed out");
-                dht.on_timeout();
+                match dht.on_timeout() {
+                    Ok(()) => {}
+                    Err(e) => error!("on_timeout error: {:?}", e),
+                };
                 break 'recv;
             }
 
@@ -176,7 +179,12 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // dht.on_recv_complete();
+        match dht.on_recv_complete() {
+            Ok(()) => {}
+            Err(e) => {
+                error!("on_recv_complete error: {:?}", e);
+            }
+        };
 
         debug!("Sending after recv");
 

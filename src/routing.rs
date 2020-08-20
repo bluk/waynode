@@ -14,66 +14,99 @@ pub(crate) struct Bucket {
     range: RangeInclusive<Id>,
     nodes: Vec<RemoteNode>,
     max_nodes: usize,
-    last_changed: Instant,
+
+    replacement_nodes: Vec<RemoteNode>,
+
+    last_find_node: Instant,
 }
 
 impl Bucket {
     fn new(range: RangeInclusive<Id>, max_nodes: usize) -> Self {
         Bucket {
             range,
-            nodes: Vec::new(),
+            nodes: Vec::with_capacity(max_nodes),
             max_nodes,
-            last_changed: Instant::now(),
+            replacement_nodes: Vec::with_capacity(max_nodes),
+            last_find_node: Instant::now(),
         }
     }
 
-    fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>) {
+    #[inline]
+    fn max_replacement_nodes(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|n| n.state() == RemoteState::Bad || n.state() == RemoteState::Questionable)
+            .count()
+    }
+
+    fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>, now: Instant) {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *remote_id) {
+            node.on_msg_received(kind, now);
             match kind {
-                Kind::Response => node.on_response(),
-                Kind::Query => node.on_query(),
-                Kind::Error => node.on_error(),
-                Kind::Unknown(_) => {}
-            }
-            self.sort_node_ids();
-        }
-    }
-
-    fn on_response_timeout(&mut self, id: &RemoteNodeId) {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
-            node.on_response_timeout();
-            self.sort_node_ids();
-        }
-    }
-
-    fn add(&mut self, id: RemoteNodeId, replaced_id: Option<&RemoteNodeId>) {
-        assert!({
-            if let Some(node_id) = id.node_id {
-                self.range.contains(&node_id)
-            } else {
-                false
-            }
-        });
-
-        if let Some(replaced_id) = replaced_id {
-            assert!({
-                if let Some(node_id) = replaced_id.node_id {
-                    self.range.contains(&node_id)
-                } else {
-                    false
+                Kind::Response => {
+                    let max_replacement_nodes = self.max_replacement_nodes();
+                    if self.replacement_nodes.len() > max_replacement_nodes {
+                        self.replacement_nodes.drain(max_replacement_nodes..);
+                    }
                 }
-            });
+                Kind::Query => {
+                    let max_replacement_nodes = self.max_replacement_nodes();
+                    if self.replacement_nodes.len() > max_replacement_nodes {
+                        self.replacement_nodes.drain(max_replacement_nodes..);
+                    }
+                }
+                Kind::Error => {
+                    if node.state() == RemoteState::Bad {
+                        if let Some(mut replacement_node) = self.replacement_nodes.pop() {
+                            std::mem::swap(node, &mut replacement_node);
+                        }
+                    }
+                }
+                Kind::Unknown(_) => return,
+            }
+            self.sort_node_ids();
+        } else {
+            match kind {
+                Kind::Response | Kind::Query | Kind::Error => {}
+                Kind::Unknown(_) => return,
+            }
 
-            self.nodes.retain(|n| n.id != *replaced_id);
+            let is_nodes_maxed = self.nodes.len() >= self.max_nodes;
+            let is_replacements_maxed =
+                self.replacement_nodes.len() >= self.max_replacement_nodes();
+            let bad_node_pos = self
+                .nodes
+                .iter()
+                .position(|n| n.state() == RemoteState::Bad);
+            if is_nodes_maxed && is_replacements_maxed && bad_node_pos.is_none() {
+                return;
+            }
+
+            let mut node = RemoteNode::new_with_id(remote_id.clone());
+            node.on_msg_received(kind, now);
+            if !is_nodes_maxed {
+                self.nodes.push(node);
+                self.sort_node_ids();
+            } else if let Some(pos) = bad_node_pos {
+                self.nodes[pos] = node;
+            } else if !is_replacements_maxed {
+                self.replacement_nodes.push(node);
+            } else {
+                unreachable!();
+            }
         }
+    }
 
-        if self.nodes.len() >= self.max_nodes {
-            return;
+    fn on_resp_timeout(&mut self, id: &RemoteNodeId) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
+            node.on_resp_timeout();
+            if node.state() == RemoteState::Bad {
+                if let Some(mut replacement_node) = self.replacement_nodes.pop() {
+                    std::mem::swap(node, &mut replacement_node);
+                }
+            }
+            self.sort_node_ids();
         }
-
-        self.nodes.push(RemoteNode::new_with_id(id));
-        self.sort_node_ids();
-        self.last_changed = Instant::now();
     }
 
     fn split(self) -> (Bucket, Bucket) {
@@ -94,46 +127,26 @@ impl Bucket {
             }
         }
 
+        for node in self.replacement_nodes.into_iter() {
+            if let Some(node_id) = node.id.node_id {
+                if lower_bucket.range.contains(&node_id) {
+                    lower_bucket.replacement_nodes.push(node);
+                } else {
+                    upper_bucket.replacement_nodes.push(node);
+                }
+            } else {
+                panic!("node does not have id");
+            }
+        }
+
         lower_bucket.sort_node_ids();
         upper_bucket.sort_node_ids();
 
         (lower_bucket, upper_bucket)
     }
 
-    pub(crate) fn contains(&self, id: &RemoteNodeId) -> bool {
-        self.nodes.iter().find(|n| n.id == *id).is_some()
-    }
-
-    pub(crate) fn is_full(&self) -> bool {
+    fn is_full(&self) -> bool {
         self.nodes.len() >= self.max_nodes
-    }
-
-    // pub(crate) fn is_all_good_nodes(&self) -> bool {
-    //     self.nodes.iter().all(|n| n.state() == RemoteState::Good)
-    // }
-    //
-    // pub(crate) fn possible_node_ids_to_replace(&self) -> impl Iterator<Item = &RemoteNodeId> {
-    //     self.nodes
-    //         .iter()
-    //         .rev()
-    //         .filter(|n| n.state() == RemoteState::Bad || n.state() == RemoteState::Questionable)
-    //         .map(|n| &n.id)
-    // }
-
-    pub(crate) fn bad_nodes_remote_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
-        self.nodes
-            .iter()
-            .rev()
-            .filter(|n| n.state() == RemoteState::Bad)
-            .map(|n| &n.id)
-    }
-
-    pub(crate) fn questionable_node_remote_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
-        self.nodes
-            .iter()
-            .rev()
-            .filter(|n| n.state() == RemoteState::Questionable)
-            .map(|n| &n.id)
     }
 
     fn prioritized_node_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
@@ -166,6 +179,22 @@ impl Bucket {
             }
         });
     }
+
+    pub(crate) fn nodes_to_ping(&mut self, now: Instant) -> impl Iterator<Item = &RemoteNodeId> {
+        // The actual number of nodes to ping should be smaller.
+        // If there are 2 possible replacement nodes and 3 questionable nodes,
+        // then the first invocation will ping the first 2 questionable nodes.
+        // The second invocation of this method (assuming no responses or timeouts yet) will
+        // ping the last questionable node.
+        self.nodes
+            .iter_mut()
+            .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
+            .take(self.replacement_nodes.len())
+            .map(move |n| {
+                n.on_ping(now);
+                &n.id
+            })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,101 +219,88 @@ impl Table {
         want: Option<usize>,
     ) -> Vec<&'a RemoteNodeId> {
         let want = want.unwrap_or(8);
-        if let Some(mut idx) = self.buckets.iter().position(|b| b.range.contains(&id)) {
-            let mut remote_ids: Vec<&'a RemoteNodeId> = Vec::with_capacity(want);
-            while remote_ids.len() < want {
-                remote_ids.extend(self.buckets[idx].prioritized_node_ids());
-                if idx == 0 {
-                    break;
-                }
-                idx -= 1;
-            }
-
-            if include_all_bootstrap_nodes {
-                remote_ids.extend(bootstrap_nodes);
-            } else {
-                let bootstrap_nodes_count = want - remote_ids.len();
-                if bootstrap_nodes_count > 0 {
-                    let bootstrap_iter = bootstrap_nodes.iter().take(bootstrap_nodes_count);
-                    remote_ids.extend(bootstrap_iter);
-                }
-            }
-
-            remote_ids
-        } else {
-            panic!();
-        }
-    }
-
-    pub(crate) fn contains(&self, remote_id: &RemoteNodeId) -> bool {
-        if let Some(id) = remote_id.node_id {
-            if let Some(bucket) = self.buckets.iter().find(|n| n.range.contains(&id)) {
-                return bucket.contains(remote_id);
-            }
-        }
-        false
-    }
-
-    pub(crate) fn find_bucket(&self, id: &Id) -> (&Bucket, bool) {
-        let bucket = self
+        let mut idx = self
             .buckets
             .iter()
-            .find(|n| n.range.contains(&id))
-            .expect("a bucket should exist which contains the id");
-        (bucket, Some(bucket) == self.buckets.last())
-    }
+            .position(|b| b.range.contains(&id))
+            .expect("bucket index should always exist for a node id");
+        let mut remote_ids: Vec<&'a RemoteNodeId> = Vec::with_capacity(want);
+        while remote_ids.len() < want {
+            remote_ids.extend(self.buckets[idx].prioritized_node_ids());
+            if idx == 0 {
+                break;
+            }
+            idx -= 1;
+        }
 
-    pub(crate) fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>) {
-        if let Some(id) = remote_id.node_id {
-            if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                bucket.on_msg_received(remote_id, kind);
+        if include_all_bootstrap_nodes {
+            remote_ids.extend(bootstrap_nodes);
+        } else {
+            let bootstrap_nodes_count = want - remote_ids.len();
+            if bootstrap_nodes_count > 0 {
+                let bootstrap_iter = bootstrap_nodes.iter().take(bootstrap_nodes_count);
+                remote_ids.extend(bootstrap_iter);
             }
         }
+
+        remote_ids
     }
 
-    pub(crate) fn on_response_timeout(&mut self, remote_id: &RemoteNodeId) {
-        if let Some(id) = remote_id.node_id {
-            if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                bucket.on_response_timeout(remote_id)
-            }
-        }
-    }
-
-    // TODO: Replace with RemoteNode instead
-    pub(crate) fn add(&mut self, remote_id: RemoteNodeId, replaced_id: Option<&RemoteNodeId>) {
+    pub(crate) fn on_msg_received<'a>(
+        &mut self,
+        remote_id: &RemoteNodeId,
+        kind: &Kind<'a>,
+        now: Instant,
+    ) {
         if let Some(id) = remote_id.node_id {
             if id == self.pivot {
                 return;
             }
 
-            if let Some(bucket) = self.buckets.iter_mut().find(|n| n.range.contains(&id)) {
-                if bucket.contains(&remote_id) {
-                    return;
-                }
-
-                if bucket.range.contains(&self.pivot) && bucket.is_full() {
-                    if let Some(bucket) = self.buckets.pop() {
-                        let (mut first_bucket, mut second_bucket) = bucket.split();
-                        if first_bucket.range.contains(&id) {
-                            first_bucket.add(remote_id, replaced_id);
-                        } else {
-                            second_bucket.add(remote_id, replaced_id);
-                        }
-
-                        if first_bucket.range.contains(&self.pivot) {
-                            self.buckets.push(second_bucket);
-                            self.buckets.push(first_bucket);
-                        } else {
-                            self.buckets.push(first_bucket);
-                            self.buckets.push(second_bucket);
-                        }
-                    } else {
-                        panic!();
-                    }
+            let bucket = self
+                .buckets
+                .iter_mut()
+                .find(|n| n.range.contains(&id))
+                .expect("bucket should always exist for a node");
+            if bucket.range.contains(&self.pivot) && bucket.is_full() {
+                let bucket = self.buckets.pop().expect("last bucket should always exist");
+                let (mut first_bucket, mut second_bucket) = bucket.split();
+                if first_bucket.range.contains(&id) {
+                    first_bucket.on_msg_received(remote_id, kind, now);
                 } else {
-                    bucket.add(remote_id, replaced_id)
+                    second_bucket.on_msg_received(remote_id, kind, now);
                 }
+
+                if first_bucket.range.contains(&self.pivot) {
+                    self.buckets.push(second_bucket);
+                    self.buckets.push(first_bucket);
+                } else {
+                    self.buckets.push(first_bucket);
+                    self.buckets.push(second_bucket);
+                }
+            } else {
+                bucket.on_msg_received(remote_id, kind, now);
             }
         }
     }
+
+    pub(crate) fn on_resp_timeout(&mut self, remote_id: &RemoteNodeId) {
+        if let Some(id) = remote_id.node_id {
+            let bucket = self
+                .buckets
+                .iter_mut()
+                .find(|n| n.range.contains(&id))
+                .expect("bucket should always exist for a node");
+            bucket.on_resp_timeout(remote_id);
+        }
+    }
+
+    pub(crate) fn nodes_to_ping(&mut self, now: Instant) -> impl Iterator<Item = &RemoteNodeId> {
+        self.buckets
+            .iter_mut()
+            .flat_map(move |b| b.nodes_to_ping(now))
+    }
+
+    // TODO: Should initiate a find_node request for each bucket if a deadline is reached without
+    // activity
 }

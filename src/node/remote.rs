@@ -1,4 +1,4 @@
-use crate::{addr::Addr, error::Error, node::Id};
+use crate::{addr::Addr, error::Error, krpc::Kind, node::Id};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -62,9 +62,10 @@ pub(crate) enum RemoteState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct RemoteNode {
     pub(crate) id: RemoteNodeId,
+    pub(crate) missing_responses: u8,
     pub(crate) last_response: Option<Instant>,
     pub(crate) last_query: Option<Instant>,
-    pub(crate) missing_responses: usize,
+    pub(crate) last_pinged: Option<Instant>,
 }
 
 impl RemoteNode {
@@ -73,9 +74,10 @@ impl RemoteNode {
     pub(crate) fn new_with_id(id: RemoteNodeId) -> Self {
         Self {
             id,
+            missing_responses: 0,
             last_response: None,
             last_query: None,
-            missing_responses: 0,
+            last_pinged: None,
         }
     }
 
@@ -116,23 +118,40 @@ impl RemoteNode {
         }
     }
 
-    pub(crate) fn on_response_timeout(&mut self) {
-        self.missing_responses += 1;
-    }
-
-    pub(crate) fn on_error(&mut self) {
-        self.last_response = Some(Instant::now());
-        self.missing_responses += 1;
-    }
-
-    pub(crate) fn on_response(&mut self) {
-        self.last_response = Some(Instant::now());
-        if self.missing_responses > 0 {
-            self.missing_responses -= 1;
+    pub(crate) fn on_msg_received(&mut self, kind: &Kind, now: Instant) {
+        self.last_pinged = None;
+        match kind {
+            Kind::Response => {
+                self.last_response = Some(now);
+                if self.missing_responses > 0 {
+                    self.missing_responses -= 1;
+                }
+            }
+            Kind::Query => {
+                self.last_query = Some(now);
+            }
+            Kind::Error => {
+                self.last_response = Some(now);
+                if self.missing_responses < u8::MAX {
+                    self.missing_responses += 1;
+                }
+            }
+            Kind::Unknown(_) => {
+                if self.missing_responses < u8::MAX {
+                    self.missing_responses += 1;
+                }
+            }
         }
     }
 
-    pub(crate) fn on_query(&mut self) {
-        self.last_query = Some(Instant::now());
+    pub(crate) fn on_resp_timeout(&mut self) {
+        self.last_pinged = None;
+        if self.missing_responses < u8::MAX {
+            self.missing_responses += 1;
+        }
+    }
+
+    pub(crate) fn on_ping(&mut self, now: Instant) {
+        self.last_pinged = Some(now);
     }
 }

@@ -19,6 +19,7 @@ pub mod addr;
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
+pub(crate) mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
 pub(crate) mod transaction;
@@ -29,73 +30,20 @@ use crate::{
     krpc::{
         find_node::FindNodeQueryArgs, ping::PingQueryArgs, Kind, Msg, QueryArgs, QueryMsg, RespMsg,
     },
-    node::remote::{RemoteNode, RemoteNodeId},
+    msg_buffer::Buffer,
+    msg_buffer::InboundMsg,
+    node::remote::RemoteNodeId,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
-use std::collections::VecDeque;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-
-#[derive(Clone, Debug, PartialEq)]
-struct OutboundMsg {
-    tx_id: Option<transaction::Id>,
-    addr: SocketAddr,
-    remote_id: RemoteNodeId,
-    msg_data: Vec<u8>,
-}
-
-impl OutboundMsg {
-    fn into_transaction(self) -> Option<transaction::Transaction> {
-        let remote_id = self.remote_id;
-        let resolved_addr = self.addr;
-        self.tx_id.map(|tx_id| transaction::Transaction {
-            local_id: transaction::LocalId::with_id_and_addr(tx_id, resolved_addr),
-            remote_id,
-            sent: Instant::now(),
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-struct NodeToReplace {
-    tx_local_id: transaction::LocalId,
-    probe_node_id: RemoteNodeId,
-    new_node: RemoteNode,
-    timeout_count: u8,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct SendInfo {
     pub len: usize,
     pub addr: SocketAddr,
-}
-
-#[derive(Clone, Debug)]
-pub struct InboundMsg {
-    remote_id: RemoteNodeId,
-    tx_local_id: Option<transaction::LocalId>,
-    msg: Option<Value>,
-    is_timeout: bool,
-}
-
-impl InboundMsg {
-    pub fn remote_id(&self) -> &RemoteNodeId {
-        &self.remote_id
-    }
-
-    pub fn tx_local_id(&self) -> Option<transaction::LocalId> {
-        self.tx_local_id
-    }
-
-    pub fn msg(&self) -> &Option<Value> {
-        &self.msg
-    }
-
-    pub fn is_timeout(&self) -> bool {
-        self.is_timeout
-    }
 }
 
 /// The configuration for the local DHT node.
@@ -118,14 +66,10 @@ pub struct Config {
 pub struct Dht {
     config: Config,
     routing_table: routing::Table,
-    probed_nodes: Vec<NodeToReplace>,
+    tx_manager: transaction::Manager,
+    msg_buffer: msg_buffer::Buffer,
 
     find_node_ops: Vec<FindNodeOp>,
-
-    tx_manager: transaction::Manager,
-
-    inbound_msgs: VecDeque<InboundMsg>,
-    outbound_msgs: VecDeque<OutboundMsg>,
 }
 
 impl Dht {
@@ -135,31 +79,10 @@ impl Dht {
         Self {
             config,
             routing_table: routing::Table::new(id, max_node_count_per_bucket),
-            probed_nodes: Vec::new(),
-            find_node_ops: Vec::new(),
             tx_manager: transaction::Manager::new(),
-            inbound_msgs: VecDeque::new(),
-            outbound_msgs: VecDeque::new(),
+            msg_buffer: Buffer::new(),
+            find_node_ops: Vec::new(),
         }
-    }
-
-    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [RemoteNodeId]) {
-        let neighbors = self
-            .find_neighbors(self.config.id, bootstrap_nodes, true, None)
-            .iter()
-            .map(|&n| n.clone())
-            .collect::<Vec<RemoteNodeId>>();
-        let mut find_node_op = FindNodeOp::new_with_id(self.config.id);
-        for n in neighbors {
-            if let Ok(tx_local_id) = self.write_query(
-                &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
-                &n,
-            ) {
-                find_node_op.add_tx_local_id(tx_local_id);
-                find_node_op.add_queried_node_id(n);
-            }
-        }
-        self.find_node_ops.push(find_node_op);
     }
 
     pub fn config(&self) -> &Config {
@@ -181,10 +104,7 @@ impl Dht {
         &mut self,
         value: Value,
         tx: transaction::Transaction,
-        now: Instant,
     ) -> Result<(), error::Error> {
-        self.probed_nodes.retain(|n| n.tx_local_id != tx.local_id);
-        self.add_node_to_table(&tx.remote_id, Some(now), None);
         if let Some(mut find_node_op) = self.find_find_node_op(tx.local_id) {
             debug!(
                 "transaction part of FindNodeOp. tx_local_ids.len()={:?} queried_remote_nodes.len()={:?}",
@@ -194,7 +114,7 @@ impl Dht {
             find_node_op.process_msg(self, tx, value);
             self.find_node_ops.push(find_node_op);
         } else {
-            self.inbound_msgs.push_back(InboundMsg {
+            self.msg_buffer.push_inbound(InboundMsg {
                 remote_id: tx.remote_id,
                 tx_local_id: Some(tx.local_id),
                 msg: Some(value),
@@ -221,15 +141,17 @@ impl Dht {
                 match kind {
                     Kind::Response => {
                         if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
-                            self.routing_table.on_msg_received(&tx.remote_id, &kind);
+                            self.routing_table
+                                .on_msg_received(&tx.remote_id, &kind, now);
                             debug!("Received response for tx_local_id={:?}", tx.local_id);
-                            self.handle_resp_or_err(value, tx, now)?;
+                            self.handle_resp_or_err(value, tx)?;
                         }
                     }
                     Kind::Error => {
-                        self.routing_table.on_msg_received(&tx.remote_id, &kind);
+                        self.routing_table
+                            .on_msg_received(&tx.remote_id, &kind, now);
                         debug!("Received error for tx_local_id={:?}", tx.local_id);
-                        self.handle_resp_or_err(value, tx, now)?;
+                        self.handle_resp_or_err(value, tx)?;
                     }
                     // unexpected
                     Kind::Query | Kind::Unknown(_) => {}
@@ -243,9 +165,8 @@ impl Dht {
                             addr: Addr::SocketAddr(addr),
                             node_id: querying_node_id,
                         };
-                        self.routing_table.on_msg_received(&remote_id, &kind);
-                        self.add_node_to_table(&remote_id, None, Some(now));
-                        self.inbound_msgs.push_back(InboundMsg {
+                        self.routing_table.on_msg_received(&remote_id, &kind, now);
+                        self.msg_buffer.push_inbound(InboundMsg {
                             remote_id,
                             tx_local_id: None,
                             msg: Some(value),
@@ -260,75 +181,28 @@ impl Dht {
         Ok(())
     }
 
-    fn add_node_to_table(
-        &mut self,
-        remote_id: &RemoteNodeId,
-        last_response: Option<Instant>,
-        last_query: Option<Instant>,
-    ) {
-        if let Some(id) = remote_id.node_id {
-            if self.routing_table.contains(remote_id) {
-                return;
-            }
-
-            if self
-                .probed_nodes
-                .iter()
-                .find(|p| p.new_node.id == *remote_id)
-                .is_some()
-            {
-                return;
-            }
-
-            let (bucket, is_last_bucket) = self.routing_table.find_bucket(&id);
-            if !bucket.is_full() || is_last_bucket {
-                self.routing_table.add(remote_id.clone(), None);
-                // debug!("routing table: {:?}", self.routing_table);
-                return;
-            }
-
-            let bad_node_id = bucket.bad_nodes_remote_ids().next().map(|n| n.clone());
-            if let Some(bad_node_id) = bad_node_id {
-                self.routing_table
-                    .add(remote_id.clone(), Some(&bad_node_id));
-                // debug!("routing table: {:?}", self.routing_table);
-                return;
-            }
-
-            let questionable_node_remote_id = bucket
-                .questionable_node_remote_ids()
-                .filter(|n| {
-                    self.probed_nodes
-                        .iter()
-                        .find(|p| p.probe_node_id == **n)
-                        .is_none()
-                })
-                .next()
-                .map(|n| n.clone());
-            if let Some(questionable_node_remote_id) = questionable_node_remote_id {
-                if let Ok(tx_local_id) = self.write_query(
-                    &PingQueryArgs::new_with_id(self.config.id),
-                    &questionable_node_remote_id,
-                ) {
-                    debug!("adding to probed_nodes");
-                    self.probed_nodes.push(NodeToReplace {
-                        tx_local_id,
-                        probe_node_id: questionable_node_remote_id,
-                        new_node: RemoteNode {
-                            id: remote_id.clone(),
-                            last_response,
-                            last_query,
-                            missing_responses: 0,
-                        },
-                        timeout_count: 0,
-                    });
-                }
-            }
+    fn ping_routing_table_questionable_nodes(&mut self, now: Instant) -> Result<(), error::Error> {
+        for remote_id in self.routing_table.nodes_to_ping(now) {
+            self.msg_buffer.write_query(
+                &PingQueryArgs::new_with_id(self.config.id),
+                &remote_id,
+                &mut self.tx_manager,
+                &self.config.client_version,
+            )?;
         }
+        Ok(())
+    }
+
+    pub fn on_recv_complete(&mut self) -> Result<(), error::Error> {
+        self.on_recv_complete_with_now(Instant::now())
+    }
+
+    fn on_recv_complete_with_now(&mut self, now: Instant) -> Result<(), error::Error> {
+        self.ping_routing_table_questionable_nodes(now)
     }
 
     pub fn read(&mut self) -> Option<InboundMsg> {
-        self.inbound_msgs.pop_front()
+        self.msg_buffer.pop_inbound()
     }
 
     pub fn timeout(&self) -> Option<Duration> {
@@ -343,50 +217,28 @@ impl Dht {
         })
     }
 
-    pub fn on_timeout(&mut self) {
+    pub fn on_timeout(&mut self) -> Result<(), error::Error> {
         self.on_timeout_with_now(Instant::now())
     }
 
-    fn on_timeout_with_now(&mut self, now: Instant) {
+    fn on_timeout_with_now(&mut self, now: Instant) -> Result<(), error::Error> {
         let timeout = self.config.query_timeout;
-        let mut reping: Vec<NodeToReplace> = vec![];
 
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(timeout, now) {
             for tx in timed_out_txs {
-                self.inbound_msgs.push_back(InboundMsg {
-                    remote_id: tx.remote_id.clone(),
+                self.routing_table.on_resp_timeout(&tx.remote_id);
+                self.msg_buffer.push_inbound(InboundMsg {
+                    remote_id: tx.remote_id,
                     tx_local_id: Some(tx.local_id),
                     msg: None,
                     is_timeout: true,
                 });
-
-                self.routing_table.on_response_timeout(&tx.remote_id);
-                if let Some(position) = self
-                .probed_nodes
-                .iter()
-                .position(|p| p.tx_local_id == tx.local_id /* redundant: && p.probe_node_id == tx.remote_id */)
-            {
-                let mut probed_node = self.probed_nodes.swap_remove(position);
-                probed_node.timeout_count += 1;
-                if probed_node.timeout_count == 2 {
-                    self.routing_table
-                        .add(probed_node.new_node.id, Some(&probed_node.probe_node_id));
-                } else {
-                    reping.push(probed_node);
-                }
-            }
             }
         }
 
-        reping.into_iter().for_each(|mut p| {
-            if let Ok(tx_local_id) = self.write_query(
-                &PingQueryArgs::new_with_id(self.config.id),
-                &p.probe_node_id,
-            ) {
-                p.tx_local_id = tx_local_id;
-                self.probed_nodes.push(p);
-            }
-        });
+        self.ping_routing_table_questionable_nodes(now)?;
+
+        Ok(())
     }
 
     pub fn write_query<T>(
@@ -397,30 +249,12 @@ impl Dht {
     where
         T: QueryArgs + std::fmt::Debug,
     {
-        let addr = remote_id.resolve_addr()?;
-        let transaction_id = self.tx_manager.next_transaction_id();
-
-        debug!(
-            "write_query tx_id={:?} method_name={:?} remote_id={:?} args={:?}",
-            transaction_id,
-            String::from_utf8(Vec::from(T::method_name().clone())),
-            &remote_id,
-            &args
-        );
-
-        self.outbound_msgs.push_back(OutboundMsg {
-            tx_id: Some(transaction_id),
-            remote_id: remote_id.clone(),
-            addr,
-            msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
-                a: Some(&args.to_value()),
-                q: &ByteBuf::from(T::method_name()),
-                t: &transaction_id.to_bytebuf(),
-                v: self.config.client_version.as_ref(),
-            })
-            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
-        });
-        Ok(transaction::LocalId::with_id_and_addr(transaction_id, addr))
+        self.msg_buffer.write_query(
+            args,
+            remote_id,
+            &mut self.tx_manager,
+            &self.config.client_version,
+        )
     }
 
     pub fn write_resp(
@@ -429,19 +263,8 @@ impl Dht {
         resp: Option<Value>,
         remote_id: &RemoteNodeId,
     ) -> Result<(), error::Error> {
-        let addr = remote_id.resolve_addr()?;
-        self.outbound_msgs.push_back(OutboundMsg {
-            tx_id: None,
-            remote_id: remote_id.clone(),
-            addr,
-            msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
-                r: resp.as_ref(),
-                t: &transaction_id,
-                v: self.config.client_version.as_ref(),
-            })
-            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
-        });
-        Ok(())
+        self.msg_buffer
+            .write_resp(transaction_id, resp, remote_id, &self.config.client_version)
     }
 
     pub fn write_err(
@@ -450,23 +273,16 @@ impl Dht {
         details: Option<Value>,
         remote_id: &RemoteNodeId,
     ) -> Result<(), error::Error> {
-        let addr = remote_id.resolve_addr()?;
-        self.outbound_msgs.push_back(OutboundMsg {
-            tx_id: None,
-            remote_id: remote_id.clone(),
-            addr,
-            msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
-                e: details.as_ref(),
-                t: &transaction_id,
-                v: self.config.client_version.as_ref(),
-            })
-            .map_err(|_| error::Error::CannotSerializeKrpcMessage)?,
-        });
-        Ok(())
+        self.msg_buffer.write_err(
+            transaction_id,
+            details,
+            remote_id,
+            &self.config.client_version,
+        )
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
-        if let Some(out_msg) = self.outbound_msgs.pop_front() {
+        if let Some(out_msg) = self.msg_buffer.pop_outbound() {
             buf.write_all(&out_msg.msg_data)
                 .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
             let result = Some(SendInfo {
@@ -495,6 +311,25 @@ impl Dht {
             include_all_bootstrap_nodes,
             want,
         )
+    }
+
+    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [RemoteNodeId]) {
+        let neighbors = self
+            .find_neighbors(self.config.id, bootstrap_nodes, true, None)
+            .iter()
+            .map(|&n| n.clone())
+            .collect::<Vec<RemoteNodeId>>();
+        let mut find_node_op = FindNodeOp::new_with_id(self.config.id);
+        for n in neighbors {
+            if let Ok(tx_local_id) = self.write_query(
+                &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
+                &n,
+            ) {
+                find_node_op.add_tx_local_id(tx_local_id);
+                find_node_op.add_queried_node_id(n);
+            }
+        }
+        self.find_node_ops.push(find_node_op);
     }
 }
 
