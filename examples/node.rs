@@ -23,7 +23,7 @@ use clap::{App, Arg};
 use mio::{Events, Interest, Poll, Token};
 
 use sloppy::{
-    krpc::{ping, Kind, Msg, QueryMsg},
+    krpc::{ping, Msg, QueryMsg},
     Dht,
 };
 
@@ -80,7 +80,8 @@ fn main() -> io::Result<()> {
         //     addr: sloppy::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
         //     node_id: None,
         // },
-    ]);
+    ])
+    .expect("bootstrap to complete successfully");
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -137,27 +138,26 @@ fn main() -> io::Result<()> {
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
                     debug!("Read message: {:?}", inbound_msg);
-                    if let Some(msg) = &inbound_msg.msg() {
-                        match msg.kind() {
-                            Some(Kind::Query) => match msg.method_name_str() {
-                                Some(ping::METHOD_PING) => {
-                                    let ping_resp =
-                                        ping::PingRespValues::new_with_id(dht.config().id);
-                                    if let Some(tx_id) = msg.tx_id() {
-                                        match dht.write_resp(
-                                            tx_id,
-                                            Some(ping_resp.into()),
-                                            inbound_msg.remote_id(),
-                                        ) {
-                                            Ok(()) => {}
-                                            Err(e) => error!("ping write_resp error: {:?}", e),
-                                        };
-                                    }
+                    match inbound_msg.msg() {
+                        sloppy::msg_buffer::Msg::Query(msg) => match msg.method_name_str() {
+                            Some(ping::METHOD_PING) => {
+                                let ping_resp = ping::PingRespValues::new_with_id(dht.config().id);
+                                if let Some(tx_id) = msg.tx_id() {
+                                    match dht.write_resp(
+                                        tx_id,
+                                        Some(ping_resp.into()),
+                                        inbound_msg.remote_id(),
+                                    ) {
+                                        Ok(()) => {}
+                                        Err(e) => error!("ping write_resp error: {:?}", e),
+                                    };
                                 }
-                                _ => {}
-                            },
+                            }
                             _ => {}
-                        }
+                        },
+                        sloppy::msg_buffer::Msg::Resp(_)
+                        | sloppy::msg_buffer::Msg::Error(_)
+                        | sloppy::msg_buffer::Msg::Timeout => {}
                     }
                 } else {
                     break 'read;

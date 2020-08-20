@@ -6,11 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! BtDht is a library which can help build an application using the [BitTorrent][bittorrent]
+//! Sloppy is a library which can help build an application using the [BitTorrent][bittorrent]
 //! [Distributed Hash Table][bep_0005].
 //!
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
+// TODO: Allow per transaction timeout deadlines instead of a global
 
 #[macro_use]
 extern crate log;
@@ -19,7 +21,7 @@ pub mod addr;
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
-pub(crate) mod msg_buffer;
+pub mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
 pub(crate) mod transaction;
@@ -90,30 +92,6 @@ impl Dht {
         self.on_recv_with_now(bytes, addr, Instant::now())
     }
 
-    fn handle_resp_or_err(
-        &mut self,
-        value: Value,
-        tx: transaction::Transaction,
-    ) -> Result<(), error::Error> {
-        for op in &mut self.find_node_ops {
-            op.handle(
-                &tx,
-                find_node_op::Response::Msg(&value),
-                &mut self.tx_manager,
-                &mut self.msg_buffer,
-            );
-        }
-        self.find_node_ops
-            .retain(|op| op.status() != find_node_op::Status::Done);
-        self.msg_buffer.push_inbound(InboundMsg {
-            remote_id: tx.remote_id,
-            tx_local_id: Some(tx.local_id),
-            msg: Some(value),
-            is_timeout: false,
-        });
-        Ok(())
-    }
-
     fn on_recv_with_now(
         &mut self,
         bytes: &[u8],
@@ -134,14 +112,42 @@ impl Dht {
                             self.routing_table
                                 .on_msg_received(&tx.remote_id, &kind, now);
                             debug!("Received response for tx_local_id={:?}", tx.local_id);
-                            self.handle_resp_or_err(value, tx)?;
+                            for op in &mut self.find_node_ops {
+                                op.handle(
+                                    &tx,
+                                    find_node_op::Response::Resp(&value),
+                                    &self.config,
+                                    &mut self.tx_manager,
+                                    &mut self.msg_buffer,
+                                )?;
+                            }
+                            self.find_node_ops.retain(|op| !op.is_done());
+                            self.msg_buffer.push_inbound(InboundMsg {
+                                remote_id: tx.remote_id,
+                                tx_local_id: Some(tx.local_id),
+                                msg: msg_buffer::Msg::Resp(value),
+                            });
                         }
                     }
                     Kind::Error => {
                         self.routing_table
                             .on_msg_received(&tx.remote_id, &kind, now);
                         debug!("Received error for tx_local_id={:?}", tx.local_id);
-                        self.handle_resp_or_err(value, tx)?;
+                        for op in &mut self.find_node_ops {
+                            op.handle(
+                                &tx,
+                                find_node_op::Response::Error(&value),
+                                &self.config,
+                                &mut self.tx_manager,
+                                &mut self.msg_buffer,
+                            )?;
+                        }
+                        self.find_node_ops.retain(|op| !op.is_done());
+                        self.msg_buffer.push_inbound(InboundMsg {
+                            remote_id: tx.remote_id,
+                            tx_local_id: Some(tx.local_id),
+                            msg: msg_buffer::Msg::Error(value),
+                        });
                     }
                     // unexpected
                     Kind::Query | Kind::Unknown(_) => {}
@@ -158,8 +164,7 @@ impl Dht {
                         self.msg_buffer.push_inbound(InboundMsg {
                             remote_id,
                             tx_local_id: None,
-                            msg: Some(value),
-                            is_timeout: false,
+                            msg: msg_buffer::Msg::Query(value),
                         });
                     }
                     // unexpected
@@ -257,17 +262,16 @@ impl Dht {
                     op.handle(
                         &tx,
                         find_node_op::Response::Timeout,
+                        &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
-                    );
+                    )?;
                 }
-                self.find_node_ops
-                    .retain(|op| op.status() != find_node_op::Status::Done);
+                self.find_node_ops.retain(|op| !op.is_done());
                 self.msg_buffer.push_inbound(InboundMsg {
                     remote_id: tx.remote_id,
                     tx_local_id: Some(tx.local_id),
-                    msg: None,
-                    is_timeout: true,
+                    msg: msg_buffer::Msg::Timeout,
                 });
             }
         }
@@ -292,16 +296,19 @@ impl Dht {
         )
     }
 
-    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [RemoteNodeId]) {
+    pub fn bootstrap<'a>(
+        &mut self,
+        bootstrap_nodes: &'a [RemoteNodeId],
+    ) -> Result<(), error::Error> {
         let neighbors = self
             .find_neighbors(self.config.id, bootstrap_nodes, true, None)
             .iter()
             .map(|&n| n.clone())
             .collect::<Vec<RemoteNodeId>>();
-        let mut find_node_op =
-            FindNodeOp::with_local_id_and_id_to_find(self.config.id, self.config.id, neighbors);
-        find_node_op.start(&mut self.tx_manager, &mut self.msg_buffer);
+        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(self.config.id, neighbors);
+        find_node_op.start(&self.config, &mut self.tx_manager, &mut self.msg_buffer)?;
         self.find_node_ops.push(find_node_op);
+        Ok(())
     }
 
     fn ping_routing_table_questionable_nodes(&mut self, now: Instant) -> Result<(), error::Error> {
@@ -398,7 +405,7 @@ mod tests {
         dht.bootstrap(&[RemoteNodeId {
             addr: bootstrap_remote_addr.clone(),
             node_id: None,
-        }]);
+        }])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {
@@ -413,23 +420,11 @@ mod tests {
                     _ => panic!(),
                 }
 
-                let find_node_op = dht.find_node_ops.first().unwrap();
-                assert!(find_node_op.queried_remote_nodes.contains(&RemoteNodeId {
-                    addr: bootstrap_remote_addr.clone(),
-                    node_id: None,
-                }));
-
                 let filled_buf = &out[..send_info.len];
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
-                assert!(find_node_op.tx_local_ids.contains(
-                    &transaction::LocalId::with_id_and_addr(
-                        transaction::Id::try_from(msg_sent.tx_id().unwrap()).unwrap(),
-                        send_info.addr,
-                    )
-                ));
                 dbg!(&msg_sent);
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();

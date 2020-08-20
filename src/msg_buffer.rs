@@ -37,12 +37,19 @@ impl OutboundMsg {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Msg {
+    Resp(Value),
+    Error(Value),
+    Query(Value),
+    Timeout,
+}
+
 #[derive(Clone, Debug)]
 pub struct InboundMsg {
     pub(crate) remote_id: RemoteNodeId,
     pub(crate) tx_local_id: Option<transaction::LocalId>,
-    pub(crate) msg: Option<Value>,
-    pub(crate) is_timeout: bool,
+    pub(crate) msg: Msg,
 }
 
 impl InboundMsg {
@@ -54,12 +61,8 @@ impl InboundMsg {
         self.tx_local_id
     }
 
-    pub fn msg(&self) -> &Option<Value> {
+    pub fn msg(&self) -> &Msg {
         &self.msg
-    }
-
-    pub fn is_timeout(&self) -> bool {
-        self.is_timeout
     }
 }
 

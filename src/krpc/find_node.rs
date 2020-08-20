@@ -1,3 +1,11 @@
+// Copyright 2020 Bryant Luk
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use crate::{
     addr::{CompactAddressV4, CompactAddressV6, CompactNodeInfo},
     node::Id,
@@ -122,16 +130,16 @@ impl FindNodeRespValues {
         self.id = id;
     }
 
-    pub fn nodes(&self) -> &Option<Vec<CompactNodeInfo<SocketAddrV4>>> {
-        &self.nodes
+    pub fn nodes(&self) -> Option<&Vec<CompactNodeInfo<SocketAddrV4>>> {
+        self.nodes.as_ref()
     }
 
     pub fn set_nodes(&mut self, nodes: Option<Vec<CompactNodeInfo<SocketAddrV4>>>) {
         self.nodes = nodes;
     }
 
-    pub fn nodes6(&self) -> &Option<Vec<CompactNodeInfo<SocketAddrV6>>> {
-        &self.nodes6
+    pub fn nodes6(&self) -> Option<&Vec<CompactNodeInfo<SocketAddrV6>>> {
+        self.nodes6.as_ref()
     }
 
     pub fn set_nodes6(&mut self, nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>) {
