@@ -65,13 +65,15 @@ impl InboundMsg {
 
 #[derive(Debug)]
 pub(crate) struct Buffer {
+    client_version: Option<ByteBuf>,
     inbound: VecDeque<InboundMsg>,
     outbound: VecDeque<OutboundMsg>,
 }
 
 impl Buffer {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn with_client_version(client_version: Option<ByteBuf>) -> Self {
         Self {
+            client_version,
             inbound: VecDeque::new(),
             outbound: VecDeque::new(),
         }
@@ -90,7 +92,6 @@ impl Buffer {
         args: &T,
         remote_id: &RemoteNodeId,
         tx_manager: &mut transaction::Manager,
-        client_version: &Option<ByteBuf>,
     ) -> Result<transaction::LocalId, Error>
     where
         T: QueryArgs + std::fmt::Debug,
@@ -114,7 +115,7 @@ impl Buffer {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
                 t: &transaction_id.to_bytebuf(),
-                v: client_version.as_ref(),
+                v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
         });
@@ -126,7 +127,6 @@ impl Buffer {
         transaction_id: &ByteBuf,
         resp: Option<Value>,
         remote_id: &RemoteNodeId,
-        client_version: &Option<ByteBuf>,
     ) -> Result<(), Error> {
         let addr = remote_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
@@ -136,7 +136,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.as_ref(),
                 t: &transaction_id,
-                v: client_version.as_ref(),
+                v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
         });
@@ -148,7 +148,6 @@ impl Buffer {
         transaction_id: &ByteBuf,
         details: Option<Value>,
         remote_id: &RemoteNodeId,
-        client_version: &Option<ByteBuf>,
     ) -> Result<(), Error> {
         let addr = remote_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
@@ -158,7 +157,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: details.as_ref(),
                 t: &transaction_id,
-                v: client_version.as_ref(),
+                v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
         });

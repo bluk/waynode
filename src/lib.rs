@@ -27,16 +27,12 @@ pub(crate) mod transaction;
 use crate::{
     addr::Addr,
     find_node_op::FindNodeOp,
-    krpc::{
-        find_node::FindNodeQueryArgs, ping::PingQueryArgs, Kind, Msg, QueryArgs, QueryMsg, RespMsg,
-    },
-    msg_buffer::Buffer,
+    krpc::{ping::PingQueryArgs, Kind, Msg, QueryArgs, QueryMsg, RespMsg},
     msg_buffer::InboundMsg,
     node::remote::RemoteNodeId,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
-use std::io::Write;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -76,11 +72,12 @@ impl Dht {
     pub fn new_with_config(config: Config) -> Self {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let id = config.id;
+        let client_version = config.client_version.clone();
         Self {
             config,
             routing_table: routing::Table::new(id, max_node_count_per_bucket),
             tx_manager: transaction::Manager::new(),
-            msg_buffer: Buffer::new(),
+            msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
             find_node_ops: Vec::new(),
         }
     }
@@ -93,34 +90,27 @@ impl Dht {
         self.on_recv_with_now(bytes, addr, Instant::now())
     }
 
-    fn find_find_node_op(&mut self, tx_local_id: transaction::LocalId) -> Option<FindNodeOp> {
-        self.find_node_ops
-            .iter()
-            .position(|op| op.contains_tx_local_id(tx_local_id))
-            .map(|idx| self.find_node_ops.swap_remove(idx))
-    }
-
     fn handle_resp_or_err(
         &mut self,
         value: Value,
         tx: transaction::Transaction,
     ) -> Result<(), error::Error> {
-        if let Some(mut find_node_op) = self.find_find_node_op(tx.local_id) {
-            debug!(
-                "transaction part of FindNodeOp. tx_local_ids.len()={:?} queried_remote_nodes.len()={:?}",
-                find_node_op.tx_local_ids.len(),
-                find_node_op.queried_remote_nodes.len(),
+        for op in &mut self.find_node_ops {
+            op.handle(
+                &tx,
+                find_node_op::Response::Msg(&value),
+                &mut self.tx_manager,
+                &mut self.msg_buffer,
             );
-            find_node_op.process_msg(self, tx, value);
-            self.find_node_ops.push(find_node_op);
-        } else {
-            self.msg_buffer.push_inbound(InboundMsg {
-                remote_id: tx.remote_id,
-                tx_local_id: Some(tx.local_id),
-                msg: Some(value),
-                is_timeout: false,
-            });
         }
+        self.find_node_ops
+            .retain(|op| op.status() != find_node_op::Status::Done);
+        self.msg_buffer.push_inbound(InboundMsg {
+            remote_id: tx.remote_id,
+            tx_local_id: Some(tx.local_id),
+            msg: Some(value),
+            is_timeout: false,
+        });
         Ok(())
     }
 
@@ -160,10 +150,9 @@ impl Dht {
                 match kind {
                     Kind::Query => {
                         debug!("Recieved query");
-                        let querying_node_id = QueryMsg::querying_node_id(&value);
                         let remote_id = RemoteNodeId {
                             addr: Addr::SocketAddr(addr),
-                            node_id: querying_node_id,
+                            node_id: QueryMsg::querying_node_id(&value),
                         };
                         self.routing_table.on_msg_received(&remote_id, &kind, now);
                         self.msg_buffer.push_inbound(InboundMsg {
@@ -181,18 +170,6 @@ impl Dht {
         Ok(())
     }
 
-    fn ping_routing_table_questionable_nodes(&mut self, now: Instant) -> Result<(), error::Error> {
-        for remote_id in self.routing_table.nodes_to_ping(now) {
-            self.msg_buffer.write_query(
-                &PingQueryArgs::new_with_id(self.config.id),
-                &remote_id,
-                &mut self.tx_manager,
-                &self.config.client_version,
-            )?;
-        }
-        Ok(())
-    }
-
     pub fn on_recv_complete(&mut self) -> Result<(), error::Error> {
         self.on_recv_complete_with_now(Instant::now())
     }
@@ -203,6 +180,55 @@ impl Dht {
 
     pub fn read(&mut self) -> Option<InboundMsg> {
         self.msg_buffer.pop_inbound()
+    }
+
+    pub fn write_query<T>(
+        &mut self,
+        args: &T,
+        remote_id: &RemoteNodeId,
+    ) -> Result<transaction::LocalId, error::Error>
+    where
+        T: QueryArgs + std::fmt::Debug,
+    {
+        self.msg_buffer
+            .write_query(args, remote_id, &mut self.tx_manager)
+    }
+
+    pub fn write_resp(
+        &mut self,
+        transaction_id: &ByteBuf,
+        resp: Option<Value>,
+        remote_id: &RemoteNodeId,
+    ) -> Result<(), error::Error> {
+        self.msg_buffer.write_resp(transaction_id, resp, remote_id)
+    }
+
+    pub fn write_err(
+        &mut self,
+        transaction_id: &ByteBuf,
+        details: Option<Value>,
+        remote_id: &RemoteNodeId,
+    ) -> Result<(), error::Error> {
+        self.msg_buffer
+            .write_err(transaction_id, details, remote_id)
+    }
+
+    pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
+        if let Some(out_msg) = self.msg_buffer.pop_outbound() {
+            use std::io::Write;
+            buf.write_all(&out_msg.msg_data)
+                .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
+            let result = Some(SendInfo {
+                len: out_msg.msg_data.len(),
+                addr: out_msg.addr,
+            });
+            if let Some(tx) = out_msg.into_transaction() {
+                self.tx_manager.on_send_to(tx);
+            }
+            Ok(result)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn timeout(&self) -> Option<Duration> {
@@ -227,6 +253,16 @@ impl Dht {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(timeout, now) {
             for tx in timed_out_txs {
                 self.routing_table.on_resp_timeout(&tx.remote_id);
+                for op in &mut self.find_node_ops {
+                    op.handle(
+                        &tx,
+                        find_node_op::Response::Timeout,
+                        &mut self.tx_manager,
+                        &mut self.msg_buffer,
+                    );
+                }
+                self.find_node_ops
+                    .retain(|op| op.status() != find_node_op::Status::Done);
                 self.msg_buffer.push_inbound(InboundMsg {
                     remote_id: tx.remote_id,
                     tx_local_id: Some(tx.local_id),
@@ -239,63 +275,6 @@ impl Dht {
         self.ping_routing_table_questionable_nodes(now)?;
 
         Ok(())
-    }
-
-    pub fn write_query<T>(
-        &mut self,
-        args: &T,
-        remote_id: &RemoteNodeId,
-    ) -> Result<transaction::LocalId, error::Error>
-    where
-        T: QueryArgs + std::fmt::Debug,
-    {
-        self.msg_buffer.write_query(
-            args,
-            remote_id,
-            &mut self.tx_manager,
-            &self.config.client_version,
-        )
-    }
-
-    pub fn write_resp(
-        &mut self,
-        transaction_id: &ByteBuf,
-        resp: Option<Value>,
-        remote_id: &RemoteNodeId,
-    ) -> Result<(), error::Error> {
-        self.msg_buffer
-            .write_resp(transaction_id, resp, remote_id, &self.config.client_version)
-    }
-
-    pub fn write_err(
-        &mut self,
-        transaction_id: &ByteBuf,
-        details: Option<Value>,
-        remote_id: &RemoteNodeId,
-    ) -> Result<(), error::Error> {
-        self.msg_buffer.write_err(
-            transaction_id,
-            details,
-            remote_id,
-            &self.config.client_version,
-        )
-    }
-
-    pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
-        if let Some(out_msg) = self.msg_buffer.pop_outbound() {
-            buf.write_all(&out_msg.msg_data)
-                .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
-            let result = Some(SendInfo {
-                len: out_msg.msg_data.len(),
-                addr: out_msg.addr,
-            });
-            if let Some(tx) = out_msg.into_transaction() {
-                self.tx_manager.on_send_to(tx);
-            }
-            Ok(result)
-        } else {
-            Ok(None)
-        }
     }
 
     pub fn find_neighbors<'a>(
@@ -319,23 +298,28 @@ impl Dht {
             .iter()
             .map(|&n| n.clone())
             .collect::<Vec<RemoteNodeId>>();
-        let mut find_node_op = FindNodeOp::new_with_id(self.config.id);
-        for n in neighbors {
-            if let Ok(tx_local_id) = self.write_query(
-                &FindNodeQueryArgs::new_with_id_and_target(self.config.id, self.config.id),
-                &n,
-            ) {
-                find_node_op.add_tx_local_id(tx_local_id);
-                find_node_op.add_queried_node_id(n);
-            }
-        }
+        let mut find_node_op =
+            FindNodeOp::with_local_id_and_id_to_find(self.config.id, self.config.id, neighbors);
+        find_node_op.start(&mut self.tx_manager, &mut self.msg_buffer);
         self.find_node_ops.push(find_node_op);
+    }
+
+    fn ping_routing_table_questionable_nodes(&mut self, now: Instant) -> Result<(), error::Error> {
+        for remote_id in self.routing_table.nodes_to_ping(now) {
+            self.msg_buffer.write_query(
+                &PingQueryArgs::new_with_id(self.config.id),
+                &remote_id,
+                &mut self.tx_manager,
+            )?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use krpc::find_node::FindNodeQueryArgs;
     use std::convert::TryFrom;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
@@ -430,23 +414,22 @@ mod tests {
                 }
 
                 let find_node_op = dht.find_node_ops.first().unwrap();
-                assert_eq!(
-                    &RemoteNodeId {
-                        addr: bootstrap_remote_addr.clone(),
-                        node_id: None,
-                    },
-                    find_node_op.queried_remote_nodes.first().unwrap()
-                );
+                assert!(find_node_op.queried_remote_nodes.contains(&RemoteNodeId {
+                    addr: bootstrap_remote_addr.clone(),
+                    node_id: None,
+                }));
 
                 let filled_buf = &out[..send_info.len];
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
-                assert_eq!(
-                    msg_sent.tx_id(),
-                    Some(&find_node_op.tx_local_ids.first().unwrap().id().to_bytebuf())
-                );
+                assert!(find_node_op.tx_local_ids.contains(
+                    &transaction::LocalId::with_id_and_addr(
+                        transaction::Id::try_from(msg_sent.tx_id().unwrap()).unwrap(),
+                        send_info.addr,
+                    )
+                ));
                 dbg!(&msg_sent);
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();

@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Addr {
     HostPort(String),
     SocketAddr(SocketAddr),

@@ -5,7 +5,7 @@ use std::convert::{TryFrom, TryInto};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub(crate) struct Id(u16);
 
 impl Id {
@@ -34,7 +34,7 @@ impl TryFrom<&ByteBuf> for Id {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct LocalId {
     id: Id,
     addr: SocketAddr,
@@ -125,14 +125,14 @@ impl Manager {
         &mut self,
         timeout: Duration,
         now: Instant,
-    ) -> Option<std::collections::vec_deque::Drain<Transaction>> {
+    ) -> Option<Vec<Transaction>> {
         if let Some(idx) = self
             .transactions
             .iter()
             .rev()
             .position(|tx| tx.sent + timeout <= now)
         {
-            Some(self.transactions.drain(0..=idx))
+            Some(self.transactions.drain(0..=idx).collect())
         } else {
             None
         }
