@@ -1,13 +1,13 @@
-# BtDht
+# Sloppy
 
-BtDht is a library which can help build an application which uses the BitTorrent
-mainline DHT.
+Sloppy is a library which can help build an application which uses the BitTorrent
+mainline distributed hash table (DHT).
 
 ## Installation
 
 ```toml
 [dependencies]
-bt_dht = "0.1.0"
+sloppy = "0.1.0"
 ```
 
 ## License

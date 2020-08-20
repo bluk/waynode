@@ -22,7 +22,7 @@ use clap::{App, Arg};
 
 use mio::{Events, Interest, Poll, Token};
 
-use bt_dht::{
+use sloppy::{
     krpc::{ping, Kind, Msg, QueryMsg},
     Dht,
 };
@@ -60,24 +60,24 @@ fn main() -> io::Result<()> {
     let local_addr: net::SocketAddr = format!("{}:{}", ip, port).parse().unwrap();
     let mut socket = mio::net::UdpSocket::bind(local_addr)?;
 
-    let mut dht: Dht = Dht::new_with_config(bt_dht::Config {
-        id: bt_dht::node::Id::rand().unwrap(),
+    let mut dht: Dht = Dht::new_with_config(sloppy::Config {
+        id: sloppy::node::Id::rand().unwrap(),
         client_version: Some(serde_bytes::ByteBuf::from("ab12")),
         query_timeout: Duration::from_secs(60),
         is_read_only_node: true,
         max_node_count_per_bucket: 10,
     });
     dht.bootstrap(&[
-        // bt_dht::node::remote::RemoteNodeId {
-        //     addr: bt_dht::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
+        // sloppy::node::remote::RemoteNodeId {
+        //     addr: sloppy::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
         //     node_id: None,
         // },
-        bt_dht::node::remote::RemoteNodeId {
-            addr: bt_dht::addr::Addr::HostPort(String::from("router.bittorrent.com:6881")),
+        sloppy::node::remote::RemoteNodeId {
+            addr: sloppy::addr::Addr::HostPort(String::from("router.bittorrent.com:6881")),
             node_id: None,
         },
-        // bt_dht::node::remote::RemoteNodeId {
-        //     addr: bt_dht::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
+        // sloppy::node::remote::RemoteNodeId {
+        //     addr: sloppy::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
         //     node_id: None,
         // },
     ]);

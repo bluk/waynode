@@ -1,11 +1,11 @@
 [package]
-name = "bt_dht"
+name = "sloppy"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Bryant Luk <code@bryantluk.com>"]
 edition = "2018"
-description = "A distributed hash table library"
-repository = "https://github.com/bluk/bt_dht"
+description = "A sloppy distributed hash table library"
+repository = "https://github.com/bluk/sloppy"
 readme = "README.md"
 include = [
   "src/**/*.rs",
