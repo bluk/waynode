@@ -90,6 +90,13 @@ impl Id {
         Id(data)
     }
 
+    #[must_use]
+    pub(crate) fn next(&self) -> Id {
+        let mut data = self.0.clone();
+        let _ = data.overflowing_add(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        Id(data)
+    }
+
     // #[must_use]
     // pub(crate) fn prev(&self) -> Id {
     //     let mut data: [u8; 20] = [0; 20];

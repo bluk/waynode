@@ -121,7 +121,7 @@ impl Bucket {
         let middle = self.range.end().middle(self.range.start());
 
         let mut lower_bucket = Bucket::new(*self.range.start()..=middle, self.max_nodes);
-        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), self.max_nodes);
+        let mut upper_bucket = Bucket::new(middle.next()..=*self.range.end(), self.max_nodes);
 
         for node in self.nodes.into_iter() {
             if let Some(node_id) = node.id.node_id {
@@ -189,15 +189,21 @@ impl Bucket {
     }
 
     pub(crate) fn nodes_to_ping(&mut self, now: Instant) -> impl Iterator<Item = &RemoteNodeId> {
-        // The actual number of nodes to ping should be smaller.
-        // If there are 2 possible replacement nodes and 3 questionable nodes,
-        // then the first invocation will ping the first 2 questionable nodes.
-        // The second invocation of this method (assuming no responses or timeouts yet) will
-        // ping the last questionable node.
+        let pinged_nodes_count = self
+            .nodes
+            .iter_mut()
+            .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_some())
+            .count();
+        let replacement_nodes_len = self.replacement_nodes.len();
+        let nodes_to_ping = if pinged_nodes_count < replacement_nodes_len {
+            replacement_nodes_len - pinged_nodes_count
+        } else {
+            0
+        };
         self.nodes
             .iter_mut()
             .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
-            .take(self.replacement_nodes.len())
+            .take(nodes_to_ping)
             .map(move |n| {
                 n.on_ping(now);
                 &n.id
