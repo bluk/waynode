@@ -8,10 +8,9 @@
 
 use crate::{error::Error, node::remote::RemoteNodeId};
 use serde_bytes::ByteBuf;
-use std::collections::VecDeque;
 use std::convert::{TryFrom, TryInto};
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub(crate) struct Id(u16);
@@ -65,7 +64,7 @@ impl LocalId {
 pub(crate) struct Transaction {
     pub(crate) local_id: LocalId,
     pub(crate) remote_id: RemoteNodeId,
-    pub(crate) sent: Instant,
+    pub(crate) deadline: Instant,
 }
 
 impl std::hash::Hash for Transaction {
@@ -90,16 +89,20 @@ impl Transaction {
 
 #[derive(Debug)]
 pub(crate) struct Manager {
-    transactions: VecDeque<Transaction>,
+    transactions: Vec<Transaction>,
     next_transaction_id: Id,
 }
 
 impl Manager {
     pub(crate) fn new() -> Self {
         Self {
-            transactions: VecDeque::new(),
+            transactions: Vec::new(),
             next_transaction_id: Id(0),
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.transactions.len()
     }
 
     #[inline]
@@ -109,8 +112,8 @@ impl Manager {
         transaction_id
     }
 
-    pub(crate) fn min_sent_instant(&self) -> Option<Instant> {
-        self.transactions.iter().map(|t| t.sent).min()
+    pub(crate) fn min_deadline(&self) -> Option<Instant> {
+        self.transactions.iter().map(|t| t.deadline).min()
     }
 
     pub(crate) fn find(&mut self, tx_id: &ByteBuf, addr: SocketAddr) -> Option<Transaction> {
@@ -122,23 +125,21 @@ impl Manager {
                     .iter()
                     .position(|t| t.local_id == tx_local_id)
             })
-            .and_then(|idx| self.transactions.swap_remove_back(idx))
+            .map(|idx| self.transactions.remove(idx))
     }
 
-    pub(crate) fn on_send_to(&mut self, tx: Transaction) {
-        self.transactions.push_back(tx);
+    pub(crate) fn push(&mut self, tx: Transaction) {
+        self.transactions.push(tx);
+        self.transactions
+            .sort_by(|a, b| a.deadline.cmp(&b.deadline));
     }
 
-    pub(crate) fn timed_out_txs(
-        &mut self,
-        timeout: Duration,
-        now: Instant,
-    ) -> Option<Vec<Transaction>> {
+    pub(crate) fn timed_out_txs(&mut self, now: Instant) -> Option<Vec<Transaction>> {
         if let Some(idx) = self
             .transactions
             .iter()
             .rev()
-            .position(|tx| tx.sent + timeout <= now)
+            .position(|tx| tx.deadline <= now)
         {
             Some(self.transactions.drain(0..=idx).collect())
         } else {

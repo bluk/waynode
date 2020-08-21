@@ -8,7 +8,11 @@
 
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
-use std::{collections::VecDeque, net::SocketAddr, time::Instant};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use crate::{
     error::Error,
@@ -21,6 +25,7 @@ use crate::{
 pub(crate) struct OutboundMsg {
     tx_id: Option<transaction::Id>,
     pub(crate) addr: SocketAddr,
+    timeout: Duration,
     remote_id: RemoteNodeId,
     pub(crate) msg_data: Vec<u8>,
 }
@@ -29,10 +34,11 @@ impl OutboundMsg {
     pub(crate) fn into_transaction(self) -> Option<transaction::Transaction> {
         let remote_id = self.remote_id;
         let resolved_addr = self.addr;
+        let timeout = self.timeout;
         self.tx_id.map(|tx_id| transaction::Transaction {
             local_id: transaction::LocalId::with_id_and_addr(tx_id, resolved_addr),
             remote_id,
-            sent: Instant::now(),
+            deadline: Instant::now() + timeout,
         })
     }
 }
@@ -94,6 +100,7 @@ impl Buffer {
         &mut self,
         args: &T,
         remote_id: &RemoteNodeId,
+        timeout: Duration,
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::LocalId, Error>
     where
@@ -121,6 +128,7 @@ impl Buffer {
                 v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            timeout,
         });
         Ok(transaction::LocalId::with_id_and_addr(transaction_id, addr))
     }
@@ -142,6 +150,7 @@ impl Buffer {
                 v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            timeout: Duration::new(0, 0),
         });
         Ok(())
     }
@@ -163,6 +172,7 @@ impl Buffer {
                 v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            timeout: Duration::new(0, 0),
         });
         Ok(())
     }

@@ -12,8 +12,6 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-// TODO: Allow per transaction timeout deadlines instead of a global
-
 #[macro_use]
 extern crate log;
 
@@ -51,8 +49,8 @@ pub struct Config {
     pub id: node::Id,
     /// Client version identifier
     pub client_version: Option<ByteBuf>,
-    /// The amount of time before a query without a response is considered timed out
-    pub query_timeout: Duration,
+    /// The default amount of time before a query without a response is considered timed out
+    pub default_query_timeout: Duration,
     /// If the node is read only
     pub is_read_only_node: bool,
     /// The max amount of nodes in a routing table bucket
@@ -127,6 +125,20 @@ impl Dht {
                                 tx_local_id: Some(tx.local_id),
                                 msg: msg_buffer::Msg::Resp(value),
                             });
+                        } else {
+                            error!(
+                        "Message did not match expected queried node id. tx={:?}, addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
+                        tx,
+                        addr,
+                        kind,
+                        value.tx_id(),
+                        value.queried_node_id(),
+                        value.method_name_str(),
+                        value.querying_node_id(),
+                        value.client_version_str(),
+                        value
+                    );
+                            self.tx_manager.push(tx);
                         }
                     }
                     Kind::Error => {
@@ -150,12 +162,26 @@ impl Dht {
                         });
                     }
                     // unexpected
-                    Kind::Query | Kind::Unknown(_) => {}
+                    Kind::Query | Kind::Unknown(_) => {
+                        error!(
+                        "Message kind not expected. tx={:?}, addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
+                        tx,
+                        addr,
+                        kind,
+                        value.tx_id(),
+                        value.queried_node_id(),
+                        value.method_name_str(),
+                        value.querying_node_id(),
+                        value.client_version_str(),
+                        value
+                    );
+                        self.tx_manager.push(tx);
+                    }
                 }
             } else {
                 match kind {
                     Kind::Query => {
-                        debug!("Recieved query");
+                        debug!("Recieved query. addr={}", addr);
                         let remote_id = RemoteNodeId {
                             addr: Addr::SocketAddr(addr),
                             node_id: QueryMsg::querying_node_id(&value),
@@ -168,10 +194,23 @@ impl Dht {
                         });
                     }
                     // unexpected
-                    Kind::Response | Kind::Error | Kind::Unknown(_) => {}
+                    Kind::Response | Kind::Error | Kind::Unknown(_) => error!(
+                        "Unexpected no local tx message. addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
+                        addr,
+                        kind,
+                        value.tx_id(),
+                        value.queried_node_id(),
+                        value.method_name_str(),
+                        value.querying_node_id(),
+                        value.client_version_str(),
+                        value
+                    ),
                 }
             }
+        } else {
+            error!("bad message!!!!! from {}", addr);
         }
+        debug!("handled on_recv_with_now");
         Ok(())
     }
 
@@ -191,12 +230,17 @@ impl Dht {
         &mut self,
         args: &T,
         remote_id: &RemoteNodeId,
+        timeout: Option<Duration>,
     ) -> Result<transaction::LocalId, error::Error>
     where
         T: QueryArgs + std::fmt::Debug,
     {
-        self.msg_buffer
-            .write_query(args, remote_id, &mut self.tx_manager)
+        self.msg_buffer.write_query(
+            args,
+            remote_id,
+            timeout.unwrap_or(self.config.default_query_timeout),
+            &mut self.tx_manager,
+        )
     }
 
     pub fn write_resp(
@@ -228,7 +272,7 @@ impl Dht {
                 addr: out_msg.addr,
             });
             if let Some(tx) = out_msg.into_transaction() {
-                self.tx_manager.on_send_to(tx);
+                self.tx_manager.push(tx);
             }
             Ok(result)
         } else {
@@ -237,13 +281,12 @@ impl Dht {
     }
 
     pub fn timeout(&self) -> Option<Duration> {
-        self.tx_manager.min_sent_instant().map(|earliest_sent| {
+        self.tx_manager.min_deadline().map(|min_tx_deadline| {
             let now = Instant::now();
-            let timeout = earliest_sent + self.config.query_timeout;
-            if now > timeout {
+            if now > min_tx_deadline {
                 Duration::from_secs(0)
             } else {
-                timeout - now
+                min_tx_deadline - now
             }
         })
     }
@@ -253,11 +296,11 @@ impl Dht {
     }
 
     fn on_timeout_with_now(&mut self, now: Instant) -> Result<(), error::Error> {
-        let timeout = self.config.query_timeout;
-
-        if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(timeout, now) {
+        debug!("on_timeout_with_now now={:?}", now);
+        if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
                 self.routing_table.on_resp_timeout(&tx.remote_id);
+                debug!("tx timed out: {:?}", tx);
                 for op in &mut self.find_node_ops {
                     op.handle(
                         &tx,
@@ -277,6 +320,8 @@ impl Dht {
         }
 
         self.ping_routing_table_questionable_nodes(now)?;
+
+        debug!("remaining tx after timeout: {}", self.tx_manager.len());
 
         Ok(())
     }
@@ -316,6 +361,7 @@ impl Dht {
             self.msg_buffer.write_query(
                 &PingQueryArgs::new_with_id(self.config.id),
                 &remote_id,
+                self.config.default_query_timeout,
                 &mut self.tx_manager,
             )?;
         }
@@ -340,7 +386,7 @@ mod tests {
         Ok(Config {
             id: node::Id::rand()?,
             client_version: None,
-            query_timeout: Duration::from_secs(60),
+            default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
             max_node_count_per_bucket: 10,
         })
@@ -373,7 +419,7 @@ mod tests {
         let args = PingQueryArgs::new_with_id(id);
 
         let mut dht: Dht = Dht::new_with_config(new_config()?);
-        let tx_local_id = dht.write_query(&args, &remote_id).unwrap();
+        let tx_local_id = dht.write_query(&args, &remote_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {

@@ -70,8 +70,12 @@ impl FindNodeOp {
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        return self.tx_local_ids.is_empty()
+        let ret = self.tx_local_ids.is_empty()
             && (!self.queried_addrs.is_empty() || self.potential_nodes.is_empty());
+        if ret {
+            debug!("find_node is done. find_node_op={:?}", self);
+        }
+        ret
     }
 
     pub(crate) fn start(
@@ -94,6 +98,7 @@ impl FindNodeOp {
             let tx_local_id = msg_buffer.write_query(
                 &FindNodeQueryArgs::new_with_id_and_target(config.id, self.target_id),
                 &potential_node.remote_node_id,
+                config.default_query_timeout,
                 tx_manager,
             )?;
             self.tx_local_ids.insert(tx_local_id);
@@ -134,9 +139,14 @@ impl FindNodeOp {
         msg_buffer: &mut msg_buffer::Buffer,
     ) -> Result<(), Error> {
         if !self.tx_local_ids.contains(&tx.local_id) {
+            error!("tried handling wrong tx={:?}", tx);
             return Ok(());
         }
         self.tx_local_ids.remove(&tx.local_id);
+        debug!(
+            "handle target_id={:?} tx={:?} resp={:?}",
+            self.target_id, tx, resp
+        );
 
         let max_distance = match resp {
             Response::Resp(resp) => {
@@ -171,6 +181,7 @@ impl FindNodeOp {
                     })
                 {
                     if !nodes.is_empty() {
+                        debug!("new potential nodes={:?}", nodes);
                         self.potential_nodes.extend(nodes);
                     }
                 }
@@ -201,6 +212,7 @@ impl FindNodeOp {
                 let tx_local_id = msg_buffer.write_query(
                     &FindNodeQueryArgs::new_with_id_and_target(config.id, self.target_id),
                     &potential_node.remote_node_id,
+                    config.default_query_timeout,
                     tx_manager,
                 )?;
                 self.tx_local_ids.insert(tx_local_id);
@@ -213,6 +225,14 @@ impl FindNodeOp {
                 }
             }
         }
+
+        debug!(
+            "outstanding tx_local_ids.len={} potential_nodes.len={} queried_addr.len={} closest_distances={:?} ",
+            self.tx_local_ids.len(),
+            self.potential_nodes.len(),
+            self.queried_addrs.len(),
+            self.closest_distances
+        );
 
         Ok(())
     }

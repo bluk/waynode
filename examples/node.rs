@@ -63,7 +63,7 @@ fn main() -> io::Result<()> {
     let mut dht: Dht = Dht::new_with_config(sloppy::Config {
         id: sloppy::node::Id::rand().unwrap(),
         client_version: Some(serde_bytes::ByteBuf::from("ab12")),
-        query_timeout: Duration::from_secs(60),
+        default_query_timeout: Duration::from_secs(30),
         is_read_only_node: true,
         max_node_count_per_bucket: 10,
     });
@@ -137,7 +137,7 @@ fn main() -> io::Result<()> {
 
             'read: loop {
                 if let Some(inbound_msg) = dht.read() {
-                    debug!("Read message: {:?}", inbound_msg);
+                    // debug!("Read message: {:?}", inbound_msg);
                     match inbound_msg.msg() {
                         sloppy::msg_buffer::Msg::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
