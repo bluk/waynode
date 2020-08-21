@@ -25,7 +25,7 @@ impl Id {
         Id([0xff; 20])
     }
 
-    pub fn new_with_bytes(bytes: [u8; 20]) -> Self {
+    pub fn with_bytes(bytes: [u8; 20]) -> Self {
         Id(bytes)
     }
 
