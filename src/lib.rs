@@ -104,13 +104,25 @@ impl Dht {
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
         if let Some(kind) = value.kind() {
-            if let Some(tx) = value
+            if let Some(mut tx) = value
                 .tx_id()
                 .and_then(|tx_id| self.tx_manager.find(tx_id, addr))
             {
                 match kind {
                     Kind::Response => {
-                        if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
+                        let queried_node_id = RespMsg::queried_node_id(&value);
+                        if queried_node_id.is_some()
+                            && queried_node_id != Some(self.config.local_id)
+                            && tx.is_node_id_match(queried_node_id)
+                        {
+                            if tx.addr_id.id().is_none() {
+                                if let Some(queried_node_id) = queried_node_id {
+                                    tx.addr_id = AddrId::with_addr_and_id(
+                                        tx.addr_id.into_addr(),
+                                        queried_node_id,
+                                    );
+                                }
+                            }
                             self.routing_table.on_msg_received(
                                 &tx.addr_id,
                                 &kind,
