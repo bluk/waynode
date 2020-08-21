@@ -60,7 +60,7 @@ fn main() -> io::Result<()> {
     let local_addr: net::SocketAddr = format!("{}:{}", ip, port).parse().unwrap();
     let mut socket = mio::net::UdpSocket::bind(local_addr)?;
 
-    let mut dht: Dht = Dht::new_with_config(
+    let mut dht: Dht = Dht::with_config(
         sloppy::Config {
             local_id: sloppy::node::Id::rand().unwrap(),
             client_version: Some(serde_bytes::ByteBuf::from("ab12")),
@@ -68,20 +68,19 @@ fn main() -> io::Result<()> {
             is_read_only_node: true,
             max_node_count_per_bucket: 10,
         },
-        &[],
-    );
-    dht.bootstrap(&[
-        // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-        //     "router.magnets.im:6881",
-        // ))),
-        sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-            "router.bittorrent.com:6881",
-        ))),
-        // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-        //     "dht.transmissionbt.com:6881",
-        // ))),
-    ])
-    .expect("bootstrap to complete successfully");
+        &[
+            // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+            //     "router.magnets.im:6881",
+            // ))),
+            sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+                "router.bittorrent.com:6881",
+            ))),
+            // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+            //     "dht.transmissionbt.com:6881",
+            // ))),
+        ],
+    )
+    .expect("dht to bootstrap successfully");
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;

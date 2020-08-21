@@ -69,11 +69,11 @@ pub struct Dht {
 }
 
 impl Dht {
-    pub fn new_with_config(config: Config, existing_addr_ids: &[AddrId]) -> Self {
+    pub fn with_config(config: Config, existing_addr_ids: &[AddrId]) -> Result<Self, error::Error> {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let local_id = config.local_id;
         let client_version = config.client_version.clone();
-        Self {
+        let mut dht = Self {
             config,
             routing_table: routing::Table::new(
                 local_id,
@@ -83,7 +83,16 @@ impl Dht {
             tx_manager: transaction::Manager::new(),
             msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
             find_node_ops: Vec::new(),
-        }
+        };
+        dht.routing_table.find_node(
+            dht.config.local_id,
+            &dht.config,
+            &mut dht.tx_manager,
+            &mut dht.msg_buffer,
+            &mut dht.find_node_ops,
+            &existing_addr_ids,
+        )?;
+        Ok(dht)
     }
 
     pub fn config(&self) -> &Config {
@@ -351,24 +360,8 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors<'a>(&'a self, id: node::Id) -> impl Iterator<Item = &'a AddrId> {
+    pub fn find_neighbors(&self, id: node::Id) -> impl Iterator<Item = &AddrId> {
         self.routing_table.find_neighbors(id)
-    }
-
-    // TODO: Move bootstrap into routing table? or operations controller?
-
-    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [AddrId]) -> Result<(), error::Error> {
-        let mut neighbors = self
-            .find_neighbors(self.config.local_id)
-            .take(8)
-            .map(|n| n.clone())
-            .collect::<Vec<AddrId>>();
-        neighbors.extend(bootstrap_nodes.iter().map(|n| n.clone()));
-        let mut find_node_op =
-            FindNodeOp::with_target_id_and_neighbors(self.config.local_id, neighbors);
-        find_node_op.start(&self.config, &mut self.tx_manager, &mut self.msg_buffer)?;
-        self.find_node_ops.push(find_node_op);
-        Ok(())
     }
 }
 
@@ -418,7 +411,7 @@ mod tests {
 
         let args = PingQueryArgs::with_id(id);
 
-        let mut dht: Dht = Dht::new_with_config(new_config()?, &[]);
+        let mut dht: Dht = Dht::with_config(new_config()?, &[])?;
         let tx_local_id = dht.write_query(&args, &addr_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
@@ -446,9 +439,11 @@ mod tests {
 
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
-        let mut dht: Dht = Dht::new_with_config(new_config()?, &[]);
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        dht.bootstrap(&[AddrId::with_addr(bootstrap_remote_addr.clone())])?;
+        let mut dht: Dht = Dht::with_config(
+            new_config()?,
+            &[AddrId::with_addr(bootstrap_remote_addr.clone())],
+        )?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {

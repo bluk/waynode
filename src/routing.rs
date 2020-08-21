@@ -7,11 +7,15 @@
 // except according to those terms.
 
 use crate::{
+    error::Error,
+    find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, Kind},
+    msg_buffer,
     node::{
         remote::{RemoteNode, RemoteState},
         AddrId, Id,
     },
+    transaction,
 };
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
@@ -74,10 +78,10 @@ impl Bucket {
     fn ping_least_recently_seen_questionable_node(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut crate::transaction::Manager,
-        msg_buffer: &mut crate::msg_buffer::Buffer,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), Error> {
         let pinged_nodes_count = self
             .nodes
             .iter()
@@ -107,10 +111,10 @@ impl Bucket {
         addr_id: &AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
-        tx_manager: &mut crate::transaction::Manager,
-        msg_buffer: &mut crate::msg_buffer::Buffer,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), Error> {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
             node.on_msg_received(kind, now);
             match kind {
@@ -180,10 +184,10 @@ impl Bucket {
         &mut self,
         addr_id: &AddrId,
         config: &crate::Config,
-        tx_manager: &mut crate::transaction::Manager,
-        msg_buffer: &mut crate::msg_buffer::Buffer,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), Error> {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
             node.on_resp_timeout();
             match node.state() {
@@ -295,7 +299,26 @@ impl Table {
         table
     }
 
-    // TODO: Ping the node immediately
+    pub(crate) fn find_node(
+        &mut self,
+        target_id: Id,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        find_node_ops: &mut Vec<FindNodeOp>,
+        bootstrap_nodes: &[AddrId],
+    ) -> Result<(), Error> {
+        let mut neighbors = self
+            .find_neighbors(target_id)
+            .take(8)
+            .cloned()
+            .collect::<Vec<AddrId>>();
+        neighbors.extend(bootstrap_nodes.iter().cloned());
+        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(config.local_id, neighbors);
+        find_node_op.start(&config, tx_manager, msg_buffer)?;
+        find_node_ops.push(find_node_op);
+        Ok(())
+    }
 
     fn try_insert(&mut self, addr_id: &AddrId) {
         if let Some(node_id) = addr_id.id() {
