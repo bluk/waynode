@@ -27,7 +27,7 @@ pub(crate) mod transaction;
 use crate::{
     addr::Addr,
     find_node_op::FindNodeOp,
-    krpc::{ping::PingQueryArgs, Kind, Msg, QueryArgs, QueryMsg, RespMsg},
+    krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg},
     msg_buffer::InboundMsg,
     node::remote::RemoteNodeId,
 };
@@ -107,8 +107,14 @@ impl Dht {
                 match kind {
                     Kind::Response => {
                         if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
-                            self.routing_table
-                                .on_msg_received(&tx.remote_id, &kind, now);
+                            self.routing_table.on_msg_received(
+                                &tx.remote_id,
+                                &kind,
+                                &self.config,
+                                &mut self.tx_manager,
+                                &mut self.msg_buffer,
+                                now,
+                            )?;
                             debug!("Received response for tx_local_id={:?}", tx.local_id);
                             for op in &mut self.find_node_ops {
                                 op.handle(
@@ -142,8 +148,14 @@ impl Dht {
                         }
                     }
                     Kind::Error => {
-                        self.routing_table
-                            .on_msg_received(&tx.remote_id, &kind, now);
+                        self.routing_table.on_msg_received(
+                            &tx.remote_id,
+                            &kind,
+                            &self.config,
+                            &mut self.tx_manager,
+                            &mut self.msg_buffer,
+                            now,
+                        )?;
                         debug!("Received error for tx_local_id={:?}", tx.local_id);
                         for op in &mut self.find_node_ops {
                             op.handle(
@@ -186,7 +198,8 @@ impl Dht {
                             addr: Addr::SocketAddr(addr),
                             node_id: QueryMsg::querying_node_id(&value),
                         };
-                        self.routing_table.on_msg_received(&remote_id, &kind, now);
+                        self.routing_table.on_msg_received(&remote_id, &kind, &self.config, &mut
+                            self.tx_manager, &mut self.msg_buffer, now)?;
                         self.msg_buffer.push_inbound(InboundMsg {
                             remote_id,
                             tx_local_id: None,
@@ -212,14 +225,6 @@ impl Dht {
         }
         debug!("handled on_recv_with_now");
         Ok(())
-    }
-
-    pub fn on_recv_complete(&mut self) -> Result<(), error::Error> {
-        self.on_recv_complete_with_now(Instant::now())
-    }
-
-    fn on_recv_complete_with_now(&mut self, now: Instant) -> Result<(), error::Error> {
-        self.ping_routing_table_questionable_nodes(now)
     }
 
     pub fn read(&mut self) -> Option<InboundMsg> {
@@ -299,8 +304,14 @@ impl Dht {
         debug!("on_timeout_with_now now={:?}", now);
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
-                self.routing_table.on_resp_timeout(&tx.remote_id);
                 debug!("tx timed out: {:?}", tx);
+                self.routing_table.on_resp_timeout(
+                    &tx.remote_id,
+                    &self.config,
+                    &mut self.tx_manager,
+                    &mut self.msg_buffer,
+                    now,
+                )?;
                 for op in &mut self.find_node_ops {
                     op.handle(
                         &tx,
@@ -318,8 +329,6 @@ impl Dht {
                 });
             }
         }
-
-        self.ping_routing_table_questionable_nodes(now)?;
 
         debug!("remaining tx after timeout: {}", self.tx_manager.len());
 
@@ -353,18 +362,6 @@ impl Dht {
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(self.config.id, neighbors);
         find_node_op.start(&self.config, &mut self.tx_manager, &mut self.msg_buffer)?;
         self.find_node_ops.push(find_node_op);
-        Ok(())
-    }
-
-    fn ping_routing_table_questionable_nodes(&mut self, now: Instant) -> Result<(), error::Error> {
-        for remote_id in self.routing_table.nodes_to_ping(now) {
-            self.msg_buffer.write_query(
-                &PingQueryArgs::new_with_id(self.config.id),
-                &remote_id,
-                self.config.default_query_timeout,
-                &mut self.tx_manager,
-            )?;
-        }
         Ok(())
     }
 }

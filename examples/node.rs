@@ -179,13 +179,6 @@ fn main() -> io::Result<()> {
             }
         }
 
-        match dht.on_recv_complete() {
-            Ok(()) => {}
-            Err(e) => {
-                error!("on_recv_complete error: {:?}", e);
-            }
-        };
-
         debug!("Sending after recv");
 
         match send_packets(&mut dht, &socket, &mut out) {

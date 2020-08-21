@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use crate::{
-    krpc::Kind,
+    krpc::{ping::PingQueryArgs, Kind},
     node::{
         remote::{RemoteNode, RemoteNodeId, RemoteState},
         Id,
@@ -43,11 +43,19 @@ impl Bucket {
     fn max_replacement_nodes(&self) -> usize {
         self.nodes
             .iter()
-            .filter(|n| n.state() == RemoteState::Bad || n.state() == RemoteState::Questionable)
+            .filter(|n| n.state() == RemoteState::Questionable)
             .count()
     }
 
-    fn on_msg_received<'a>(&mut self, remote_id: &RemoteNodeId, kind: &Kind<'a>, now: Instant) {
+    fn on_msg_received<'a>(
+        &mut self,
+        remote_id: &RemoteNodeId,
+        kind: &Kind<'a>,
+        config: &crate::Config,
+        tx_manager: &mut crate::transaction::Manager,
+        msg_buffer: &mut crate::msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), crate::error::Error> {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *remote_id) {
             node.on_msg_received(kind, now);
             match kind {
@@ -63,58 +71,101 @@ impl Bucket {
                         self.replacement_nodes.drain(max_replacement_nodes..);
                     }
                 }
-                Kind::Error => {
-                    if node.state() == RemoteState::Bad {
+                Kind::Error => match node.state() {
+                    RemoteState::Good => {}
+                    RemoteState::Questionable => {
+                        if !self.replacement_nodes.is_empty() {
+                            msg_buffer.write_query(
+                                &PingQueryArgs::new_with_id(config.id),
+                                &node.id,
+                                config.default_query_timeout,
+                                tx_manager,
+                            )?;
+                            node.on_ping(now);
+                        }
+                    }
+                    RemoteState::Bad => {
                         if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                             std::mem::swap(node, &mut replacement_node);
                         }
                     }
-                }
-                Kind::Unknown(_) => return,
+                },
+                Kind::Unknown(_) => return Ok(()),
             }
             self.sort_node_ids();
         } else {
             match kind {
                 Kind::Response | Kind::Query | Kind::Error => {}
-                Kind::Unknown(_) => return,
+                Kind::Unknown(_) => return Ok(()),
             }
 
-            let is_nodes_maxed = self.nodes.len() >= self.max_nodes;
-            let is_replacements_maxed =
-                self.replacement_nodes.len() >= self.max_replacement_nodes();
-            let bad_node_pos = self
-                .nodes
-                .iter()
-                .position(|n| n.state() == RemoteState::Bad);
-            if is_nodes_maxed && is_replacements_maxed && bad_node_pos.is_none() {
-                return;
-            }
-
-            let mut node = RemoteNode::new_with_id(remote_id.clone());
-            node.on_msg_received(kind, now);
-            if !is_nodes_maxed {
+            if self.nodes.len() < self.max_nodes {
+                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids();
-            } else if let Some(pos) = bad_node_pos {
+            } else if let Some(pos) = self
+                .nodes
+                .iter()
+                .position(|n| n.state() == RemoteState::Bad)
+            {
+                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
-            } else if !is_replacements_maxed {
+            } else if self.replacement_nodes.len() < self.max_replacement_nodes() {
+                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
-            } else {
-                unreachable!();
+
+                let node_to_ping = self
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
+                    .expect("questionable non-pinged node to exist");
+                msg_buffer.write_query(
+                    &PingQueryArgs::new_with_id(config.id),
+                    &node_to_ping.id,
+                    config.default_query_timeout,
+                    tx_manager,
+                )?;
+                node_to_ping.on_ping(now);
             }
         }
+        Ok(())
     }
 
-    fn on_resp_timeout(&mut self, id: &RemoteNodeId) {
+    fn on_resp_timeout(
+        &mut self,
+        id: &RemoteNodeId,
+        config: &crate::Config,
+        tx_manager: &mut crate::transaction::Manager,
+        msg_buffer: &mut crate::msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), crate::error::Error> {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_resp_timeout();
-            if node.state() == RemoteState::Bad {
-                if let Some(mut replacement_node) = self.replacement_nodes.pop() {
-                    std::mem::swap(node, &mut replacement_node);
+            match node.state() {
+                RemoteState::Good => {}
+                RemoteState::Questionable => {
+                    if !self.replacement_nodes.is_empty() {
+                        msg_buffer.write_query(
+                            &PingQueryArgs::new_with_id(config.id),
+                            &node.id,
+                            config.default_query_timeout,
+                            tx_manager,
+                        )?;
+                        node.on_ping(now);
+                    }
+                }
+                RemoteState::Bad => {
+                    if let Some(mut replacement_node) = self.replacement_nodes.pop() {
+                        std::mem::swap(node, &mut replacement_node);
+                    }
                 }
             }
             self.sort_node_ids();
         }
+        Ok(())
     }
 
     fn split(self) -> (Bucket, Bucket) {
@@ -187,28 +238,6 @@ impl Bucket {
             }
         });
     }
-
-    pub(crate) fn nodes_to_ping(&mut self, now: Instant) -> impl Iterator<Item = &RemoteNodeId> {
-        let pinged_nodes_count = self
-            .nodes
-            .iter_mut()
-            .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_some())
-            .count();
-        let replacement_nodes_len = self.replacement_nodes.len();
-        let nodes_to_ping = if pinged_nodes_count < replacement_nodes_len {
-            replacement_nodes_len - pinged_nodes_count
-        } else {
-            0
-        };
-        self.nodes
-            .iter_mut()
-            .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
-            .take(nodes_to_ping)
-            .map(move |n| {
-                n.on_ping(now);
-                &n.id
-            })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -264,11 +293,14 @@ impl Table {
         &mut self,
         remote_id: &RemoteNodeId,
         kind: &Kind<'a>,
+        config: &crate::Config,
+        tx_manager: &mut crate::transaction::Manager,
+        msg_buffer: &mut crate::msg_buffer::Buffer,
         now: Instant,
-    ) {
+    ) -> Result<(), crate::error::Error> {
         if let Some(id) = remote_id.node_id {
             if id == self.pivot {
-                return;
+                return Ok(());
             }
 
             let bucket = self
@@ -280,9 +312,11 @@ impl Table {
                 let bucket = self.buckets.pop().expect("last bucket should always exist");
                 let (mut first_bucket, mut second_bucket) = bucket.split();
                 if first_bucket.range.contains(&id) {
-                    first_bucket.on_msg_received(remote_id, kind, now);
+                    first_bucket
+                        .on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
                 } else {
-                    second_bucket.on_msg_received(remote_id, kind, now);
+                    second_bucket
+                        .on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
                 }
 
                 if first_bucket.range.contains(&self.pivot) {
@@ -293,26 +327,29 @@ impl Table {
                     self.buckets.push(second_bucket);
                 }
             } else {
-                bucket.on_msg_received(remote_id, kind, now);
+                bucket.on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
             }
         }
+        Ok(())
     }
 
-    pub(crate) fn on_resp_timeout(&mut self, remote_id: &RemoteNodeId) {
+    pub(crate) fn on_resp_timeout(
+        &mut self,
+        remote_id: &RemoteNodeId,
+        config: &crate::Config,
+        tx_manager: &mut crate::transaction::Manager,
+        msg_buffer: &mut crate::msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), crate::error::Error> {
         if let Some(id) = remote_id.node_id {
             let bucket = self
                 .buckets
                 .iter_mut()
                 .find(|n| n.range.contains(&id))
                 .expect("bucket should always exist for a node");
-            bucket.on_resp_timeout(remote_id);
+            bucket.on_resp_timeout(remote_id, config, tx_manager, msg_buffer, now)?;
         }
-    }
-
-    pub(crate) fn nodes_to_ping(&mut self, now: Instant) -> impl Iterator<Item = &RemoteNodeId> {
-        self.buckets
-            .iter_mut()
-            .flat_map(move |b| b.nodes_to_ping(now))
+        Ok(())
     }
 
     // TODO: Should initiate a find_node request for each bucket if a deadline is reached without
