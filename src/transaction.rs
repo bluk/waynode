@@ -131,7 +131,7 @@ impl Manager {
     pub(crate) fn push(&mut self, tx: Transaction) {
         self.transactions.push(tx);
         self.transactions
-            .sort_by(|a, b| a.deadline.cmp(&b.deadline));
+            .sort_unstable_by(|a, b| a.deadline.cmp(&b.deadline));
     }
 
     pub(crate) fn timed_out_txs(&mut self, now: Instant) -> Option<Vec<Transaction>> {

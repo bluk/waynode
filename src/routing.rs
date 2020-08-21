@@ -225,7 +225,7 @@ impl Bucket {
     }
 
     fn sort_node_ids(&mut self) {
-        self.nodes.sort_by(|a, b| {
+        self.nodes.sort_unstable_by(|a, b| {
             match (a.state(), b.state()) {
                 (RemoteState::Good, RemoteState::Questionable)
                 | (RemoteState::Good, RemoteState::Bad)
