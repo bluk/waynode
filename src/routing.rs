@@ -363,6 +363,7 @@ impl Table {
         self.buckets[0..=idx]
             .iter()
             .rev()
+            .chain(self.buckets[idx..self.buckets.len()].iter())
             .flat_map(|b| b.prioritized_addr_ids())
     }
 
