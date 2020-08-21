@@ -69,13 +69,17 @@ pub struct Dht {
 }
 
 impl Dht {
-    pub fn new_with_config(config: Config) -> Self {
+    pub fn new_with_config(config: Config, existing_addr_ids: &[AddrId]) -> Self {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let local_id = config.local_id;
         let client_version = config.client_version.clone();
         Self {
             config,
-            routing_table: routing::Table::new(local_id, max_node_count_per_bucket),
+            routing_table: routing::Table::new(
+                local_id,
+                max_node_count_per_bucket,
+                existing_addr_ids,
+            ),
             tx_manager: transaction::Manager::new(),
             msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
             find_node_ops: Vec::new(),
@@ -402,7 +406,7 @@ mod tests {
 
         let args = PingQueryArgs::with_id(id);
 
-        let mut dht: Dht = Dht::new_with_config(new_config()?);
+        let mut dht: Dht = Dht::new_with_config(new_config()?, &[]);
         let tx_local_id = dht.write_query(&args, &addr_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
@@ -430,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
-        let mut dht: Dht = Dht::new_with_config(new_config()?);
+        let mut dht: Dht = Dht::new_with_config(new_config()?, &[]);
         let bootstrap_remote_addr = bootstrap_remote_addr();
         dht.bootstrap(&[AddrId::with_addr(bootstrap_remote_addr.clone())])?;
 

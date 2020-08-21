@@ -21,21 +21,45 @@ use std::time::Instant;
 pub(crate) struct Bucket {
     range: RangeInclusive<Id>,
     nodes: Vec<RemoteNode>,
-    max_nodes: usize,
-
     replacement_nodes: Vec<RemoteNode>,
-
     last_find_node: Instant,
 }
 
 impl Bucket {
-    fn new(range: RangeInclusive<Id>, max_nodes: usize) -> Self {
+    fn new(range: RangeInclusive<Id>, max_nodes_per_bucket: usize) -> Self {
         Bucket {
             range,
-            nodes: Vec::with_capacity(max_nodes),
-            max_nodes,
-            replacement_nodes: Vec::with_capacity(max_nodes),
+            nodes: Vec::with_capacity(max_nodes_per_bucket),
+            replacement_nodes: Vec::with_capacity(max_nodes_per_bucket),
             last_find_node: Instant::now(),
+        }
+    }
+
+    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: &AddrId) {
+        if self.nodes.len() < max_nodes_per_bucket {
+            let node = RemoteNode::with_addr_id(addr_id.clone());
+            self.nodes.push(node);
+            self.sort_node_ids();
+        } else if let Some(pos) = self
+            .nodes
+            .iter()
+            .rev()
+            .position(|n| n.state() == RemoteState::Bad)
+        {
+            let node = RemoteNode::with_addr_id(addr_id.clone());
+            self.nodes[pos] = node;
+            self.sort_node_ids();
+        } else {
+            self.sort_node_ids();
+            if let Some(pos) = self
+                .nodes
+                .iter()
+                .rev()
+                .position(|n| n.state() == RemoteState::Questionable)
+            {
+                let node = RemoteNode::with_addr_id(addr_id.clone());
+                self.nodes[pos] = node;
+            }
         }
     }
 
@@ -79,6 +103,7 @@ impl Bucket {
 
     fn on_msg_received<'a>(
         &mut self,
+        max_nodes_per_bucket: usize,
         addr_id: &AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
@@ -123,7 +148,7 @@ impl Bucket {
                 Kind::Unknown(_) => return Ok(()),
             }
 
-            if self.nodes.len() < self.max_nodes {
+            if self.nodes.len() < max_nodes_per_bucket {
                 let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
@@ -131,6 +156,7 @@ impl Bucket {
             } else if let Some(pos) = self
                 .nodes
                 .iter()
+                .rev()
                 .position(|n| n.state() == RemoteState::Bad)
             {
                 let mut node = RemoteNode::with_addr_id(addr_id.clone());
@@ -141,6 +167,7 @@ impl Bucket {
                 let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
+                self.sort_node_ids();
                 self.ping_least_recently_seen_questionable_node(
                     config, tx_manager, msg_buffer, now,
                 )?;
@@ -180,11 +207,11 @@ impl Bucket {
         Ok(())
     }
 
-    fn split(self) -> (Bucket, Bucket) {
+    fn split(self, max_nodes_per_bucket: usize) -> (Bucket, Bucket) {
         let middle = self.range.end().middle(self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=middle, self.max_nodes);
-        let mut upper_bucket = Bucket::new(middle.next()..=*self.range.end(), self.max_nodes);
+        let mut lower_bucket = Bucket::new(*self.range.start()..=middle, max_nodes_per_bucket);
+        let mut upper_bucket = Bucket::new(middle.next()..=*self.range.end(), max_nodes_per_bucket);
 
         for node in self.nodes.into_iter() {
             if let Some(node_id) = node.addr_id.id() {
@@ -211,10 +238,6 @@ impl Bucket {
         }
 
         (lower_bucket, upper_bucket)
-    }
-
-    fn is_full(&self) -> bool {
-        self.nodes.len() >= self.max_nodes
     }
 
     fn prioritized_addr_ids(&self) -> impl Iterator<Item = &AddrId> {
@@ -252,13 +275,59 @@ impl Bucket {
 pub struct Table {
     pivot: Id,
     buckets: Vec<Bucket>,
+    max_nodes_per_bucket: usize,
 }
 
 impl Table {
-    pub(crate) fn new(pivot: Id, max_nodes: usize) -> Self {
-        Self {
+    pub(crate) fn new(
+        pivot: Id,
+        max_nodes_per_bucket: usize,
+        existing_addr_ids: &[AddrId],
+    ) -> Self {
+        let mut table = Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes)],
+            buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes_per_bucket)],
+            max_nodes_per_bucket,
+        };
+        for addr_id in existing_addr_ids {
+            table.try_insert(addr_id);
+        }
+        table
+    }
+
+    // TODO: Ping the node immediately
+
+    fn try_insert(&mut self, addr_id: &AddrId) {
+        if let Some(node_id) = addr_id.id() {
+            if node_id == self.pivot {
+                return;
+            }
+
+            let bucket = self
+                .buckets
+                .iter_mut()
+                .find(|n| n.range.contains(&node_id))
+                .expect("bucket should always exist for a node");
+            if bucket.range.contains(&self.pivot) && bucket.nodes.len() >= self.max_nodes_per_bucket
+            {
+                let bucket = self.buckets.pop().expect("last bucket should always exist");
+                let (mut first_bucket, mut second_bucket) = bucket.split(self.max_nodes_per_bucket);
+                if first_bucket.range.contains(&node_id) {
+                    first_bucket.try_insert(self.max_nodes_per_bucket, addr_id);
+                } else {
+                    second_bucket.try_insert(self.max_nodes_per_bucket, addr_id);
+                }
+
+                if first_bucket.range.contains(&self.pivot) {
+                    self.buckets.push(second_bucket);
+                    self.buckets.push(first_bucket);
+                } else {
+                    self.buckets.push(first_bucket);
+                    self.buckets.push(second_bucket);
+                }
+            } else {
+                bucket.try_insert(self.max_nodes_per_bucket, addr_id);
+            }
         }
     }
 
@@ -293,15 +362,30 @@ impl Table {
                 .iter_mut()
                 .find(|n| n.range.contains(&node_id))
                 .expect("bucket should always exist for a node");
-            if bucket.range.contains(&self.pivot) && bucket.is_full() {
+            if bucket.range.contains(&self.pivot) && bucket.nodes.len() >= self.max_nodes_per_bucket
+            {
                 let bucket = self.buckets.pop().expect("last bucket should always exist");
-                let (mut first_bucket, mut second_bucket) = bucket.split();
+                let (mut first_bucket, mut second_bucket) = bucket.split(self.max_nodes_per_bucket);
                 if first_bucket.range.contains(&node_id) {
-                    first_bucket
-                        .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
+                    first_bucket.on_msg_received(
+                        self.max_nodes_per_bucket,
+                        addr_id,
+                        kind,
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
                 } else {
-                    second_bucket
-                        .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
+                    second_bucket.on_msg_received(
+                        self.max_nodes_per_bucket,
+                        addr_id,
+                        kind,
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
                 }
 
                 if first_bucket.range.contains(&self.pivot) {
@@ -312,7 +396,15 @@ impl Table {
                     self.buckets.push(second_bucket);
                 }
             } else {
-                bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
+                bucket.on_msg_received(
+                    self.max_nodes_per_bucket,
+                    addr_id,
+                    kind,
+                    config,
+                    tx_manager,
+                    msg_buffer,
+                    now,
+                )?;
             }
         }
         Ok(())
