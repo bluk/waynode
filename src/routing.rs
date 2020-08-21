@@ -47,6 +47,36 @@ impl Bucket {
             .count()
     }
 
+    fn ping_least_recently_seen_questionable_node(
+        &mut self,
+        config: &crate::Config,
+        tx_manager: &mut crate::transaction::Manager,
+        msg_buffer: &mut crate::msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), crate::error::Error> {
+        let pinged_nodes_count = self
+            .nodes
+            .iter()
+            .filter(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_some())
+            .count();
+        if pinged_nodes_count < self.replacement_nodes.len() {
+            let node_to_ping = self
+                .nodes
+                .iter_mut()
+                .rev()
+                .find(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
+                .expect("questionable non-pinged node to exist");
+            msg_buffer.write_query(
+                &PingQueryArgs::new_with_id(config.id),
+                &node_to_ping.id,
+                config.default_query_timeout,
+                tx_manager,
+            )?;
+            node_to_ping.on_ping(now);
+        }
+        Ok(())
+    }
+
     fn on_msg_received<'a>(
         &mut self,
         remote_id: &RemoteNodeId,
@@ -59,40 +89,34 @@ impl Bucket {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *remote_id) {
             node.on_msg_received(kind, now);
             match kind {
-                Kind::Response => {
+                Kind::Response | Kind::Query => {
                     let max_replacement_nodes = self.max_replacement_nodes();
                     if self.replacement_nodes.len() > max_replacement_nodes {
                         self.replacement_nodes.drain(max_replacement_nodes..);
                     }
+                    self.sort_node_ids();
+                    self.ping_least_recently_seen_questionable_node(
+                        config, tx_manager, msg_buffer, now,
+                    )?;
                 }
-                Kind::Query => {
-                    let max_replacement_nodes = self.max_replacement_nodes();
-                    if self.replacement_nodes.len() > max_replacement_nodes {
-                        self.replacement_nodes.drain(max_replacement_nodes..);
+                Kind::Error | Kind::Unknown(_) => match node.state() {
+                    RemoteState::Good => {
+                        self.sort_node_ids();
                     }
-                }
-                Kind::Error => match node.state() {
-                    RemoteState::Good => {}
                     RemoteState::Questionable => {
-                        if !self.replacement_nodes.is_empty() {
-                            msg_buffer.write_query(
-                                &PingQueryArgs::new_with_id(config.id),
-                                &node.id,
-                                config.default_query_timeout,
-                                tx_manager,
-                            )?;
-                            node.on_ping(now);
-                        }
+                        self.sort_node_ids();
+                        self.ping_least_recently_seen_questionable_node(
+                            config, tx_manager, msg_buffer, now,
+                        )?;
                     }
                     RemoteState::Bad => {
                         if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                             std::mem::swap(node, &mut replacement_node);
                         }
+                        self.sort_node_ids();
                     }
                 },
-                Kind::Unknown(_) => return Ok(()),
             }
-            self.sort_node_ids();
         } else {
             match kind {
                 Kind::Response | Kind::Query | Kind::Error => {}
@@ -112,23 +136,14 @@ impl Bucket {
                 let mut node = RemoteNode::new_with_id(remote_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
+                self.sort_node_ids();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes() {
                 let mut node = RemoteNode::new_with_id(remote_id.clone());
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
-
-                let node_to_ping = self
-                    .nodes
-                    .iter_mut()
-                    .find(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
-                    .expect("questionable non-pinged node to exist");
-                msg_buffer.write_query(
-                    &PingQueryArgs::new_with_id(config.id),
-                    &node_to_ping.id,
-                    config.default_query_timeout,
-                    tx_manager,
+                self.ping_least_recently_seen_questionable_node(
+                    config, tx_manager, msg_buffer, now,
                 )?;
-                node_to_ping.on_ping(now);
             }
         }
         Ok(())
@@ -145,25 +160,22 @@ impl Bucket {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
             node.on_resp_timeout();
             match node.state() {
-                RemoteState::Good => {}
+                RemoteState::Good => {
+                    // The sort order will not change if the state is still good
+                }
                 RemoteState::Questionable => {
-                    if !self.replacement_nodes.is_empty() {
-                        msg_buffer.write_query(
-                            &PingQueryArgs::new_with_id(config.id),
-                            &node.id,
-                            config.default_query_timeout,
-                            tx_manager,
-                        )?;
-                        node.on_ping(now);
-                    }
+                    self.sort_node_ids();
+                    self.ping_least_recently_seen_questionable_node(
+                        config, tx_manager, msg_buffer, now,
+                    )?;
                 }
                 RemoteState::Bad => {
                     if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                         std::mem::swap(node, &mut replacement_node);
                     }
+                    self.sort_node_ids();
                 }
             }
-            self.sort_node_ids();
         }
         Ok(())
     }
@@ -198,9 +210,6 @@ impl Bucket {
             }
         }
 
-        lower_bucket.sort_node_ids();
-        upper_bucket.sort_node_ids();
-
         (lower_bucket, upper_bucket)
     }
 
@@ -211,7 +220,6 @@ impl Bucket {
     fn prioritized_node_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
         self.nodes
             .iter()
-            .rev()
             .filter(|n| n.state() == RemoteState::Questionable || n.state() == RemoteState::Good)
             .map(|n| &n.id)
     }
