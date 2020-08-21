@@ -60,7 +60,7 @@ impl LocalId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Transaction {
     pub(crate) local_id: LocalId,
     pub(crate) remote_id: RemoteNodeId,

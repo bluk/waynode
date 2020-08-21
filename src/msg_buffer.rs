@@ -112,7 +112,7 @@ impl Buffer {
         debug!(
             "write_query tx_id={:?} method_name={:?} remote_id={:?} args={:?}",
             transaction_id,
-            String::from_utf8(Vec::from(T::method_name().clone())),
+            String::from_utf8(Vec::from(T::method_name())),
             &remote_id,
             &args
         );

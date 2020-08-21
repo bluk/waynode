@@ -117,9 +117,9 @@ impl RemoteNode {
             (None, Some(resp)) => Some(resp),
             (Some(query), Some(resp)) => {
                 if resp < query {
-                    return Some(query);
+                    Some(query)
                 } else {
-                    return Some(resp);
+                    Some(resp)
                 }
             }
             (None, None) => None,

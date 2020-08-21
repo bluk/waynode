@@ -72,8 +72,8 @@ impl Id {
     #[must_use]
     pub(crate) fn distance(&self, other: &Id) -> Id {
         let mut data = [0; 20];
-        for idx in 0..self.0.len() {
-            data[idx] = self.0[idx] ^ other.0[idx];
+        for (idx, val) in self.0.iter().enumerate() {
+            data[idx] = val ^ other.0[idx];
         }
         Id(data)
     }
@@ -81,7 +81,7 @@ impl Id {
     /// Finds the middle id between this node ID and the node ID argument.
     #[must_use]
     pub(crate) fn middle(&self, other: &Id) -> Id {
-        let mut data = self.0.clone();
+        let mut data = self.0;
         let overflow = data.overflowing_add(&other.0);
         data.shift_right();
         if overflow {
@@ -92,7 +92,7 @@ impl Id {
 
     #[must_use]
     pub(crate) fn next(&self) -> Id {
-        let mut data = self.0.clone();
+        let mut data = self.0;
         let _ = data.overflowing_add(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
         Id(data)
     }
@@ -136,7 +136,7 @@ impl Ord for Id {
             }
             return self.0[idx].cmp(&other.0[idx]);
         }
-        return Ordering::Equal;
+        Ordering::Equal
     }
 }
 
@@ -178,7 +178,6 @@ trait IdBytes {
     /// Shifts the bits right by 1.
     fn shift_right(&mut self);
 
-    #[must_use]
     fn randomize_up_to(end: Self, is_closed_range: bool) -> Result<Self, Error>
     where
         Self: Sized;
@@ -204,21 +203,20 @@ impl IdBytes for [u8; 20] {
     }
 
     fn twos_complement(&mut self) {
-        for idx in 0..self.len() {
-            self[idx] = !self[idx];
+        for val in self.iter_mut() {
+            *val = !(*val);
         }
         let one_bit = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         let _ = self.overflowing_add(&one_bit);
     }
 
-    #[must_use]
     fn shift_right(&mut self) {
         let mut add_high_bit = false;
-        for idx in 0..self.len() {
-            let is_lower_bit_set = (self[idx] & 0x01) == 1;
-            self[idx] = self[idx] >> 1;
+        for val in self.iter_mut() {
+            let is_lower_bit_set = (*val & 0x01) == 1;
+            *val >>= 1;
             if add_high_bit {
-                self[idx] |= 0x80;
+                *val |= 0x80;
             }
             add_high_bit = is_lower_bit_set;
         }
