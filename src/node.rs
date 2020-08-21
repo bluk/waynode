@@ -265,7 +265,7 @@ impl AddrId {
         Self { addr, id: None }
     }
 
-    pub fn with_addr_and_id(id: Id, addr: Addr) -> Self {
+    pub fn with_addr_and_id(addr: Addr, id: Id) -> Self {
         Self { addr, id: Some(id) }
     }
 

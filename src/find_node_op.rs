@@ -164,8 +164,8 @@ impl FindNodeOp {
                                 .map(|cn| PotentialAddrId {
                                     distance: Some(cn.id.distance(&self.target_id)),
                                     addr_id: AddrId::with_addr_and_id(
-                                        cn.id,
                                         Addr::SocketAddr(SocketAddr::V4(cn.addr)),
+                                        cn.id,
                                     ),
                                 })
                                 .filter(|potential_addr| {

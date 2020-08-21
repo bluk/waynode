@@ -199,8 +199,8 @@ impl Dht {
                     Kind::Query => {
                         debug!("Recieved query. addr={}", addr);
                         let addr_id = QueryMsg::querying_node_id(&value).map(|id|
-                            AddrId::with_addr_and_id(id, Addr::SocketAddr(addr)
-                        )).unwrap_or_else(|| AddrId::with_addr(
+                            AddrId::with_addr_and_id(Addr::SocketAddr(addr),id)
+                        ).unwrap_or_else(|| AddrId::with_addr(
                             Addr::SocketAddr(addr))
                         );
                         self.routing_table.on_msg_received(&addr_id, &kind, &self.config, &mut
@@ -402,7 +402,7 @@ mod tests {
     fn test_send_ping() -> Result<(), error::Error> {
         let id = node_id();
         let remote_addr = remote_addr();
-        let addr_id = AddrId::with_addr_and_id(id, remote_addr.clone());
+        let addr_id = AddrId::with_addr_and_id(remote_addr.clone(), id);
 
         let args = PingQueryArgs::with_id(id);
 
