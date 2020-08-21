@@ -335,29 +335,19 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors<'a>(
-        &'a self,
-        id: node::Id,
-        bootstrap_nodes: &'a [AddrId],
-        include_all_bootstrap_nodes: bool,
-        want: Option<usize>,
-    ) -> Vec<&'a AddrId> {
-        self.routing_table.find_nearest_neighbor(
-            id,
-            bootstrap_nodes,
-            include_all_bootstrap_nodes,
-            want,
-        )
+    pub fn find_neighbors<'a>(&'a self, id: node::Id) -> impl Iterator<Item = &'a AddrId> {
+        self.routing_table.find_neighbors(id)
     }
 
     // TODO: Move bootstrap into routing table? or operations controller?
 
     pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [AddrId]) -> Result<(), error::Error> {
-        let neighbors = self
-            .find_neighbors(self.config.local_id, bootstrap_nodes, true, None)
-            .iter()
-            .map(|&n| n.clone())
+        let mut neighbors = self
+            .find_neighbors(self.config.local_id)
+            .take(8)
+            .map(|n| n.clone())
             .collect::<Vec<AddrId>>();
+        neighbors.extend(bootstrap_nodes.iter().map(|n| n.clone()));
         let mut find_node_op =
             FindNodeOp::with_target_id_and_neighbors(self.config.local_id, neighbors);
         find_node_op.start(&self.config, &mut self.tx_manager, &mut self.msg_buffer)?;

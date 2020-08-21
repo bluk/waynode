@@ -262,39 +262,16 @@ impl Table {
         }
     }
 
-    pub(crate) fn find_nearest_neighbor<'a>(
-        &'a self,
-        id: Id,
-        bootstrap_nodes: &'a [AddrId],
-        include_all_bootstrap_nodes: bool,
-        want: Option<usize>,
-    ) -> Vec<&'a AddrId> {
-        let want = want.unwrap_or(8);
-        let mut idx = self
+    pub(crate) fn find_neighbors<'a>(&'a self, id: Id) -> impl Iterator<Item = &'a AddrId> + 'a {
+        let idx = self
             .buckets
             .iter()
             .position(|b| b.range.contains(&id))
             .expect("bucket index should always exist for a node id");
-        let mut addr_ids: Vec<&'a AddrId> = Vec::with_capacity(want);
-        while addr_ids.len() < want {
-            addr_ids.extend(self.buckets[idx].prioritized_addr_ids());
-            if idx == 0 {
-                break;
-            }
-            idx -= 1;
-        }
-
-        if include_all_bootstrap_nodes {
-            addr_ids.extend(bootstrap_nodes);
-        } else {
-            let bootstrap_nodes_count = want - addr_ids.len();
-            if bootstrap_nodes_count > 0 {
-                let bootstrap_iter = bootstrap_nodes.iter().take(bootstrap_nodes_count);
-                addr_ids.extend(bootstrap_iter);
-            }
-        }
-
-        addr_ids
+        self.buckets[0..=idx]
+            .iter()
+            .rev()
+            .flat_map(|b| b.prioritized_addr_ids())
     }
 
     pub(crate) fn on_msg_received<'a>(
