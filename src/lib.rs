@@ -22,14 +22,14 @@ pub mod krpc;
 pub mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
-pub(crate) mod transaction;
+pub mod transaction;
 
 use crate::{
     addr::Addr,
     find_node_op::FindNodeOp,
     krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg},
     msg_buffer::InboundMsg,
-    node::remote::RemoteNodeId,
+    node::AddrId,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -46,7 +46,7 @@ pub struct SendInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Local node id
-    pub id: node::Id,
+    pub local_id: node::Id,
     /// Client version identifier
     pub client_version: Option<ByteBuf>,
     /// The default amount of time before a query without a response is considered timed out
@@ -71,11 +71,11 @@ pub struct Dht {
 impl Dht {
     pub fn new_with_config(config: Config) -> Self {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
-        let id = config.id;
+        let local_id = config.local_id;
         let client_version = config.client_version.clone();
         Self {
             config,
-            routing_table: routing::Table::new(id, max_node_count_per_bucket),
+            routing_table: routing::Table::new(local_id, max_node_count_per_bucket),
             tx_manager: transaction::Manager::new(),
             msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
             find_node_ops: Vec::new(),
@@ -108,7 +108,7 @@ impl Dht {
                     Kind::Response => {
                         if tx.is_node_id_match(RespMsg::queried_node_id(&value)) {
                             self.routing_table.on_msg_received(
-                                &tx.remote_id,
+                                &tx.addr_id,
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,
@@ -127,7 +127,7 @@ impl Dht {
                             }
                             self.find_node_ops.retain(|op| !op.is_done());
                             self.msg_buffer.push_inbound(InboundMsg {
-                                remote_id: tx.remote_id,
+                                addr_id: tx.addr_id,
                                 tx_local_id: Some(tx.local_id),
                                 msg: msg_buffer::Msg::Resp(value),
                             });
@@ -149,7 +149,7 @@ impl Dht {
                     }
                     Kind::Error => {
                         self.routing_table.on_msg_received(
-                            &tx.remote_id,
+                            &tx.addr_id,
                             &kind,
                             &self.config,
                             &mut self.tx_manager,
@@ -168,7 +168,7 @@ impl Dht {
                         }
                         self.find_node_ops.retain(|op| !op.is_done());
                         self.msg_buffer.push_inbound(InboundMsg {
-                            remote_id: tx.remote_id,
+                            addr_id: tx.addr_id,
                             tx_local_id: Some(tx.local_id),
                             msg: msg_buffer::Msg::Error(value),
                         });
@@ -194,14 +194,15 @@ impl Dht {
                 match kind {
                     Kind::Query => {
                         debug!("Recieved query. addr={}", addr);
-                        let remote_id = RemoteNodeId {
-                            addr: Addr::SocketAddr(addr),
-                            node_id: QueryMsg::querying_node_id(&value),
-                        };
-                        self.routing_table.on_msg_received(&remote_id, &kind, &self.config, &mut
+                        let addr_id = QueryMsg::querying_node_id(&value).map(|id|
+                            AddrId::with_addr_and_id(id, Addr::SocketAddr(addr)
+                        )).unwrap_or_else(|| AddrId::with_addr(
+                            Addr::SocketAddr(addr))
+                        );
+                        self.routing_table.on_msg_received(&addr_id, &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         self.msg_buffer.push_inbound(InboundMsg {
-                            remote_id,
+                            addr_id,
                             tx_local_id: None,
                             msg: msg_buffer::Msg::Query(value),
                         });
@@ -234,7 +235,7 @@ impl Dht {
     pub fn write_query<T>(
         &mut self,
         args: &T,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
         timeout: Option<Duration>,
     ) -> Result<transaction::LocalId, error::Error>
     where
@@ -242,7 +243,7 @@ impl Dht {
     {
         self.msg_buffer.write_query(
             args,
-            remote_id,
+            addr_id,
             timeout.unwrap_or(self.config.default_query_timeout),
             &mut self.tx_manager,
         )
@@ -252,19 +253,18 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<Value>,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
     ) -> Result<(), error::Error> {
-        self.msg_buffer.write_resp(transaction_id, resp, remote_id)
+        self.msg_buffer.write_resp(transaction_id, resp, addr_id)
     }
 
     pub fn write_err(
         &mut self,
         transaction_id: &ByteBuf,
         details: Option<Value>,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
     ) -> Result<(), error::Error> {
-        self.msg_buffer
-            .write_err(transaction_id, details, remote_id)
+        self.msg_buffer.write_err(transaction_id, details, addr_id)
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
@@ -306,7 +306,7 @@ impl Dht {
             for tx in timed_out_txs {
                 debug!("tx timed out: {:?}", tx);
                 self.routing_table.on_resp_timeout(
-                    &tx.remote_id,
+                    &tx.addr_id,
                     &self.config,
                     &mut self.tx_manager,
                     &mut self.msg_buffer,
@@ -323,7 +323,7 @@ impl Dht {
                 }
                 self.find_node_ops.retain(|op| !op.is_done());
                 self.msg_buffer.push_inbound(InboundMsg {
-                    remote_id: tx.remote_id,
+                    addr_id: tx.addr_id,
                     tx_local_id: Some(tx.local_id),
                     msg: msg_buffer::Msg::Timeout,
                 });
@@ -338,10 +338,10 @@ impl Dht {
     pub fn find_neighbors<'a>(
         &'a self,
         id: node::Id,
-        bootstrap_nodes: &'a [RemoteNodeId],
+        bootstrap_nodes: &'a [AddrId],
         include_all_bootstrap_nodes: bool,
         want: Option<usize>,
-    ) -> Vec<&'a RemoteNodeId> {
+    ) -> Vec<&'a AddrId> {
         self.routing_table.find_nearest_neighbor(
             id,
             bootstrap_nodes,
@@ -350,16 +350,16 @@ impl Dht {
         )
     }
 
-    pub fn bootstrap<'a>(
-        &mut self,
-        bootstrap_nodes: &'a [RemoteNodeId],
-    ) -> Result<(), error::Error> {
+    // TODO: Move bootstrap into routing table? or operations controller?
+
+    pub fn bootstrap<'a>(&mut self, bootstrap_nodes: &'a [AddrId]) -> Result<(), error::Error> {
         let neighbors = self
-            .find_neighbors(self.config.id, bootstrap_nodes, true, None)
+            .find_neighbors(self.config.local_id, bootstrap_nodes, true, None)
             .iter()
             .map(|&n| n.clone())
-            .collect::<Vec<RemoteNodeId>>();
-        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(self.config.id, neighbors);
+            .collect::<Vec<AddrId>>();
+        let mut find_node_op =
+            FindNodeOp::with_target_id_and_neighbors(self.config.local_id, neighbors);
         find_node_op.start(&self.config, &mut self.tx_manager, &mut self.msg_buffer)?;
         self.find_node_ops.push(find_node_op);
         Ok(())
@@ -381,7 +381,7 @@ mod tests {
 
     fn new_config() -> Result<Config, error::Error> {
         Ok(Config {
-            id: node::Id::rand()?,
+            local_id: node::Id::rand()?,
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -408,15 +408,12 @@ mod tests {
     fn test_send_ping() -> Result<(), error::Error> {
         let id = node_id();
         let remote_addr = remote_addr();
-        let remote_id = RemoteNodeId {
-            addr: remote_addr.clone(),
-            node_id: Some(id),
-        };
+        let addr_id = AddrId::with_addr_and_id(id, remote_addr.clone());
 
-        let args = PingQueryArgs::new_with_id(id);
+        let args = PingQueryArgs::with_id(id);
 
         let mut dht: Dht = Dht::new_with_config(new_config()?);
-        let tx_local_id = dht.write_query(&args, &remote_id, None).unwrap();
+        let tx_local_id = dht.write_query(&args, &addr_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {
@@ -445,10 +442,7 @@ mod tests {
     fn test_bootstrap() -> Result<(), error::Error> {
         let mut dht: Dht = Dht::new_with_config(new_config()?);
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        dht.bootstrap(&[RemoteNodeId {
-            addr: bootstrap_remote_addr.clone(),
-            node_id: None,
-        }])?;
+        dht.bootstrap(&[AddrId::with_addr(bootstrap_remote_addr.clone())])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {
@@ -471,8 +465,8 @@ mod tests {
                 dbg!(&msg_sent);
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
-                assert_eq!(find_node_query_args.target(), &dht.config.id);
-                assert_eq!(find_node_query_args.id(), &dht.config.id);
+                assert_eq!(find_node_query_args.target(), &dht.config.local_id);
+                assert_eq!(find_node_query_args.id(), &dht.config.local_id);
 
                 Ok(())
             }

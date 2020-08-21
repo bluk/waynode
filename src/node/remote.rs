@@ -6,59 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{addr::Addr, error::Error, krpc::Kind, node::Id};
+use crate::{krpc::Kind, node::AddrId};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct RemoteNodeId {
-    pub node_id: Option<Id>,
-    pub addr: Addr,
-}
-
-impl RemoteNodeId {
-    pub(crate) fn resolve_addr(&self) -> Result<SocketAddr, Error> {
-        Ok(match &self.addr {
-            Addr::SocketAddr(s) => *s,
-            Addr::HostPort(s) => {
-                use std::net::ToSocketAddrs;
-                s.to_socket_addrs()
-                    .map_err(|_| Error::CannotResolveSocketAddr)?
-                    .next()
-                    .ok_or(Error::CannotResolveSocketAddr)?
-            }
-        })
-    }
-
-    // use crate::{addr::NodeIdGenerator, node::Id};
-    // use serde::{Deserialize, Serialize};
-    // use std::net::{SocketAddr, ToSocketAddrs};
-    // pub(crate) fn is_valid_node_id(&self) -> bool {
-    //     if let Some(id) = self.node_id.as_ref() {
-    //         match self.addr {
-    //             Addr::HostPort(ref host) => {
-    //                 let addrs = host.to_socket_addrs();
-    //                 match addrs {
-    //                     Ok(mut addrs) => match addrs.next() {
-    //                         Some(addr) => match addr {
-    //                             SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-    //                             SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-    //                         },
-    //                         None => return false,
-    //                     },
-    //                     Err(_) => return false,
-    //                 }
-    //             }
-    //             Addr::SocketAddr(addr) => match addr {
-    //                 SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-    //                 SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-    //             },
-    //         }
-    //     }
-    //     false
-    // }
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub(crate) enum RemoteState {
@@ -69,7 +19,7 @@ pub(crate) enum RemoteState {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct RemoteNode {
-    pub(crate) id: RemoteNodeId,
+    pub(crate) addr_id: AddrId,
     pub(crate) missing_responses: u8,
     pub(crate) last_response: Option<Instant>,
     pub(crate) last_query: Option<Instant>,
@@ -79,9 +29,9 @@ pub(crate) struct RemoteNode {
 impl RemoteNode {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-    pub(crate) fn new_with_id(id: RemoteNodeId) -> Self {
+    pub(crate) fn with_addr_id(addr_id: AddrId) -> Self {
         Self {
-            id,
+            addr_id,
             missing_responses: 0,
             last_response: None,
             last_query: None,

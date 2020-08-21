@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, node::remote::RemoteNodeId};
+use crate::{error::Error, node::AddrId};
 use serde_bytes::ByteBuf;
 use std::convert::{TryFrom, TryInto};
 use std::net::SocketAddr;
@@ -63,24 +63,24 @@ impl LocalId {
 #[derive(Clone, Debug)]
 pub(crate) struct Transaction {
     pub(crate) local_id: LocalId,
-    pub(crate) remote_id: RemoteNodeId,
+    pub(crate) addr_id: AddrId,
     pub(crate) deadline: Instant,
 }
 
 impl std::hash::Hash for Transaction {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.local_id.hash(state);
-        self.remote_id.hash(state)
+        self.addr_id.hash(state)
     }
 }
 
 impl Transaction {
-    pub(crate) fn is_node_id_match(&self, node_id: Option<crate::node::Id>) -> bool {
-        self.remote_id
-            .node_id
+    pub(crate) fn is_node_id_match(&self, other_node_id: Option<crate::node::Id>) -> bool {
+        self.addr_id
+            .id()
             .map(|tx_node_id| {
-                node_id
-                    .map(|node_id| node_id == tx_node_id)
+                other_node_id
+                    .map(|other_node_id| other_node_id == tx_node_id)
                     .unwrap_or(false)
             })
             .unwrap_or(true)

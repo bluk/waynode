@@ -61,25 +61,22 @@ fn main() -> io::Result<()> {
     let mut socket = mio::net::UdpSocket::bind(local_addr)?;
 
     let mut dht: Dht = Dht::new_with_config(sloppy::Config {
-        id: sloppy::node::Id::rand().unwrap(),
+        local_id: sloppy::node::Id::rand().unwrap(),
         client_version: Some(serde_bytes::ByteBuf::from("ab12")),
         default_query_timeout: Duration::from_secs(30),
         is_read_only_node: true,
         max_node_count_per_bucket: 10,
     });
     dht.bootstrap(&[
-        // sloppy::node::remote::RemoteNodeId {
-        //     addr: sloppy::addr::Addr::HostPort(String::from("router.magnets.im:6881")),
-        //     node_id: None,
-        // },
-        sloppy::node::remote::RemoteNodeId {
-            addr: sloppy::addr::Addr::HostPort(String::from("router.bittorrent.com:6881")),
-            node_id: None,
-        },
-        // sloppy::node::remote::RemoteNodeId {
-        //     addr: sloppy::addr::Addr::HostPort(String::from("dht.transmissionbt.com:6881")),
-        //     node_id: None,
-        // },
+        // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+        //     "router.magnets.im:6881",
+        // ))),
+        sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+            "router.bittorrent.com:6881",
+        ))),
+        // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
+        //     "dht.transmissionbt.com:6881",
+        // ))),
     ])
     .expect("bootstrap to complete successfully");
     let dht_token = Token(0);
@@ -141,12 +138,13 @@ fn main() -> io::Result<()> {
                     match inbound_msg.msg() {
                         sloppy::msg_buffer::Msg::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
-                                let ping_resp = ping::PingRespValues::new_with_id(dht.config().id);
+                                let ping_resp =
+                                    ping::PingRespValues::with_id(dht.config().local_id);
                                 if let Some(tx_id) = msg.tx_id() {
                                     match dht.write_resp(
                                         tx_id,
                                         Some(ping_resp.into()),
-                                        inbound_msg.remote_id(),
+                                        inbound_msg.addr_id(),
                                     ) {
                                         Ok(()) => {}
                                         Err(e) => error!("ping write_resp error: {:?}", e),

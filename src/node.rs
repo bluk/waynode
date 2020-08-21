@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::error::Error;
+use crate::{addr::Addr, error::Error};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
@@ -252,6 +252,77 @@ impl IdBytes for [u8; 20] {
 
         Ok(data)
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AddrId {
+    addr: Addr,
+    id: Option<Id>,
+}
+
+impl AddrId {
+    pub fn with_addr(addr: Addr) -> Self {
+        Self { addr, id: None }
+    }
+
+    pub fn with_addr_and_id(id: Id, addr: Addr) -> Self {
+        Self { addr, id: Some(id) }
+    }
+
+    pub fn id(&self) -> Option<Id> {
+        self.id
+    }
+
+    pub fn addr(&self) -> &Addr {
+        &self.addr
+    }
+
+    pub(crate) fn into_addr(self) -> Addr {
+        self.addr
+    }
+}
+
+impl AddrId {
+    pub(crate) fn resolve_addr(&self) -> Result<std::net::SocketAddr, Error> {
+        Ok(match &self.addr {
+            Addr::SocketAddr(s) => *s,
+            Addr::HostPort(s) => {
+                use std::net::ToSocketAddrs;
+                s.to_socket_addrs()
+                    .map_err(|_| Error::CannotResolveSocketAddr)?
+                    .next()
+                    .ok_or(Error::CannotResolveSocketAddr)?
+            }
+        })
+    }
+
+    // use crate::{addr::NodeIdGenerator, node::Id};
+    // use serde::{Deserialize, Serialize};
+    // use std::net::{SocketAddr, ToSocketAddrs};
+    // pub(crate) fn is_valid_node_id(&self) -> bool {
+    //     if let Some(id) = self.node_id.as_ref() {
+    //         match self.addr {
+    //             Addr::HostPort(ref host) => {
+    //                 let addrs = host.to_socket_addrs();
+    //                 match addrs {
+    //                     Ok(mut addrs) => match addrs.next() {
+    //                         Some(addr) => match addr {
+    //                             SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+    //                             SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+    //                         },
+    //                         None => return false,
+    //                     },
+    //                     Err(_) => return false,
+    //                 }
+    //             }
+    //             Addr::SocketAddr(addr) => match addr {
+    //                 SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+    //                 SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+    //             },
+    //         }
+    //     }
+    //     false
+    // }
 }
 
 #[cfg(test)]

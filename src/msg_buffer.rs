@@ -17,7 +17,7 @@ use std::{
 use crate::{
     error::Error,
     krpc::{self, QueryArgs},
-    node::remote::RemoteNodeId,
+    node::AddrId,
     transaction,
 };
 
@@ -26,18 +26,18 @@ pub(crate) struct OutboundMsg {
     tx_id: Option<transaction::Id>,
     pub(crate) addr: SocketAddr,
     timeout: Duration,
-    remote_id: RemoteNodeId,
+    addr_id: AddrId,
     pub(crate) msg_data: Vec<u8>,
 }
 
 impl OutboundMsg {
     pub(crate) fn into_transaction(self) -> Option<transaction::Transaction> {
-        let remote_id = self.remote_id;
+        let addr_id = self.addr_id;
         let resolved_addr = self.addr;
         let timeout = self.timeout;
         self.tx_id.map(|tx_id| transaction::Transaction {
             local_id: transaction::LocalId::with_id_and_addr(tx_id, resolved_addr),
-            remote_id,
+            addr_id,
             deadline: Instant::now() + timeout,
         })
     }
@@ -53,14 +53,14 @@ pub enum Msg {
 
 #[derive(Clone, Debug)]
 pub struct InboundMsg {
-    pub(crate) remote_id: RemoteNodeId,
+    pub(crate) addr_id: AddrId,
     pub(crate) tx_local_id: Option<transaction::LocalId>,
     pub(crate) msg: Msg,
 }
 
 impl InboundMsg {
-    pub fn remote_id(&self) -> &RemoteNodeId {
-        &self.remote_id
+    pub fn addr_id(&self) -> &AddrId {
+        &self.addr_id
     }
 
     pub fn tx_local_id(&self) -> Option<transaction::LocalId> {
@@ -99,27 +99,27 @@ impl Buffer {
     pub(crate) fn write_query<T>(
         &mut self,
         args: &T,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
         timeout: Duration,
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::LocalId, Error>
     where
         T: QueryArgs + std::fmt::Debug,
     {
-        let addr = remote_id.resolve_addr()?;
+        let addr = addr_id.resolve_addr()?;
         let transaction_id = tx_manager.next_transaction_id();
 
         debug!(
-            "write_query tx_id={:?} method_name={:?} remote_id={:?} args={:?}",
+            "write_query tx_id={:?} method_name={:?} addr_id={:?} args={:?}",
             transaction_id,
             String::from_utf8(Vec::from(T::method_name())),
-            &remote_id,
+            &addr_id,
             &args
         );
 
         self.outbound.push_back(OutboundMsg {
             tx_id: Some(transaction_id),
-            remote_id: remote_id.clone(),
+            addr_id: addr_id.clone(),
             addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
@@ -137,12 +137,12 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<Value>,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
     ) -> Result<(), Error> {
-        let addr = remote_id.resolve_addr()?;
+        let addr = addr_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            remote_id: remote_id.clone(),
+            addr_id: addr_id.clone(),
             addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.as_ref(),
@@ -159,12 +159,12 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         details: Option<Value>,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
     ) -> Result<(), Error> {
-        let addr = remote_id.resolve_addr()?;
+        let addr = addr_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            remote_id: remote_id.clone(),
+            addr_id: addr_id.clone(),
             addr,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: details.as_ref(),

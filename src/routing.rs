@@ -9,8 +9,8 @@
 use crate::{
     krpc::{ping::PingQueryArgs, Kind},
     node::{
-        remote::{RemoteNode, RemoteNodeId, RemoteState},
-        Id,
+        remote::{RemoteNode, RemoteState},
+        AddrId, Id,
     },
 };
 use std::cmp::Ordering;
@@ -67,8 +67,8 @@ impl Bucket {
                 .find(|n| n.state() == RemoteState::Questionable && n.last_pinged.is_none())
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
-                &PingQueryArgs::new_with_id(config.id),
-                &node_to_ping.id,
+                &PingQueryArgs::with_id(config.local_id),
+                &node_to_ping.addr_id,
                 config.default_query_timeout,
                 tx_manager,
             )?;
@@ -79,14 +79,14 @@ impl Bucket {
 
     fn on_msg_received<'a>(
         &mut self,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
         msg_buffer: &mut crate::msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *remote_id) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
             node.on_msg_received(kind, now);
             match kind {
                 Kind::Response | Kind::Query => {
@@ -124,7 +124,7 @@ impl Bucket {
             }
 
             if self.nodes.len() < self.max_nodes {
-                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids();
@@ -133,12 +133,12 @@ impl Bucket {
                 .iter()
                 .position(|n| n.state() == RemoteState::Bad)
             {
-                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
                 self.sort_node_ids();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes() {
-                let mut node = RemoteNode::new_with_id(remote_id.clone());
+                let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
                 self.ping_least_recently_seen_questionable_node(
@@ -151,13 +151,13 @@ impl Bucket {
 
     fn on_resp_timeout(
         &mut self,
-        id: &RemoteNodeId,
+        addr_id: &AddrId,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
         msg_buffer: &mut crate::msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.id == *id) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
             node.on_resp_timeout();
             match node.state() {
                 RemoteState::Good => {
@@ -187,7 +187,7 @@ impl Bucket {
         let mut upper_bucket = Bucket::new(middle.next()..=*self.range.end(), self.max_nodes);
 
         for node in self.nodes.into_iter() {
-            if let Some(node_id) = node.id.node_id {
+            if let Some(node_id) = node.addr_id.id() {
                 if lower_bucket.range.contains(&node_id) {
                     lower_bucket.nodes.push(node);
                 } else {
@@ -199,7 +199,7 @@ impl Bucket {
         }
 
         for node in self.replacement_nodes.into_iter() {
-            if let Some(node_id) = node.id.node_id {
+            if let Some(node_id) = node.addr_id.id() {
                 if lower_bucket.range.contains(&node_id) {
                     lower_bucket.replacement_nodes.push(node);
                 } else {
@@ -217,11 +217,11 @@ impl Bucket {
         self.nodes.len() >= self.max_nodes
     }
 
-    fn prioritized_node_ids(&self) -> impl Iterator<Item = &RemoteNodeId> {
+    fn prioritized_addr_ids(&self) -> impl Iterator<Item = &AddrId> {
         self.nodes
             .iter()
             .filter(|n| n.state() == RemoteState::Questionable || n.state() == RemoteState::Good)
-            .map(|n| &n.id)
+            .map(|n| &n.addr_id)
     }
 
     fn sort_node_ids(&mut self) {
@@ -265,19 +265,19 @@ impl Table {
     pub(crate) fn find_nearest_neighbor<'a>(
         &'a self,
         id: Id,
-        bootstrap_nodes: &'a [RemoteNodeId],
+        bootstrap_nodes: &'a [AddrId],
         include_all_bootstrap_nodes: bool,
         want: Option<usize>,
-    ) -> Vec<&'a RemoteNodeId> {
+    ) -> Vec<&'a AddrId> {
         let want = want.unwrap_or(8);
         let mut idx = self
             .buckets
             .iter()
             .position(|b| b.range.contains(&id))
             .expect("bucket index should always exist for a node id");
-        let mut remote_ids: Vec<&'a RemoteNodeId> = Vec::with_capacity(want);
-        while remote_ids.len() < want {
-            remote_ids.extend(self.buckets[idx].prioritized_node_ids());
+        let mut addr_ids: Vec<&'a AddrId> = Vec::with_capacity(want);
+        while addr_ids.len() < want {
+            addr_ids.extend(self.buckets[idx].prioritized_addr_ids());
             if idx == 0 {
                 break;
             }
@@ -285,46 +285,46 @@ impl Table {
         }
 
         if include_all_bootstrap_nodes {
-            remote_ids.extend(bootstrap_nodes);
+            addr_ids.extend(bootstrap_nodes);
         } else {
-            let bootstrap_nodes_count = want - remote_ids.len();
+            let bootstrap_nodes_count = want - addr_ids.len();
             if bootstrap_nodes_count > 0 {
                 let bootstrap_iter = bootstrap_nodes.iter().take(bootstrap_nodes_count);
-                remote_ids.extend(bootstrap_iter);
+                addr_ids.extend(bootstrap_iter);
             }
         }
 
-        remote_ids
+        addr_ids
     }
 
     pub(crate) fn on_msg_received<'a>(
         &mut self,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
         msg_buffer: &mut crate::msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(id) = remote_id.node_id {
-            if id == self.pivot {
+        if let Some(node_id) = addr_id.id() {
+            if node_id == self.pivot {
                 return Ok(());
             }
 
             let bucket = self
                 .buckets
                 .iter_mut()
-                .find(|n| n.range.contains(&id))
+                .find(|n| n.range.contains(&node_id))
                 .expect("bucket should always exist for a node");
             if bucket.range.contains(&self.pivot) && bucket.is_full() {
                 let bucket = self.buckets.pop().expect("last bucket should always exist");
                 let (mut first_bucket, mut second_bucket) = bucket.split();
-                if first_bucket.range.contains(&id) {
+                if first_bucket.range.contains(&node_id) {
                     first_bucket
-                        .on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
+                        .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
                 } else {
                     second_bucket
-                        .on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
+                        .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
                 }
 
                 if first_bucket.range.contains(&self.pivot) {
@@ -335,7 +335,7 @@ impl Table {
                     self.buckets.push(second_bucket);
                 }
             } else {
-                bucket.on_msg_received(remote_id, kind, config, tx_manager, msg_buffer, now)?;
+                bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
             }
         }
         Ok(())
@@ -343,19 +343,19 @@ impl Table {
 
     pub(crate) fn on_resp_timeout(
         &mut self,
-        remote_id: &RemoteNodeId,
+        addr_id: &AddrId,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
         msg_buffer: &mut crate::msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(id) = remote_id.node_id {
+        if let Some(node_id) = addr_id.id() {
             let bucket = self
                 .buckets
                 .iter_mut()
-                .find(|n| n.range.contains(&id))
+                .find(|n| n.range.contains(&node_id))
                 .expect("bucket should always exist for a node");
-            bucket.on_resp_timeout(remote_id, config, tx_manager, msg_buffer, now)?;
+            bucket.on_resp_timeout(addr_id, config, tx_manager, msg_buffer, now)?;
         }
         Ok(())
     }

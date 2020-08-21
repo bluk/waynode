@@ -20,7 +20,7 @@ pub struct PingQueryArgs {
 }
 
 impl PingQueryArgs {
-    pub fn new_with_id(id: Id) -> Self {
+    pub fn with_id(id: Id) -> Self {
         Self { id }
     }
 }
@@ -90,7 +90,7 @@ pub struct PingRespValues {
 }
 
 impl PingRespValues {
-    pub fn new_with_id(id: Id) -> Self {
+    pub fn with_id(id: Id) -> Self {
         Self { id }
     }
 

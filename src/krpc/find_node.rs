@@ -25,7 +25,7 @@ pub struct FindNodeQueryArgs {
 }
 
 impl FindNodeQueryArgs {
-    pub fn new_with_id_and_target(id: Id, target: Id) -> Self {
+    pub fn with_local_and_target(id: Id, target: Id) -> Self {
         Self { id, target }
     }
 
@@ -114,7 +114,7 @@ pub struct FindNodeRespValues {
 }
 
 impl FindNodeRespValues {
-    pub fn new_with_id(
+    pub fn with_id_and_nodes_and_nodes6(
         id: Id,
         nodes: Option<Vec<CompactNodeInfo<SocketAddrV4>>>,
         nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>,
