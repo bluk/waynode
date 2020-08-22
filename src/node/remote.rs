@@ -21,8 +21,8 @@ pub(crate) enum RemoteState {
 pub(crate) struct RemoteNode {
     pub(crate) addr_id: AddrId,
     pub(crate) missing_responses: u8,
-    pub(crate) last_response: Option<Instant>,
-    pub(crate) last_query: Option<Instant>,
+    pub(crate) next_response_deadline: Option<Instant>,
+    pub(crate) next_query_deadline: Option<Instant>,
     pub(crate) last_pinged: Option<Instant>,
 }
 
@@ -33,23 +33,21 @@ impl RemoteNode {
         Self {
             addr_id,
             missing_responses: 0,
-            last_response: None,
-            last_query: None,
+            next_response_deadline: None,
+            next_query_deadline: None,
             last_pinged: None,
         }
     }
 
-    pub(crate) fn state(&self) -> RemoteState {
-        let now = Instant::now();
-
-        if let Some(last_response) = self.last_response {
-            if last_response + Self::TIMEOUT_INTERVAL > now {
+    pub(crate) fn state_with_now(&self, now: Instant) -> RemoteState {
+        if let Some(next_response_deadline) = self.next_response_deadline {
+            if next_response_deadline < now {
                 return RemoteState::Good;
             }
         }
 
-        if let Some(last_query) = self.last_query {
-            if self.last_response.is_some() && last_query + Self::TIMEOUT_INTERVAL > now {
+        if let Some(next_query_deadline) = self.next_query_deadline {
+            if self.next_response_deadline.is_some() && next_query_deadline < now {
                 return RemoteState::Good;
             }
         }
@@ -61,8 +59,8 @@ impl RemoteNode {
         RemoteState::Questionable
     }
 
-    pub(crate) fn last_interaction(&self) -> Option<Instant> {
-        match (self.last_query, self.last_response) {
+    pub(crate) fn next_msg_deadline(&self) -> Option<Instant> {
+        match (self.next_query_deadline, self.next_response_deadline) {
             (Some(query), None) => Some(query),
             (None, Some(resp)) => Some(resp),
             (Some(query), Some(resp)) => {
@@ -80,16 +78,16 @@ impl RemoteNode {
         self.last_pinged = None;
         match kind {
             Kind::Response => {
-                self.last_response = Some(now);
+                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
                 if self.missing_responses > 0 {
                     self.missing_responses -= 1;
                 }
             }
             Kind::Query => {
-                self.last_query = Some(now);
+                self.next_query_deadline = Some(now + Self::TIMEOUT_INTERVAL);
             }
             Kind::Error => {
-                self.last_response = Some(now);
+                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
                 if self.missing_responses < u8::MAX {
                     self.missing_responses += 1;
                 }

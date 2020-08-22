@@ -91,6 +91,7 @@ impl Dht {
             &mut dht.msg_buffer,
             &mut dht.find_node_ops,
             &existing_addr_ids,
+            Instant::now(),
         )?;
         Ok(dht)
     }
@@ -374,7 +375,7 @@ impl Dht {
     }
 
     pub fn find_neighbors(&self, id: node::Id) -> impl Iterator<Item = &AddrId> {
-        self.routing_table.find_neighbors(id)
+        self.routing_table.find_neighbors(id, Instant::now())
     }
 }
 
