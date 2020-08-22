@@ -41,13 +41,13 @@ impl RemoteNode {
 
     pub(crate) fn state_with_now(&self, now: Instant) -> RemoteState {
         if let Some(next_response_deadline) = self.next_response_deadline {
-            if next_response_deadline < now {
+            if now < next_response_deadline {
                 return RemoteState::Good;
             }
         }
 
         if let Some(next_query_deadline) = self.next_query_deadline {
-            if self.next_response_deadline.is_some() && next_query_deadline < now {
+            if self.next_response_deadline.is_some() && now < next_query_deadline {
                 return RemoteState::Good;
             }
         }

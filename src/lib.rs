@@ -12,6 +12,17 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
+// TODO: Have a deadline timeout for doing a find_node on the local node
+// TODO: Configuration option for IPv6 and IPv4 tables
+// TODO: Configuration for whether node IDs are valid for IP
+// TODO: Should process the responses if the queried_node_id returned is the same as config.local_id
+// http://bittorrent.org/beps/bep_0005.html
+// http://bittorrent.org/beps/bep_0043.html
+// http://bittorrent.org/beps/bep_0044.html
+// http://bittorrent.org/beps/bep_0045.html
+// http://bittorrent.org/beps/bep_0046.html
+// http://bittorrent.org/beps/bep_0051.html
+
 #[macro_use]
 extern crate log;
 
@@ -121,21 +132,24 @@ impl Dht {
                 match kind {
                     Kind::Response => {
                         let queried_node_id = RespMsg::queried_node_id(&value);
+                        // TODO: Process result but don't add to routing table if queried_node_id
+                        // is equal to self.config.local_id
                         if queried_node_id.is_some()
                             && queried_node_id != Some(self.config.local_id)
                             && tx.is_node_id_match(queried_node_id)
                         {
-                            // TODO: During routing table, create a local tx to add
-                            // if tx.addr_id.id().is_none() {
-                            //     if let Some(queried_node_id) = queried_node_id {
-                            //         tx.addr_id = AddrId::with_addr_and_id(
-                            //             tx.addr_id.into_addr(),
-                            //             queried_node_id,
-                            //         );
-                            //     }
-                            // }
+                            let routing_table_addr_id = if tx.addr_id.id().is_none() {
+                                queried_node_id.map(|queried_node_id| {
+                                    AddrId::with_addr_and_id(
+                                        tx.addr_id.addr().clone(),
+                                        queried_node_id,
+                                    )
+                                })
+                            } else {
+                                None
+                            };
                             self.routing_table.on_msg_received(
-                                &tx.addr_id,
+                                &routing_table_addr_id.as_ref().unwrap_or(&tx.addr_id),
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,

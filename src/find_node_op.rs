@@ -38,6 +38,8 @@ pub(crate) enum Response<'a> {
 const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
+// TODO: Ping every possible node and don't use closest distances
+
 #[derive(Clone, Debug)]
 pub(crate) struct FindNodeOp {
     target_id: node::Id,
