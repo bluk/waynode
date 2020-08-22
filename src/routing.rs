@@ -19,14 +19,16 @@ use crate::{
 };
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Bucket {
     range: RangeInclusive<Id>,
     nodes: Vec<RemoteNode>,
     replacement_nodes: Vec<RemoteNode>,
-    last_find_node: Instant,
+    expected_change_deadline: Instant,
 }
 
 impl Bucket {
@@ -35,8 +37,13 @@ impl Bucket {
             range,
             nodes: Vec::with_capacity(max_nodes_per_bucket),
             replacement_nodes: Vec::with_capacity(max_nodes_per_bucket),
-            last_find_node: Instant::now(),
+            expected_change_deadline: Instant::now() + Duration::from_secs(5 * 60),
         }
+    }
+
+    #[inline]
+    fn update_expected_change_deadline(&mut self) {
+        self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
     }
 
     fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: &AddrId) {
@@ -44,6 +51,7 @@ impl Bucket {
             let node = RemoteNode::with_addr_id(addr_id.clone());
             self.nodes.push(node);
             self.sort_node_ids();
+            self.update_expected_change_deadline();
         } else if let Some(pos) = self
             .nodes
             .iter()
@@ -53,6 +61,7 @@ impl Bucket {
             let node = RemoteNode::with_addr_id(addr_id.clone());
             self.nodes[pos] = node;
             self.sort_node_ids();
+            self.update_expected_change_deadline();
         } else {
             self.sort_node_ids();
             if let Some(pos) = self
@@ -63,6 +72,7 @@ impl Bucket {
             {
                 let node = RemoteNode::with_addr_id(addr_id.clone());
                 self.nodes[pos] = node;
+                self.update_expected_change_deadline();
             }
         }
     }
@@ -127,6 +137,7 @@ impl Bucket {
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, now,
                     )?;
+                    self.update_expected_change_deadline();
                 }
                 Kind::Error | Kind::Unknown(_) => match node.state() {
                     RemoteState::Good => {
@@ -141,6 +152,7 @@ impl Bucket {
                     RemoteState::Bad => {
                         if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                             std::mem::swap(node, &mut replacement_node);
+                            self.update_expected_change_deadline();
                         }
                         self.sort_node_ids();
                     }
@@ -157,6 +169,7 @@ impl Bucket {
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids();
+                self.update_expected_change_deadline();
             } else if let Some(pos) = self
                 .nodes
                 .iter()
@@ -167,6 +180,7 @@ impl Bucket {
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
                 self.sort_node_ids();
+                self.update_expected_change_deadline();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes() {
                 let mut node = RemoteNode::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
@@ -203,6 +217,7 @@ impl Bucket {
                 RemoteState::Bad => {
                     if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                         std::mem::swap(node, &mut replacement_node);
+                        self.update_expected_change_deadline();
                     }
                     self.sort_node_ids();
                 }
@@ -314,7 +329,7 @@ impl Table {
             .cloned()
             .collect::<Vec<AddrId>>();
         neighbors.extend(bootstrap_nodes.iter().cloned());
-        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(config.local_id, neighbors);
+        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);
         Ok(())
@@ -453,6 +468,45 @@ impl Table {
         Ok(())
     }
 
-    // TODO: Should initiate a find_node request for each bucket if a deadline is reached without
-    // activity
+    pub(crate) fn timeout(&self) -> Option<Instant> {
+        self.buckets
+            .iter()
+            .map(|b| b.expected_change_deadline)
+            .min()
+    }
+
+    pub(crate) fn on_timeout(
+        &mut self,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        find_node_ops: &mut Vec<FindNodeOp>,
+        now: Instant,
+    ) -> Result<(), Error> {
+        let target_ids = self
+            .buckets
+            .iter_mut()
+            .filter(|b| b.expected_change_deadline <= now)
+            .map(|b| {
+                b.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
+                Id::rand_in_inclusive_range(&b.range)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for target_id in target_ids {
+            self.find_node(
+                target_id,
+                config,
+                tx_manager,
+                msg_buffer,
+                find_node_ops,
+                &[],
+            )?;
+            debug!(
+                "starting to find target_id={:?} find_node_ops.len={}",
+                target_id,
+                find_node_ops.len()
+            );
+        }
+        Ok(())
+    }
 }

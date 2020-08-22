@@ -35,7 +35,7 @@ pub(crate) enum Response<'a> {
     Timeout,
 }
 
-const CLOSEST_DISTANCES_LEN: usize = 8;
+const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
 #[derive(Clone, Debug)]
@@ -225,7 +225,8 @@ impl FindNodeOp {
         }
 
         debug!(
-            "outstanding tx_local_ids.len={} potential_addr_ids.len={} queried_addr.len={} closest_distances={:?} ",
+            "target_id={:?} outstanding tx_local_ids.len={} potential_addr_ids.len={} queried_addr.len={} closest_distances={:?} ",
+            self.target_id,
             self.tx_local_ids.len(),
             self.potential_addr_ids.len(),
             self.queried_addrs.len(),

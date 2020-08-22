@@ -112,7 +112,7 @@ impl Manager {
         transaction_id
     }
 
-    pub(crate) fn min_deadline(&self) -> Option<Instant> {
+    pub(crate) fn timeout(&self) -> Option<Instant> {
         self.transactions.iter().map(|t| t.deadline).min()
     }
 

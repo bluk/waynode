@@ -113,7 +113,7 @@ impl Dht {
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
         if let Some(kind) = value.kind() {
-            if let Some(mut tx) = value
+            if let Some(tx) = value
                 .tx_id()
                 .and_then(|tx_id| self.tx_manager.find(tx_id, addr))
             {
@@ -124,14 +124,15 @@ impl Dht {
                             && queried_node_id != Some(self.config.local_id)
                             && tx.is_node_id_match(queried_node_id)
                         {
-                            if tx.addr_id.id().is_none() {
-                                if let Some(queried_node_id) = queried_node_id {
-                                    tx.addr_id = AddrId::with_addr_and_id(
-                                        tx.addr_id.into_addr(),
-                                        queried_node_id,
-                                    );
-                                }
-                            }
+                            // TODO: During routing table, create a local tx to add
+                            // if tx.addr_id.id().is_none() {
+                            //     if let Some(queried_node_id) = queried_node_id {
+                            //         tx.addr_id = AddrId::with_addr_and_id(
+                            //             tx.addr_id.into_addr(),
+                            //             queried_node_id,
+                            //         );
+                            //     }
+                            // }
                             self.routing_table.on_msg_received(
                                 &tx.addr_id,
                                 &kind,
@@ -311,14 +312,18 @@ impl Dht {
     }
 
     pub fn timeout(&self) -> Option<Duration> {
-        self.tx_manager.min_deadline().map(|min_tx_deadline| {
-            let now = Instant::now();
-            if now > min_tx_deadline {
-                Duration::from_secs(0)
-            } else {
-                min_tx_deadline - now
-            }
-        })
+        [self.tx_manager.timeout(), self.routing_table.timeout()]
+            .iter()
+            .filter_map(|&deadline| deadline)
+            .min()
+            .map(|min_deadline| {
+                let now = Instant::now();
+                if now > min_deadline {
+                    Duration::from_secs(0)
+                } else {
+                    min_deadline - now
+                }
+            })
     }
 
     pub fn on_timeout(&mut self) -> Result<(), error::Error> {
@@ -354,6 +359,14 @@ impl Dht {
                 });
             }
         }
+
+        self.routing_table.on_timeout(
+            &self.config,
+            &mut self.tx_manager,
+            &mut self.msg_buffer,
+            &mut self.find_node_ops,
+            now,
+        )?;
 
         debug!("remaining tx after timeout: {}", self.tx_manager.len());
 

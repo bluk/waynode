@@ -38,35 +38,35 @@ impl Id {
         Ok(Id(arr))
     }
 
-    // pub(crate) fn rand_in_range(rng: std::ops::Range<Id>) -> Result<Id, Error> {
+    // pub(crate) fn rand_in_range(rng: &std::ops::Range<Id>) -> Result<Id, Error> {
     //     let data_bit_diff = rng.end.difference(&rng.start);
     //     let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, false)?;
     //     let _ = rand_bits.overflowing_add(&rng.start.0);
     //     Ok(Id(rand_bits))
     // }
-    //
-    // pub(crate) fn rand_in_inclusive_range(rng: std::ops::RangeInclusive<Id>) -> Result<Id, Error> {
-    //     let data_bit_diff = rng.end().difference(rng.start());
-    //     let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true)?;
-    //     let _ = rand_bits.overflowing_add(&rng.start().0);
-    //     Ok(Id(rand_bits))
-    // }
-    //
-    // #[must_use]
-    // fn difference(&self, other: &Id) -> Id {
-    //     let mut bigger: [u8; 20];
-    //     let mut smaller: [u8; 20];
-    //     if self < other {
-    //         bigger = other.0.clone();
-    //         smaller = self.0.clone();
-    //     } else {
-    //         bigger = self.0.clone();
-    //         smaller = other.0.clone();
-    //     }
-    //     smaller.twos_complement();
-    //     let _ = bigger.overflowing_add(&smaller);
-    //     Id(bigger)
-    // }
+
+    pub(crate) fn rand_in_inclusive_range(rng: &std::ops::RangeInclusive<Id>) -> Result<Id, Error> {
+        let data_bit_diff = rng.end().difference(rng.start());
+        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true)?;
+        let _ = rand_bits.overflowing_add(&rng.start().0);
+        Ok(Id(rand_bits))
+    }
+
+    #[must_use]
+    fn difference(&self, other: &Id) -> Id {
+        let mut bigger: [u8; 20];
+        let mut smaller: [u8; 20];
+        if self < other {
+            bigger = other.0;
+            smaller = self.0;
+        } else {
+            bigger = self.0;
+            smaller = other.0;
+        }
+        smaller.twos_complement();
+        let _ = bigger.overflowing_add(&smaller);
+        Id(bigger)
+    }
 
     /// Determines the distance between this node ID and the node ID argument.
     #[must_use]
@@ -233,7 +233,7 @@ impl IdBytes for [u8; 20] {
             return Err(Error::CannotGenerateNodeId);
         }
 
-        while !lower_than_max && !is_closed_range {
+        loop {
             for idx in 0..data.len() {
                 data[idx] = if lower_than_max {
                     u8::try_from(rng.gen_range(0, u16::from(u8::MAX) + 1))
@@ -247,6 +247,10 @@ impl IdBytes for [u8; 20] {
                     }
                     val
                 };
+            }
+
+            if lower_than_max || is_closed_range {
+                break;
             }
         }
 
