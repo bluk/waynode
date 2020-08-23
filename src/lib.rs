@@ -466,7 +466,6 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
-                dbg!(&msg_sent);
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
                 assert_eq!(find_node_query_args.target(), &dht.config.local_id);
@@ -478,3 +477,5 @@ mod tests {
         }
     }
 }
+
+pub use node::Id as NodeId;

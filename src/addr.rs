@@ -163,8 +163,6 @@ impl NodeIdGenerator for Ipv4Addr {
         let rand = id.0[19];
         let crc32c_val = self.make_crc32c(rand);
 
-        dbg!(crc32c_val);
-
         if id.0[0] != u8::try_from((crc32c_val >> 24) & 0xFF).unwrap() {
             return false;
         }

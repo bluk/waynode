@@ -330,8 +330,9 @@ impl Bucket {
     fn split(self, max_nodes_per_bucket: usize) -> (Bucket, Bucket) {
         let middle = self.range.end().middle(self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=middle, max_nodes_per_bucket);
-        let mut upper_bucket = Bucket::new(middle.next()..=*self.range.end(), max_nodes_per_bucket);
+        let mut lower_bucket =
+            Bucket::new(*self.range.start()..=middle.prev(), max_nodes_per_bucket);
+        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), max_nodes_per_bucket);
 
         for node in self.nodes.into_iter() {
             if let Some(node_id) = node.addr_id.id() {
@@ -623,5 +624,31 @@ impl Table {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_bucket() {
+        let bucket = Bucket::new(Id::min()..=Id::max(), 8);
+        let (first_bucket, second_bucket) = bucket.split(8);
+        assert_eq!(
+            first_bucket.range,
+            Id::min()
+                ..=Id::with_bytes([
+                    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe
+                ])
+        );
+        assert_eq!(
+            second_bucket.range,
+            Id::with_bytes([
+                0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+            ])..=Id::max()
+        );
     }
 }
