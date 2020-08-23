@@ -380,7 +380,7 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors(&self, id: node::Id) -> impl Iterator<Item = &AddrId> {
+    pub fn find_neighbors(&self, id: node::Id) -> impl Iterator<Item = AddrId> {
         self.routing_table.find_neighbors(id, Instant::now())
     }
 }

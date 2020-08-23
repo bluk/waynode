@@ -432,8 +432,9 @@ impl Table {
     ) -> Result<(), Error> {
         let neighbors = self
             .find_neighbors(target_id, now)
+            .into_iter()
             .take(8)
-            .chain(bootstrap_nodes.iter());
+            .chain(bootstrap_nodes.iter().copied());
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);
@@ -474,21 +475,19 @@ impl Table {
         }
     }
 
-    pub(crate) fn find_neighbors<'a>(
-        &'a self,
-        id: Id,
-        now: Instant,
-    ) -> impl Iterator<Item = &'a AddrId> + 'a {
-        let idx = self
+    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> impl Iterator<Item = AddrId> {
+        let mut nodes = self
             .buckets
             .iter()
-            .position(|b| b.range.contains(&id))
-            .expect("bucket index should always exist for a node id");
-        self.buckets[0..=idx]
-            .iter()
-            .rev()
-            .chain(self.buckets[idx..self.buckets.len()].iter())
-            .flat_map(move |b| b.prioritized_addr_ids(now))
+            .flat_map(|b| b.prioritized_addr_ids(now).copied())
+            .collect::<Vec<_>>();
+        nodes.sort_by(|a, b| match (a.id(), b.id()) {
+            (Some(a_id), Some(b_id)) => a_id.distance(&id).cmp(&b_id.distance(&id)),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        });
+        nodes.into_iter()
     }
 
     pub(crate) fn on_msg_received<'a>(
