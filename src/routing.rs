@@ -430,12 +430,10 @@ impl Table {
         bootstrap_nodes: &[AddrId],
         now: Instant,
     ) -> Result<(), Error> {
-        let mut neighbors = self
+        let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .copied()
-            .collect::<Vec<AddrId>>();
-        neighbors.extend(bootstrap_nodes.iter().copied());
+            .chain(bootstrap_nodes.iter());
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);

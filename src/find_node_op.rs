@@ -50,15 +50,18 @@ pub(crate) struct FindNodeOp {
 }
 
 impl FindNodeOp {
-    pub(crate) fn with_target_id_and_neighbors(
+    pub(crate) fn with_target_id_and_neighbors<'a, T>(
         target_id: node::Id,
-        potential_addr_ids: Vec<AddrId>,
-    ) -> Self {
+        potential_addr_ids: T,
+    ) -> Self
+    where
+        T: IntoIterator<Item = &'a AddrId>,
+    {
         let potential_addr_ids = potential_addr_ids
             .into_iter()
             .map(|addr_id| PotentialAddrId {
                 distance: addr_id.id().map(|node_id| node_id.distance(&target_id)),
-                addr_id,
+                addr_id: *addr_id,
             })
             .collect();
         Self {

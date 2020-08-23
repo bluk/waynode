@@ -101,22 +101,19 @@ impl Id {
     #[must_use]
     pub(crate) fn prev(&self) -> Id {
         let mut data: [u8; 20] = [0; 20];
-        let mut data_idx = 0;
         let offset_from_end = self.0.iter().rposition(|v| *v != 0).unwrap_or(0);
-        for idx in 0..offset_from_end {
-            data[data_idx] = self.0[idx];
-            data_idx += 1;
+        for (val, self_val) in data.iter_mut().zip(self.0.iter()).take(offset_from_end) {
+            *val = *self_val;
         }
 
-        data[data_idx] = if self.0[offset_from_end] == 0 {
+        data[offset_from_end] = if self.0[offset_from_end] == 0 {
             0xff
         } else {
             self.0[offset_from_end] - 1
         };
 
-        for idx in (offset_from_end + 1)..self.0.len() {
-            data[idx] = 0xff;
-            data_idx += 1;
+        for val in data.iter_mut().take(self.0.len()).skip(offset_from_end + 1) {
+            *val = 0xff;
         }
 
         Id(data)
