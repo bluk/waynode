@@ -11,23 +11,123 @@ use crate::{
     find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, Kind},
     msg_buffer,
-    node::{
-        remote::{RemoteNode, RemoteState},
-        AddrId, Id,
-    },
+    node::{AddrId, Id},
     transaction,
 };
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+enum NodeState {
+    Good,
+    Questionable,
+    Bad,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct Node {
+    addr_id: AddrId,
+    missing_responses: u8,
+    next_response_deadline: Option<Instant>,
+    next_query_deadline: Option<Instant>,
+    last_pinged: Option<Instant>,
+}
+
+impl Node {
+    const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+    fn with_addr_id(addr_id: AddrId) -> Self {
+        Self {
+            addr_id,
+            missing_responses: 0,
+            next_response_deadline: None,
+            next_query_deadline: None,
+            last_pinged: None,
+        }
+    }
+
+    fn state_with_now(&self, now: Instant) -> NodeState {
+        if let Some(next_response_deadline) = self.next_response_deadline {
+            if now < next_response_deadline {
+                return NodeState::Good;
+            }
+        }
+
+        if let Some(next_query_deadline) = self.next_query_deadline {
+            if self.next_response_deadline.is_some() && now < next_query_deadline {
+                return NodeState::Good;
+            }
+        }
+
+        if self.missing_responses > 2 {
+            return NodeState::Bad;
+        }
+
+        NodeState::Questionable
+    }
+
+    fn next_msg_deadline(&self) -> Option<Instant> {
+        match (self.next_query_deadline, self.next_response_deadline) {
+            (Some(query), None) => Some(query),
+            (None, Some(resp)) => Some(resp),
+            (Some(query), Some(resp)) => {
+                if resp < query {
+                    Some(query)
+                } else {
+                    Some(resp)
+                }
+            }
+            (None, None) => None,
+        }
+    }
+
+    fn on_msg_received(&mut self, kind: &Kind, now: Instant) {
+        self.last_pinged = None;
+        match kind {
+            Kind::Response => {
+                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
+                if self.missing_responses > 0 {
+                    self.missing_responses -= 1;
+                }
+            }
+            Kind::Query => {
+                self.next_query_deadline = Some(now + Self::TIMEOUT_INTERVAL);
+            }
+            Kind::Error => {
+                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
+                if self.missing_responses < u8::MAX {
+                    self.missing_responses += 1;
+                }
+            }
+            Kind::Unknown(_) => {
+                if self.missing_responses < u8::MAX {
+                    self.missing_responses += 1;
+                }
+            }
+        }
+    }
+
+    fn on_resp_timeout(&mut self) {
+        self.last_pinged = None;
+        if self.missing_responses < u8::MAX {
+            self.missing_responses += 1;
+        }
+    }
+
+    fn on_ping(&mut self, now: Instant) {
+        self.last_pinged = Some(now);
+    }
+}
+
 const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Bucket {
+struct Bucket {
     range: RangeInclusive<Id>,
-    nodes: Vec<RemoteNode>,
-    replacement_nodes: Vec<RemoteNode>,
+    nodes: Vec<Node>,
+    replacement_nodes: Vec<Node>,
     expected_change_deadline: Instant,
 }
 
@@ -48,7 +148,7 @@ impl Bucket {
 
     fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: &AddrId, now: Instant) {
         if self.nodes.len() < max_nodes_per_bucket {
-            let node = RemoteNode::with_addr_id(addr_id.clone());
+            let node = Node::with_addr_id(addr_id.clone());
             self.nodes.push(node);
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -56,9 +156,9 @@ impl Bucket {
             .nodes
             .iter()
             .rev()
-            .position(|n| n.state_with_now(now) == RemoteState::Bad)
+            .position(|n| n.state_with_now(now) == NodeState::Bad)
         {
-            let node = RemoteNode::with_addr_id(addr_id.clone());
+            let node = Node::with_addr_id(addr_id.clone());
             self.nodes[pos] = node;
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -68,9 +168,9 @@ impl Bucket {
                 .nodes
                 .iter()
                 .rev()
-                .position(|n| n.state_with_now(now) == RemoteState::Questionable)
+                .position(|n| n.state_with_now(now) == NodeState::Questionable)
             {
-                let node = RemoteNode::with_addr_id(addr_id.clone());
+                let node = Node::with_addr_id(addr_id.clone());
                 self.nodes[pos] = node;
                 self.update_expected_change_deadline();
             }
@@ -81,7 +181,7 @@ impl Bucket {
     fn max_replacement_nodes(&self, now: Instant) -> usize {
         self.nodes
             .iter()
-            .filter(|n| n.state_with_now(now) == RemoteState::Questionable)
+            .filter(|n| n.state_with_now(now) == NodeState::Questionable)
             .count()
     }
 
@@ -95,9 +195,7 @@ impl Bucket {
         let pinged_nodes_count = self
             .nodes
             .iter()
-            .filter(|n| {
-                n.state_with_now(now) == RemoteState::Questionable && n.last_pinged.is_some()
-            })
+            .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
             .count();
         if pinged_nodes_count < self.replacement_nodes.len() {
             let node_to_ping = self
@@ -105,7 +203,7 @@ impl Bucket {
                 .iter_mut()
                 .rev()
                 .find(|n| {
-                    n.state_with_now(now) == RemoteState::Questionable && n.last_pinged.is_none()
+                    n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
                 })
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
@@ -144,16 +242,16 @@ impl Bucket {
                     self.update_expected_change_deadline();
                 }
                 Kind::Error | Kind::Unknown(_) => match node.state_with_now(now) {
-                    RemoteState::Good => {
+                    NodeState::Good => {
                         self.sort_node_ids(now);
                     }
-                    RemoteState::Questionable => {
+                    NodeState::Questionable => {
                         self.sort_node_ids(now);
                         self.ping_least_recently_seen_questionable_node(
                             config, tx_manager, msg_buffer, now,
                         )?;
                     }
-                    RemoteState::Bad => {
+                    NodeState::Bad => {
                         if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                             std::mem::swap(node, &mut replacement_node);
                             self.update_expected_change_deadline();
@@ -169,7 +267,7 @@ impl Bucket {
             }
 
             if self.nodes.len() < max_nodes_per_bucket {
-                let mut node = RemoteNode::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids(now);
@@ -178,15 +276,15 @@ impl Bucket {
                 .nodes
                 .iter()
                 .rev()
-                .position(|n| n.state_with_now(now) == RemoteState::Bad)
+                .position(|n| n.state_with_now(now) == NodeState::Bad)
             {
-                let mut node = RemoteNode::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
                 self.sort_node_ids(now);
                 self.update_expected_change_deadline();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes(now) {
-                let mut node = RemoteNode::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id.clone());
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
                 self.sort_node_ids(now);
@@ -209,16 +307,16 @@ impl Bucket {
         if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
             node.on_resp_timeout();
             match node.state_with_now(now) {
-                RemoteState::Good => {
+                NodeState::Good => {
                     // The sort order will not change if the state is still good
                 }
-                RemoteState::Questionable => {
+                NodeState::Questionable => {
                     self.sort_node_ids(now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, now,
                     )?;
                 }
-                RemoteState::Bad => {
+                NodeState::Bad => {
                     if let Some(mut replacement_node) = self.replacement_nodes.pop() {
                         std::mem::swap(node, &mut replacement_node);
                         self.update_expected_change_deadline();
@@ -267,8 +365,8 @@ impl Bucket {
         self.nodes
             .iter()
             .filter(move |n| {
-                n.state_with_now(now) == RemoteState::Questionable
-                    || n.state_with_now(now) == RemoteState::Good
+                n.state_with_now(now) == NodeState::Questionable
+                    || n.state_with_now(now) == NodeState::Good
             })
             .map(|n| &n.addr_id)
     }
@@ -276,15 +374,15 @@ impl Bucket {
     fn sort_node_ids(&mut self, now: Instant) {
         self.nodes.sort_unstable_by(|a, b| {
             match (a.state_with_now(now), b.state_with_now(now)) {
-                (RemoteState::Good, RemoteState::Questionable)
-                | (RemoteState::Good, RemoteState::Bad)
-                | (RemoteState::Questionable, RemoteState::Bad) => return Ordering::Less,
-                (RemoteState::Questionable, RemoteState::Good)
-                | (RemoteState::Bad, RemoteState::Questionable)
-                | (RemoteState::Bad, RemoteState::Good) => return Ordering::Greater,
-                (RemoteState::Good, RemoteState::Good)
-                | (RemoteState::Questionable, RemoteState::Questionable)
-                | (RemoteState::Bad, RemoteState::Bad) => {}
+                (NodeState::Good, NodeState::Questionable)
+                | (NodeState::Good, NodeState::Bad)
+                | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
+                (NodeState::Questionable, NodeState::Good)
+                | (NodeState::Bad, NodeState::Questionable)
+                | (NodeState::Bad, NodeState::Good) => return Ordering::Greater,
+                (NodeState::Good, NodeState::Good)
+                | (NodeState::Questionable, NodeState::Questionable)
+                | (NodeState::Bad, NodeState::Bad) => {}
             }
 
             match (a.next_msg_deadline(), b.next_msg_deadline()) {
