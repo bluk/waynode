@@ -10,7 +10,6 @@ use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::{
     collections::VecDeque,
-    net::SocketAddr,
     time::{Duration, Instant},
 };
 
@@ -21,22 +20,20 @@ use crate::{
     transaction,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct OutboundMsg {
     tx_id: Option<transaction::Id>,
-    pub(crate) addr: SocketAddr,
     timeout: Duration,
-    addr_id: AddrId,
+    pub(crate) addr_id: AddrId,
     pub(crate) msg_data: Vec<u8>,
 }
 
 impl OutboundMsg {
     pub(crate) fn into_transaction(self) -> Option<transaction::Transaction> {
         let addr_id = self.addr_id;
-        let resolved_addr = self.addr;
         let timeout = self.timeout;
         self.tx_id.map(|tx_id| transaction::Transaction {
-            local_id: transaction::LocalId::with_id_and_addr(tx_id, resolved_addr),
+            tx_id,
             addr_id,
             deadline: Instant::now() + timeout,
         })
@@ -54,17 +51,17 @@ pub enum Msg {
 #[derive(Clone, Debug)]
 pub struct InboundMsg {
     pub(crate) addr_id: AddrId,
-    pub(crate) tx_local_id: Option<transaction::LocalId>,
+    pub(crate) tx_id: Option<transaction::Id>,
     pub(crate) msg: Msg,
 }
 
 impl InboundMsg {
-    pub fn addr_id(&self) -> &AddrId {
-        &self.addr_id
+    pub fn addr_id(&self) -> AddrId {
+        self.addr_id
     }
 
-    pub fn tx_local_id(&self) -> Option<transaction::LocalId> {
-        self.tx_local_id
+    pub fn tx_id(&self) -> Option<transaction::Id> {
+        self.tx_id
     }
 
     pub fn msg(&self) -> &Msg {
@@ -99,51 +96,47 @@ impl Buffer {
     pub(crate) fn write_query<T>(
         &mut self,
         args: &T,
-        addr_id: &AddrId,
+        addr_id: AddrId,
         timeout: Duration,
         tx_manager: &mut transaction::Manager,
-    ) -> Result<transaction::LocalId, Error>
+    ) -> Result<transaction::Id, Error>
     where
         T: QueryArgs + std::fmt::Debug,
     {
-        let addr = addr_id.resolve_addr()?;
-        let transaction_id = tx_manager.next_transaction_id();
+        let tx_id = tx_manager.next_transaction_id();
 
         debug!(
             "write_query tx_id={:?} method_name={:?} addr_id={:?} args={:?}",
-            transaction_id,
+            tx_id,
             String::from_utf8(Vec::from(T::method_name())),
             &addr_id,
             &args
         );
 
         self.outbound.push_back(OutboundMsg {
-            tx_id: Some(transaction_id),
-            addr_id: addr_id.clone(),
-            addr,
+            tx_id: Some(tx_id),
+            addr_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
-                t: &transaction_id.to_bytebuf(),
+                t: &tx_id.to_bytebuf(),
                 v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
             timeout,
         });
-        Ok(transaction::LocalId::with_id_and_addr(transaction_id, addr))
+        Ok(tx_id)
     }
 
     pub(crate) fn write_resp(
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<Value>,
-        addr_id: &AddrId,
+        addr_id: AddrId,
     ) -> Result<(), Error> {
-        let addr = addr_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id: addr_id.clone(),
-            addr,
+            addr_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.as_ref(),
                 t: &transaction_id,
@@ -159,13 +152,11 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         details: Option<Value>,
-        addr_id: &AddrId,
+        addr_id: AddrId,
     ) -> Result<(), Error> {
-        let addr = addr_id.resolve_addr()?;
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id: addr_id.clone(),
-            addr,
+            addr_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: details.as_ref(),
                 t: &transaction_id,

@@ -60,6 +60,23 @@ fn main() -> io::Result<()> {
     let local_addr: net::SocketAddr = format!("{}:{}", ip, port).parse().unwrap();
     let mut socket = mio::net::UdpSocket::bind(local_addr)?;
 
+    let bootstrap_addrs = [
+        "router.magnets.im:6881",
+        "router.bittorent.com:6881",
+        "dht.transmissionbt.com:6881",
+    ]
+    .iter()
+    .map(|&s| {
+        use std::net::ToSocketAddrs;
+        s.to_socket_addrs()
+    })
+    .collect::<Result<Vec<_>, std::io::Error>>()
+    .expect("addresses to resolve")
+    .into_iter()
+    .flatten()
+    .map(|a| sloppy::node::AddrId::with_addr(a))
+    .collect::<Vec<_>>();
+
     let mut dht: Dht = Dht::with_config(
         sloppy::Config {
             local_id: sloppy::node::Id::rand().unwrap(),
@@ -68,17 +85,7 @@ fn main() -> io::Result<()> {
             is_read_only_node: true,
             max_node_count_per_bucket: 10,
         },
-        &[
-            // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-            //     "router.magnets.im:6881",
-            // ))),
-            sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-                "router.bittorrent.com:6881",
-            ))),
-            // sloppy::node::AddrId::with_addr(sloppy::addr::Addr::HostPort(String::from(
-            //     "dht.transmissionbt.com:6881",
-            // ))),
-        ],
+        &bootstrap_addrs[..],
     )
     .expect("dht to bootstrap successfully");
     let dht_token = Token(0);

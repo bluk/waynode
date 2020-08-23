@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub(crate) struct Id(u16);
+pub struct Id(u16);
 
 impl Id {
     fn next(&self) -> Self {
@@ -41,35 +41,16 @@ impl TryFrom<&ByteBuf> for Id {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct LocalId {
-    id: Id,
-    addr: SocketAddr,
-}
-
-impl LocalId {
-    #[cfg(test)]
-    pub(crate) fn id(&self) -> Id {
-        self.id
-    }
-}
-
-impl LocalId {
-    pub(crate) fn with_id_and_addr(id: Id, addr: SocketAddr) -> Self {
-        Self { id, addr }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Transaction {
-    pub(crate) local_id: LocalId,
+    pub(crate) tx_id: Id,
     pub(crate) addr_id: AddrId,
     pub(crate) deadline: Instant,
 }
 
 impl std::hash::Hash for Transaction {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.local_id.hash(state);
+        self.tx_id.hash(state);
         self.addr_id.hash(state)
     }
 }
@@ -118,12 +99,11 @@ impl Manager {
 
     pub(crate) fn find(&mut self, tx_id: &ByteBuf, addr: SocketAddr) -> Option<Transaction> {
         Id::try_from(tx_id)
-            .map(|tx_id| LocalId { id: tx_id, addr })
             .ok()
             .and_then(|tx_local_id| {
                 self.transactions
                     .iter()
-                    .position(|t| t.local_id == tx_local_id)
+                    .position(|t| t.tx_id == tx_local_id && t.addr_id.addr() == addr)
             })
             .map(|idx| self.transactions.remove(idx))
     }

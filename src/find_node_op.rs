@@ -7,7 +7,6 @@
 // except according to those terms.
 
 use crate::{
-    addr::Addr,
     error::Error,
     krpc::{
         find_node::{FindNodeQueryArgs, FindNodeRespValues},
@@ -22,13 +21,13 @@ use std::collections::BTreeSet;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug)]
 struct PotentialAddrId {
     distance: Option<node::Id>,
     addr_id: AddrId,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Response<'a> {
     Resp(&'a Value),
     Error(&'a Value),
@@ -40,13 +39,13 @@ const MAX_CONCURRENT_REQUESTS: usize = 8;
 
 // TODO: Ping every possible node and don't use closest distances
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct FindNodeOp {
     target_id: node::Id,
     closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
 
-    queried_addrs: BTreeSet<Addr>,
-    tx_local_ids: BTreeSet<transaction::LocalId>,
+    queried_addrs: BTreeSet<SocketAddr>,
+    tx_ids: BTreeSet<transaction::Id>,
     potential_addr_ids: Vec<PotentialAddrId>,
 }
 
@@ -66,13 +65,13 @@ impl FindNodeOp {
             target_id,
             closest_distances: [node::Id::max(); CLOSEST_DISTANCES_LEN],
             queried_addrs: BTreeSet::new(),
-            tx_local_ids: BTreeSet::new(),
+            tx_ids: BTreeSet::new(),
             potential_addr_ids,
         }
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        let ret = self.tx_local_ids.is_empty()
+        let ret = self.tx_ids.is_empty()
             && (!self.queried_addrs.is_empty() || self.potential_addr_ids.is_empty());
         if ret {
             debug!("find_node is done. find_node_op={:?}", self);
@@ -94,15 +93,14 @@ impl FindNodeOp {
                 continue;
             }
 
-            let tx_local_id = msg_buffer.write_query(
+            let tx_id = msg_buffer.write_query(
                 &FindNodeQueryArgs::with_local_and_target(config.local_id, self.target_id),
-                &potential_node.addr_id,
+                potential_node.addr_id,
                 config.default_query_timeout,
                 tx_manager,
             )?;
-            self.tx_local_ids.insert(tx_local_id);
-            self.queried_addrs
-                .insert(potential_node.addr_id.into_addr());
+            self.tx_ids.insert(tx_id);
+            self.queried_addrs.insert(potential_node.addr_id.addr());
         }
         Ok(())
     }
@@ -138,11 +136,11 @@ impl FindNodeOp {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
     ) -> Result<(), Error> {
-        if !self.tx_local_ids.contains(&tx.local_id) {
+        if !self.tx_ids.contains(&tx.tx_id) {
             error!("tried handling wrong tx={:?}", tx);
             return Ok(());
         }
-        self.tx_local_ids.remove(&tx.local_id);
+        self.tx_ids.remove(&tx.tx_id);
         debug!(
             "handle target_id={:?} tx={:?} resp={:?}",
             self.target_id, tx, resp
@@ -166,7 +164,7 @@ impl FindNodeOp {
                                 .map(|cn| PotentialAddrId {
                                     distance: Some(cn.id.distance(&self.target_id)),
                                     addr_id: AddrId::with_addr_and_id(
-                                        Addr::SocketAddr(SocketAddr::V4(cn.addr)),
+                                        SocketAddr::V4(cn.addr),
                                         cn.id,
                                     ),
                                 })
@@ -193,7 +191,7 @@ impl FindNodeOp {
             Response::Error(_) | Response::Timeout => self.max_distance(),
         };
 
-        let outstanding_queries = self.tx_local_ids.len();
+        let outstanding_queries = self.tx_ids.len();
         if outstanding_queries < MAX_CONCURRENT_REQUESTS {
             let mut queries_to_write = MAX_CONCURRENT_REQUESTS - outstanding_queries;
             while let Some(potential_node) = self.potential_addr_ids.pop() {
@@ -209,15 +207,14 @@ impl FindNodeOp {
                     continue;
                 }
 
-                let tx_local_id = msg_buffer.write_query(
+                let tx_id = msg_buffer.write_query(
                     &FindNodeQueryArgs::with_local_and_target(config.local_id, self.target_id),
-                    &potential_node.addr_id,
+                    potential_node.addr_id,
                     config.default_query_timeout,
                     tx_manager,
                 )?;
-                self.tx_local_ids.insert(tx_local_id);
-                self.queried_addrs
-                    .insert(potential_node.addr_id.into_addr());
+                self.tx_ids.insert(tx_id);
+                self.queried_addrs.insert(potential_node.addr_id.addr());
 
                 queries_to_write -= 1;
                 if queries_to_write == 0 {
@@ -227,9 +224,9 @@ impl FindNodeOp {
         }
 
         debug!(
-            "target_id={:?} outstanding tx_local_ids.len={} potential_addr_ids.len={} queried_addr.len={} closest_distances={:?} ",
+            "target_id={:?} outstanding tx_ids.len={} potential_addr_ids.len={} queried_addr.len={} closest_distances={:?} ",
             self.target_id,
-            self.tx_local_ids.len(),
+            self.tx_ids.len(),
             self.potential_addr_ids.len(),
             self.queried_addrs.len(),
             self.closest_distances

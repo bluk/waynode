@@ -6,11 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{addr::Addr, error::Error};
+use crate::error::Error;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::fmt;
+use std::net::SocketAddr;
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 /// Every node is addressed via a 160-bit identifier.
@@ -258,18 +259,18 @@ impl IdBytes for [u8; 20] {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AddrId {
-    addr: Addr,
+    addr: SocketAddr,
     id: Option<Id>,
 }
 
 impl AddrId {
-    pub fn with_addr(addr: Addr) -> Self {
+    pub fn with_addr(addr: SocketAddr) -> Self {
         Self { addr, id: None }
     }
 
-    pub fn with_addr_and_id(addr: Addr, id: Id) -> Self {
+    pub fn with_addr_and_id(addr: SocketAddr, id: Id) -> Self {
         Self { addr, id: Some(id) }
     }
 
@@ -277,29 +278,12 @@ impl AddrId {
         self.id
     }
 
-    pub fn addr(&self) -> &Addr {
-        &self.addr
-    }
-
-    pub(crate) fn into_addr(self) -> Addr {
+    pub fn addr(&self) -> SocketAddr {
         self.addr
     }
 }
 
 impl AddrId {
-    pub(crate) fn resolve_addr(&self) -> Result<std::net::SocketAddr, Error> {
-        Ok(match &self.addr {
-            Addr::SocketAddr(s) => *s,
-            Addr::HostPort(s) => {
-                use std::net::ToSocketAddrs;
-                s.to_socket_addrs()
-                    .map_err(|_| Error::CannotResolveSocketAddr)?
-                    .next()
-                    .ok_or(Error::CannotResolveSocketAddr)?
-            }
-        })
-    }
-
     // use crate::{addr::NodeIdGenerator, node::Id};
     // use serde::{Deserialize, Serialize};
     // use std::net::{SocketAddr, ToSocketAddrs};

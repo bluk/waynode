@@ -14,19 +14,18 @@ use crate::{
     node::{AddrId, Id},
     transaction,
 };
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq)]
 enum NodeState {
     Good,
     Questionable,
     Bad,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug)]
 struct Node {
     addr_id: AddrId,
     missing_responses: u8,
@@ -123,7 +122,7 @@ impl Node {
 
 const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 struct Bucket {
     range: RangeInclusive<Id>,
     nodes: Vec<Node>,
@@ -146,9 +145,9 @@ impl Bucket {
         self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
     }
 
-    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: &AddrId, now: Instant) {
+    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: AddrId, now: Instant) {
         if self.nodes.len() < max_nodes_per_bucket {
-            let node = Node::with_addr_id(addr_id.clone());
+            let node = Node::with_addr_id(addr_id);
             self.nodes.push(node);
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -158,7 +157,7 @@ impl Bucket {
             .rev()
             .position(|n| n.state_with_now(now) == NodeState::Bad)
         {
-            let node = Node::with_addr_id(addr_id.clone());
+            let node = Node::with_addr_id(addr_id);
             self.nodes[pos] = node;
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -170,7 +169,7 @@ impl Bucket {
                 .rev()
                 .position(|n| n.state_with_now(now) == NodeState::Questionable)
             {
-                let node = Node::with_addr_id(addr_id.clone());
+                let node = Node::with_addr_id(addr_id);
                 self.nodes[pos] = node;
                 self.update_expected_change_deadline();
             }
@@ -208,7 +207,7 @@ impl Bucket {
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
                 &PingQueryArgs::with_id(config.local_id),
-                &node_to_ping.addr_id,
+                node_to_ping.addr_id,
                 config.default_query_timeout,
                 tx_manager,
             )?;
@@ -220,14 +219,14 @@ impl Bucket {
     fn on_msg_received<'a>(
         &mut self,
         max_nodes_per_bucket: usize,
-        addr_id: &AddrId,
+        addr_id: AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
             node.on_msg_received(kind, now);
             match kind {
                 Kind::Response | Kind::Query => {
@@ -267,7 +266,7 @@ impl Bucket {
             }
 
             if self.nodes.len() < max_nodes_per_bucket {
-                let mut node = Node::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids(now);
@@ -278,13 +277,13 @@ impl Bucket {
                 .rev()
                 .position(|n| n.state_with_now(now) == NodeState::Bad)
             {
-                let mut node = Node::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
                 self.sort_node_ids(now);
                 self.update_expected_change_deadline();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes(now) {
-                let mut node = Node::with_addr_id(addr_id.clone());
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
                 self.sort_node_ids(now);
@@ -298,13 +297,13 @@ impl Bucket {
 
     fn on_resp_timeout(
         &mut self,
-        addr_id: &AddrId,
+        addr_id: AddrId,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == *addr_id) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
             node.on_resp_timeout();
             match node.state_with_now(now) {
                 NodeState::Good => {
@@ -395,8 +394,8 @@ impl Bucket {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Table {
+#[derive(Debug)]
+pub(crate) struct Table {
     pivot: Id,
     buckets: Vec<Bucket>,
     max_nodes_per_bucket: usize,
@@ -415,7 +414,7 @@ impl Table {
         };
         let now = Instant::now();
         for addr_id in existing_addr_ids {
-            table.try_insert(addr_id, now);
+            table.try_insert(*addr_id, now);
         }
         table
     }
@@ -433,16 +432,16 @@ impl Table {
         let mut neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .cloned()
+            .copied()
             .collect::<Vec<AddrId>>();
-        neighbors.extend(bootstrap_nodes.iter().cloned());
+        neighbors.extend(bootstrap_nodes.iter().copied());
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);
         Ok(())
     }
 
-    fn try_insert(&mut self, addr_id: &AddrId, now: Instant) {
+    fn try_insert(&mut self, addr_id: AddrId, now: Instant) {
         if let Some(node_id) = addr_id.id() {
             if node_id == self.pivot {
                 return;
@@ -495,7 +494,7 @@ impl Table {
 
     pub(crate) fn on_msg_received<'a>(
         &mut self,
-        addr_id: &AddrId,
+        addr_id: AddrId,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
@@ -562,7 +561,7 @@ impl Table {
 
     pub(crate) fn on_resp_timeout(
         &mut self,
-        addr_id: &AddrId,
+        addr_id: AddrId,
         config: &crate::Config,
         tx_manager: &mut crate::transaction::Manager,
         msg_buffer: &mut crate::msg_buffer::Buffer,
