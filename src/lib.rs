@@ -83,12 +83,14 @@ impl Dht {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let local_id = config.local_id;
         let client_version = config.client_version.clone();
+        let now = Instant::now();
         let mut dht = Self {
             config,
             routing_table: routing::Table::new(
                 local_id,
                 max_node_count_per_bucket,
                 existing_addr_ids,
+                now,
             ),
             tx_manager: transaction::Manager::new(),
             msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
@@ -101,7 +103,7 @@ impl Dht {
             &mut dht.msg_buffer,
             &mut dht.find_node_ops,
             &existing_addr_ids,
-            Instant::now(),
+            now,
         )?;
         Ok(dht)
     }

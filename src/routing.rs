@@ -395,11 +395,14 @@ impl Bucket {
     }
 }
 
+const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
 #[derive(Debug)]
 pub(crate) struct Table {
     pivot: Id,
     buckets: Vec<Bucket>,
     max_nodes_per_bucket: usize,
+    find_pivot_id_deadline: Instant,
 }
 
 impl Table {
@@ -407,13 +410,14 @@ impl Table {
         pivot: Id,
         max_nodes_per_bucket: usize,
         existing_addr_ids: &[AddrId],
+        now: Instant,
     ) -> Self {
         let mut table = Self {
             pivot,
             buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes_per_bucket)],
             max_nodes_per_bucket,
+            find_pivot_id_deadline: now + FIND_LOCAL_ID_INTERVAL,
         };
-        let now = Instant::now();
         for addr_id in existing_addr_ids {
             table.try_insert(*addr_id, now);
         }
@@ -580,6 +584,7 @@ impl Table {
         self.buckets
             .iter()
             .map(|b| b.expected_change_deadline)
+            .chain(std::iter::once(self.find_pivot_id_deadline))
             .min()
     }
 
@@ -591,6 +596,19 @@ impl Table {
         find_node_ops: &mut Vec<FindNodeOp>,
         now: Instant,
     ) -> Result<(), Error> {
+        if self.find_pivot_id_deadline <= now {
+            self.find_node(
+                self.pivot,
+                config,
+                tx_manager,
+                msg_buffer,
+                find_node_ops,
+                &[],
+                now,
+            )?;
+            self.find_pivot_id_deadline = now + FIND_LOCAL_ID_INTERVAL;
+        }
+
         let target_ids = self
             .buckets
             .iter_mut()
