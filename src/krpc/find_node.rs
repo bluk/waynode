@@ -29,8 +29,8 @@ impl FindNodeQueryArgs {
         Self { id, target }
     }
 
-    pub fn target(&self) -> &Id {
-        &self.target
+    pub fn target(&self) -> Id {
+        self.target
     }
 
     pub fn set_target(&mut self, target: Id) {
@@ -43,8 +43,8 @@ impl super::QueryArgs for FindNodeQueryArgs {
         METHOD_FIND_NODE.as_bytes()
     }
 
-    fn id(&self) -> &Id {
-        &self.id
+    fn id(&self) -> Id {
+        self.id
     }
 
     fn set_id(&mut self, id: Id) {
@@ -122,8 +122,8 @@ impl FindNodeRespValues {
         Self { id, nodes, nodes6 }
     }
 
-    pub fn id(&self) -> &Id {
-        &self.id
+    pub fn id(&self) -> Id {
+        self.id
     }
 
     pub fn set_id(&mut self, id: Id) {
@@ -268,10 +268,10 @@ mod tests {
             .args()
             .and_then(|a| FindNodeQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), &Id::try_from("abcdefghij0123456789".as_bytes())?);
+            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
             assert_eq!(
                 args.target(),
-                &Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
+                Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
             );
 
             let args_value = args.into();
@@ -316,7 +316,7 @@ mod tests {
         {
             assert_eq!(
                 values.id(),
-                &Id::try_from("0123456789abcdefghij".as_bytes())?
+                Id::try_from("0123456789abcdefghij".as_bytes())?
             );
 
             let resp_values = values.into();

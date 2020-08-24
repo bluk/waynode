@@ -125,7 +125,7 @@ impl Crc32cMaker for Ipv6Addr {
 pub(crate) trait NodeIdGenerator {
     fn make_node_id(&self, rand: Option<u8>) -> Result<Id, Error>;
 
-    fn is_valid_node_id(&self, id: &Id) -> bool;
+    fn is_valid_node_id(&self, id: Id) -> bool;
 }
 
 impl NodeIdGenerator for Ipv4Addr {
@@ -140,7 +140,7 @@ impl NodeIdGenerator for Ipv4Addr {
         Ok(id)
     }
 
-    fn is_valid_node_id(&self, id: &Id) -> bool {
+    fn is_valid_node_id(&self, id: Id) -> bool {
         let octets = self.octets();
         // loopback
         if octets[0] == 127 {
@@ -191,7 +191,7 @@ impl NodeIdGenerator for Ipv6Addr {
         Ok(id)
     }
 
-    fn is_valid_node_id(&self, id: &Id) -> bool {
+    fn is_valid_node_id(&self, id: Id) -> bool {
         let rand = id.0[19];
         let crc32c_val = self.make_crc32c(rand);
 
@@ -219,13 +219,13 @@ mod tests {
     fn test_ipv4_make_node_id_1() {
         let ip = "124.31.75.21".parse::<Ipv4Addr>().unwrap();
         let id = ip.make_node_id(None).unwrap();
-        assert!(ip.is_valid_node_id(&id));
+        assert!(ip.is_valid_node_id(id));
     }
 
     #[test]
     fn test_ipv4_valid_node_id_1() {
         let ip = "124.31.75.21".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(&Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::with_bytes([
             0x5f, 0xbf, 0xbf, 0xf1, 0x0c, 0x5d, 0x6a, 0x4e, 0xc8, 0xa8, 0x8e, 0x4c, 0x6a, 0xb4,
             0xc2, 0x8b, 0x95, 0xee, 0xe4, 0x01
         ])));
@@ -235,13 +235,13 @@ mod tests {
     fn test_ipv4_make_node_id_2() {
         let ip = "21.75.31.124".parse::<Ipv4Addr>().unwrap();
         let id = ip.make_node_id(None).unwrap();
-        assert!(ip.is_valid_node_id(&id));
+        assert!(ip.is_valid_node_id(id));
     }
 
     #[test]
     fn test_ipv4_valid_node_id_2() {
         let ip = "21.75.31.124".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(&Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::with_bytes([
             0x5a, 0x3c, 0xe9, 0xc1, 0x4e, 0x7a, 0x08, 0x64, 0x56, 0x77, 0xbb, 0xd1, 0xcf, 0xe7,
             0xd8, 0xf9, 0x56, 0xd5, 0x32, 0x56
         ])));
@@ -251,13 +251,13 @@ mod tests {
     fn test_ipv4_make_node_id_3() {
         let ip = "65.23.51.170".parse::<Ipv4Addr>().unwrap();
         let id = ip.make_node_id(None).unwrap();
-        assert!(ip.is_valid_node_id(&id));
+        assert!(ip.is_valid_node_id(id));
     }
 
     #[test]
     fn test_ipv4_valid_node_id_3() {
         let ip = "65.23.51.170".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(&Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::with_bytes([
             0xa5, 0xd4, 0x32, 0x20, 0xbc, 0x8f, 0x11, 0x2a, 0x3d, 0x42, 0x6c, 0x84, 0x76, 0x4f,
             0x8c, 0x2a, 0x11, 0x50, 0xe6, 0x16
         ])));
@@ -267,13 +267,13 @@ mod tests {
     fn test_ipv4_make_node_id_4() {
         let ip = "84.124.73.14".parse::<Ipv4Addr>().unwrap();
         let id = ip.make_node_id(None).unwrap();
-        assert!(ip.is_valid_node_id(&id));
+        assert!(ip.is_valid_node_id(id));
     }
 
     #[test]
     fn test_ipv4_valid_node_id_4() {
         let ip = "84.124.73.14".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(&Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::with_bytes([
             0x1b, 0x03, 0x21, 0xdd, 0x1b, 0xb1, 0xfe, 0x51, 0x81, 0x01, 0xce, 0xef, 0x99, 0x46,
             0x2b, 0x94, 0x7a, 0x01, 0xff, 0x41
         ])));
@@ -283,13 +283,13 @@ mod tests {
     fn test_ipv4_make_node_id_5() {
         let ip = "43.213.53.83".parse::<Ipv4Addr>().unwrap();
         let id = ip.make_node_id(None).unwrap();
-        assert!(ip.is_valid_node_id(&id));
+        assert!(ip.is_valid_node_id(id));
     }
 
     #[test]
     fn test_ipv4_valid_node_id_5() {
         let ip = "43.213.53.83".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(&Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::with_bytes([
             0xe5, 0x6f, 0x6c, 0xbf, 0x5b, 0x7c, 0x4b, 0xe0, 0x23, 0x79, 0x86, 0xd5, 0x24, 0x3b,
             0x87, 0xaa, 0x6d, 0x51, 0x30, 0x5a
         ])));

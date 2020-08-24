@@ -30,8 +30,8 @@ impl super::QueryArgs for PingQueryArgs {
         METHOD_PING.as_bytes()
     }
 
-    fn id(&self) -> &Id {
-        &self.id
+    fn id(&self) -> Id {
+        self.id
     }
 
     fn set_id(&mut self, id: Id) {
@@ -94,8 +94,8 @@ impl PingRespValues {
         Self { id }
     }
 
-    pub fn id(&self) -> &Id {
-        &self.id
+    pub fn id(&self) -> Id {
+        self.id
     }
 
     pub fn set_id(&mut self, id: Id) {
@@ -150,7 +150,7 @@ mod tests {
             .args()
             .and_then(|a| PingQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), &Id::try_from("abcdefghij0123456789".as_bytes())?);
+            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
@@ -184,7 +184,7 @@ mod tests {
         {
             assert_eq!(
                 values.id(),
-                &Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
+                Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
             );
 
             let resp_values = values.into();

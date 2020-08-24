@@ -130,7 +130,7 @@ pub trait QueryArgs {
     fn method_name() -> &'static [u8];
 
     /// The querying node ID.
-    fn id(&self) -> &Id;
+    fn id(&self) -> Id;
 
     /// Sets the querying node ID in the arguments.
     fn set_id(&mut self, id: Id);
@@ -164,7 +164,60 @@ impl RespMsg for Value {
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
 }
+/// A KRPC error message.
+pub trait ErrorMsg: Msg {
+    /// The error value.
+    fn error(&self) -> Option<&Vec<Value>>;
+}
 
+impl ErrorMsg for Value {
+    fn error(&self) -> Option<&Vec<Value>> {
+        self.as_dict()
+            .and_then(|dict| dict.get(&ByteBuf::from(String::from("e"))))
+            .and_then(|e| e.as_array())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ErrorCode {
+    GenericError,
+    ServerError,
+    ProtocolError,
+    MethodUnknown,
+    Other(i32),
+}
+
+impl ErrorCode {
+    fn code(&self) -> i32 {
+        match self {
+            ErrorCode::GenericError => 201,
+            ErrorCode::ServerError => 202,
+            ErrorCode::ProtocolError => 203,
+            ErrorCode::MethodUnknown => 204,
+            ErrorCode::Other(n) => *n,
+        }
+    }
+}
+
+/// The error value.
+pub trait ErrorVal {
+    /// The error code.
+    fn code(&self) -> ErrorCode;
+
+    /// Sets the error code.
+    fn set_code(&mut self, code: ErrorCode);
+
+    /// The error description.
+    fn description(&self) -> &String;
+
+    /// Sets the error description
+    fn set_description(&mut self, description: String);
+
+    /// Represents the arguments as a Bencoded Value.
+    fn to_value(&self) -> Value;
+}
+
+pub mod error;
 pub mod find_node;
 pub mod ping;
 pub(crate) mod ser;

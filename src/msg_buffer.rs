@@ -15,7 +15,7 @@ use std::{
 
 use crate::{
     error::Error,
-    krpc::{self, QueryArgs},
+    krpc::{self, ErrorVal, QueryArgs},
     node::AddrId,
     transaction,
 };
@@ -148,17 +148,20 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn write_err(
+    pub fn write_err<T>(
         &mut self,
         transaction_id: &ByteBuf,
-        details: Option<Value>,
+        details: T,
         addr_id: AddrId,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        T: ErrorVal,
+    {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
             addr_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
-                e: details.as_ref(),
+                e: Some(&details.to_value()),
                 t: &transaction_id,
                 v: self.client_version.as_ref(),
             })

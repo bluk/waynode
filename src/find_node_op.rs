@@ -60,7 +60,7 @@ impl FindNodeOp {
         let potential_addr_ids = potential_addr_ids
             .into_iter()
             .map(|addr_id| PotentialAddrId {
-                distance: addr_id.id().map(|node_id| node_id.distance(&target_id)),
+                distance: addr_id.id().map(|node_id| node_id.distance(target_id)),
                 addr_id,
             })
             .collect();
@@ -115,7 +115,7 @@ impl FindNodeOp {
 
     #[inline]
     fn replace_closest_queried_nodes(&mut self, new_node_id: node::Id) -> node::Id {
-        let new_distance = new_node_id.distance(&self.target_id);
+        let new_distance = new_node_id.distance(self.target_id);
         let mut max_distance = self.max_distance();
         if new_distance < max_distance {
             self.closest_distances[CLOSEST_DISTANCES_LEN - 1] = new_distance;
@@ -165,7 +165,7 @@ impl FindNodeOp {
                             nodes
                                 .iter()
                                 .map(|cn| PotentialAddrId {
-                                    distance: Some(cn.id.distance(&self.target_id)),
+                                    distance: Some(cn.id.distance(self.target_id)),
                                     addr_id: AddrId::with_addr_and_id(
                                         SocketAddr::V4(cn.addr),
                                         cn.id,

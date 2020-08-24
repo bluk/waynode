@@ -13,13 +13,13 @@ use serde_bytes::ByteBuf;
 #[derive(Debug)]
 pub(crate) struct QueryMsg<'a> {
     /// query arguments
-    pub a: Option<&'a Value>,
+    pub(crate) a: Option<&'a Value>,
     /// method name of query
-    pub q: &'a ByteBuf,
+    pub(crate) q: &'a ByteBuf,
     /// transaction id
-    pub t: &'a ByteBuf,
+    pub(crate) t: &'a ByteBuf,
     /// client version
-    pub v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a ByteBuf>,
 }
 
 impl<'a> Serialize for QueryMsg<'a> {
@@ -44,11 +44,11 @@ impl<'a> Serialize for QueryMsg<'a> {
 #[derive(Debug)]
 pub(crate) struct RespMsg<'a> {
     /// return values
-    pub r: Option<&'a Value>,
+    pub(crate) r: Option<&'a Value>,
     /// transaction id
-    pub t: &'a ByteBuf,
+    pub(crate) t: &'a ByteBuf,
     /// client version
-    pub v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a ByteBuf>,
 }
 
 impl<'a> Serialize for RespMsg<'a> {
@@ -72,34 +72,12 @@ impl<'a> Serialize for RespMsg<'a> {
 #[derive(Debug)]
 pub(crate) struct ErrMsg<'a> {
     /// error details
-    pub e: Option<&'a Value>,
+    pub(crate) e: Option<&'a Value>,
     /// transaction id
-    pub t: &'a ByteBuf,
+    pub(crate) t: &'a ByteBuf,
     /// client version
-    pub v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a ByteBuf>,
 }
-
-// impl<'a> ErrMsg<'a> {
-//     pub fn code(&self) -> Option<Number> {
-//         self.e
-//             .as_ref()
-//             .and_then(|e| e.as_array())
-//             .and_then(|l| l.get(0))
-//             .and_then(|n| match n {
-//                 Value::Int(num) => Some(*num),
-//                 _ => None,
-//             })
-//     }
-//
-//     pub fn msg(&self) -> Option<String> {
-//         self.e
-//             .as_ref()
-//             .and_then(|e| e.as_array())
-//             .and_then(|l| l.get(1))
-//             .and_then(|m| m.as_byte_str())
-//             .and_then(|s| String::from_utf8(s.to_vec()).ok())
-//     }
-// }
 
 impl<'a> Serialize for ErrMsg<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

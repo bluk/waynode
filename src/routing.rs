@@ -328,7 +328,7 @@ impl Bucket {
     }
 
     fn split(self, max_nodes_per_bucket: usize) -> (Bucket, Bucket) {
-        let middle = self.range.end().middle(self.range.start());
+        let middle = self.range.end().middle(*self.range.start());
 
         let mut lower_bucket =
             Bucket::new(*self.range.start()..=middle.prev(), max_nodes_per_bucket);
@@ -482,7 +482,7 @@ impl Table {
             .flat_map(|b| b.prioritized_addr_ids(now).copied())
             .collect::<Vec<_>>();
         nodes.sort_by(|a, b| match (a.id(), b.id()) {
-            (Some(a_id), Some(b_id)) => a_id.distance(&id).cmp(&b_id.distance(&id)),
+            (Some(a_id), Some(b_id)) => a_id.distance(id).cmp(&b_id.distance(id)),
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
             (None, None) => Ordering::Equal,

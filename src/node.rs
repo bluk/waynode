@@ -51,7 +51,7 @@ impl Id {
     // }
 
     pub(crate) fn rand_in_inclusive_range(rng: &std::ops::RangeInclusive<Id>) -> Result<Id, Error> {
-        let data_bit_diff = rng.end().difference(rng.start());
+        let data_bit_diff = rng.end().difference(*rng.start());
         let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true)?;
         let _ = rand_bits.overflowing_add(&rng.start().0);
         Ok(Id(rand_bits))
@@ -59,10 +59,10 @@ impl Id {
 
     #[inline]
     #[must_use]
-    fn difference(&self, other: &Id) -> Id {
+    fn difference(&self, other: Id) -> Id {
         let mut bigger: [u8; 20];
         let mut smaller: [u8; 20];
-        if self < other {
+        if self < &other {
             bigger = other.0;
             smaller = self.0;
         } else {
@@ -76,7 +76,7 @@ impl Id {
 
     /// Determines the distance between this node ID and the node ID argument.
     #[must_use]
-    pub(crate) fn distance(&self, other: &Id) -> Id {
+    pub(crate) fn distance(&self, other: Id) -> Id {
         let mut data = [0; 20];
         for (idx, val) in self.0.iter().enumerate() {
             data[idx] = val ^ other.0[idx];
@@ -87,7 +87,7 @@ impl Id {
     /// Finds the middle id between this node ID and the node ID argument.
     #[inline]
     #[must_use]
-    pub(crate) fn middle(&self, other: &Id) -> Id {
+    pub(crate) fn middle(&self, other: Id) -> Id {
         let mut data = self.0;
         let overflow = data.overflowing_add(&other.0);
         data.shift_right();
@@ -382,14 +382,14 @@ mod test {
         let mut node_ids = vec![
             Id([0xff; 20]),
             Id([0x00; 20]),
-            Id([0xff; 20]).middle(&Id([0x00; 20])),
+            Id([0xff; 20]).middle(Id([0x00; 20])),
         ];
         node_ids.sort();
         assert_eq!(
             node_ids,
             vec![
                 Id([0x00; 20]),
-                Id([0xff; 20]).middle(&Id([0x00; 20])),
+                Id([0xff; 20]).middle(Id([0x00; 20])),
                 Id([0xff; 20]),
             ]
         );
@@ -399,15 +399,15 @@ mod test {
     fn test_id_distance_ord() {
         let mut node_ids = vec![
             Id([0x00; 20]),
-            Id([0xff; 20]).middle(&Id([0x00; 20])),
+            Id([0xff; 20]).middle(Id([0x00; 20])),
             Id([0xff; 20]),
         ];
-        let pivot_id = Id([0xef; 20]).middle(&Id([0x00; 20]));
-        node_ids.sort_by(|a, b| a.distance(&pivot_id).cmp(&b.distance(&pivot_id)));
+        let pivot_id = Id([0xef; 20]).middle(Id([0x00; 20]));
+        node_ids.sort_by(|a, b| a.distance(pivot_id).cmp(&b.distance(pivot_id)));
         assert_eq!(
             node_ids,
             vec![
-                Id([0xff; 20]).middle(&Id([0x00; 20])),
+                Id([0xff; 20]).middle(Id([0x00; 20])),
                 Id([0x00; 20]),
                 Id([0xff; 20]),
             ]

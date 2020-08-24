@@ -37,7 +37,7 @@ pub mod transaction;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg},
+    krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg},
     msg_buffer::InboundMsg,
     node::AddrId,
 };
@@ -291,12 +291,15 @@ impl Dht {
         self.msg_buffer.write_resp(transaction_id, resp, addr_id)
     }
 
-    pub fn write_err(
+    pub fn write_err<T>(
         &mut self,
         transaction_id: &ByteBuf,
-        details: Option<Value>,
+        details: T,
         addr_id: AddrId,
-    ) -> Result<(), error::Error> {
+    ) -> Result<(), error::Error>
+    where
+        T: ErrorVal,
+    {
         self.msg_buffer.write_err(transaction_id, details, addr_id)
     }
 
@@ -468,8 +471,8 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
-                assert_eq!(find_node_query_args.target(), &dht.config.local_id);
-                assert_eq!(find_node_query_args.id(), &dht.config.local_id);
+                assert_eq!(find_node_query_args.target(), dht.config.local_id);
+                assert_eq!(find_node_query_args.id(), dht.config.local_id);
 
                 Ok(())
             }

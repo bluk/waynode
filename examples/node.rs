@@ -23,7 +23,7 @@ use clap::{App, Arg};
 use mio::{Events, Interest, Poll, Token};
 
 use sloppy::{
-    krpc::{ping, Msg, QueryMsg},
+    krpc::{ping, ErrorCode, Msg, QueryMsg},
     Dht,
 };
 
@@ -160,7 +160,30 @@ fn main() -> io::Result<()> {
                                     };
                                 }
                             }
-                            _ => {}
+                            Some(method_name @ _) => {
+                                if let Some(tx_id) = msg.tx_id() {
+                                    let error = sloppy::krpc::error::ErrorValue::with_code_and_desc(
+                                        ErrorCode::MethodUnknown,
+                                        method_name.to_string(),
+                                    );
+                                    match dht.write_err(tx_id, error, inbound_msg.addr_id()) {
+                                        Ok(()) => {}
+                                        Err(e) => error!("write_err error: {:?}", e),
+                                    };
+                                }
+                            }
+                            None => {
+                                if let Some(tx_id) = msg.tx_id() {
+                                    let error = sloppy::krpc::error::ErrorValue::with_code_and_desc(
+                                        ErrorCode::ProtocolError,
+                                        String::from("method name not listed"),
+                                    );
+                                    match dht.write_err(tx_id, error, inbound_msg.addr_id()) {
+                                        Ok(()) => {}
+                                        Err(e) => error!("write_err error: {:?}", e),
+                                    };
+                                }
+                            }
                         },
                         sloppy::msg_buffer::Msg::Resp(_)
                         | sloppy::msg_buffer::Msg::Error(_)
