@@ -429,7 +429,6 @@ mod tests {
             assert_eq!(ser_msg, get_peers_resp.to_vec());
             Ok(())
         } else {
-            dbg!(msg_value);
             panic!()
         }
     }

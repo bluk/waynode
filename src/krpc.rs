@@ -216,6 +216,7 @@ pub trait ErrorVal {
     fn to_value(&self) -> Value;
 }
 
+pub mod announce_peer;
 pub mod error;
 pub mod find_node;
 pub mod get_peers;
