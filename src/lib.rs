@@ -12,7 +12,6 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-// TODO: Have a deadline timeout for doing a find_node on the local node
 // TODO: Configuration option for IPv6 and IPv4 tables
 // TODO: Configuration for whether node IDs are valid for IP
 // TODO: Should process the responses if the queried_node_id returned is the same as config.local_id

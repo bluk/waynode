@@ -12,18 +12,18 @@ use serde_bytes::ByteBuf;
 use std::convert::TryFrom;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ErrorValue {
+pub struct ErrorValues {
     code: ErrorCode,
     description: String,
 }
 
-impl ErrorValue {
+impl ErrorValues {
     pub fn with_code_and_desc(code: ErrorCode, description: String) -> Self {
         Self { code, description }
     }
 }
 
-impl super::ErrorVal for ErrorValue {
+impl super::ErrorVal for ErrorValues {
     fn code(&self) -> ErrorCode {
         self.code
     }
@@ -45,7 +45,7 @@ impl super::ErrorVal for ErrorValue {
     }
 }
 
-impl TryFrom<Value> for ErrorValue {
+impl TryFrom<Value> for ErrorValues {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -57,7 +57,7 @@ impl TryFrom<Value> for ErrorValue {
     }
 }
 
-impl TryFrom<&Vec<Value>> for ErrorValue {
+impl TryFrom<&Vec<Value>> for ErrorValues {
     type Error = crate::error::Error;
 
     fn try_from(value: &Vec<Value>) -> Result<Self, Self::Error> {
@@ -96,21 +96,21 @@ impl TryFrom<&Vec<Value>> for ErrorValue {
                         ),
                     },
                 };
-                Ok(ErrorValue { code, description })
+                Ok(ErrorValues { code, description })
             }
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
 }
 
-impl From<ErrorValue> for Value {
-    fn from(value: ErrorValue) -> Self {
+impl From<ErrorValues> for Value {
+    fn from(value: ErrorValues) -> Self {
         Value::from(&value)
     }
 }
 
-impl From<&ErrorValue> for Value {
-    fn from(value: &ErrorValue) -> Self {
+impl From<&ErrorValues> for Value {
+    fn from(value: &ErrorValues) -> Self {
         Value::List(vec![
             Value::Int(Number::Signed(i64::from(value.code.code()))),
             Value::ByteStr(ByteBuf::from(value.description.clone())),
