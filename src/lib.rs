@@ -32,6 +32,7 @@ pub mod krpc;
 pub mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
+pub mod torrent;
 pub mod transaction;
 
 use crate::{

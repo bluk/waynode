@@ -1,0 +1,50 @@
+// Copyright 2020 Bryant Luk
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use crate::error::Error;
+use serde::{Deserialize, Serialize};
+use std::{convert::TryFrom, fmt};
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct InfoHash(pub(crate) [u8; 20]);
+
+impl InfoHash {
+    /// Instantiates an Id with bytes representing the 160-bit identifier.
+    pub fn with_bytes(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl Into<Vec<u8>> for InfoHash {
+    fn into(self) -> Vec<u8> {
+        Vec::from(self.0)
+    }
+}
+
+impl fmt::Debug for InfoHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in self.0.iter() {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<&[u8]> for InfoHash {
+    type Error = Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() != 20 {
+            return Err(Error::InvalidInfoHash);
+        }
+
+        let mut data: [u8; 20] = [0; 20];
+        data.copy_from_slice(value);
+        Ok(InfoHash(data))
+    }
+}
