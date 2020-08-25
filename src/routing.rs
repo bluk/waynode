@@ -436,7 +436,6 @@ impl Table {
     ) -> Result<(), Error> {
         let neighbors = self
             .find_neighbors(target_id, now)
-            .into_iter()
             .take(8)
             .chain(bootstrap_nodes.iter().copied());
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);

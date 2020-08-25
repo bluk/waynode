@@ -64,14 +64,14 @@ impl TryFrom<&Vec<Value>> for ErrorValues {
         match (
             value.get(0).and_then(|code| {
                 code.as_i64()
-                    .map(|n| Number::Signed(n))
-                    .or_else(|| code.as_u64().map(|n| Number::Unsigned(n)))
+                    .map(Number::Signed)
+                    .or_else(|| code.as_u64().map(Number::Unsigned))
             }),
             value
                 .get(1)
                 .and_then(|value| value.as_byte_str())
                 .and_then(|bs| std::str::from_utf8(bs).ok())
-                .map(|s| String::from(s)),
+                .map(String::from),
         ) {
             (Some(code), Some(description)) => {
                 let code = match code {

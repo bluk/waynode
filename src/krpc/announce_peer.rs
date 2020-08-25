@@ -120,7 +120,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for AnnouncePeerQueryArgs {
                 .and_then(|port| u16::try_from(port).ok()),
             args.get(&ByteBuf::from(String::from("implied_port")))
                 .and_then(|implied_port| implied_port.as_u64())
-                .map(|implied_port| !(implied_port == 0)),
+                .map(|implied_port| implied_port != 0),
         ) {
             (Some(id), Some(info_hash), Some(token), port, implied_port) => {
                 Ok(AnnouncePeerQueryArgs {

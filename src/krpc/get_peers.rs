@@ -188,8 +188,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             values
                 .get(&ByteBuf::from(String::from("token")))
-                .and_then(|id| id.as_byte_str())
-                .and_then(|id| Some(id.clone())),
+                .and_then(|id| id.as_byte_str().cloned()),
             values
                 .get(&ByteBuf::from(String::from("values")))
                 .and_then(|values| values.as_array())
