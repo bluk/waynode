@@ -23,21 +23,25 @@ impl ErrorValues {
     }
 }
 
+impl ErrorValues {
+    /// Sets the error code.
+    pub fn set_code(&mut self, code: ErrorCode) {
+        self.code = code;
+    }
+
+    /// Sets the error description
+    pub fn set_description(&mut self, description: String) {
+        self.description = description
+    }
+}
+
 impl super::ErrorVal for ErrorValues {
     fn code(&self) -> ErrorCode {
         self.code
     }
 
-    fn set_code(&mut self, code: ErrorCode) {
-        self.code = code;
-    }
-
     fn description(&self) -> &String {
         &self.description
-    }
-
-    fn set_description(&mut self, description: String) {
-        self.description = description
     }
 
     fn to_value(&self) -> Value {

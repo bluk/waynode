@@ -23,6 +23,11 @@ impl PingQueryArgs {
     pub fn with_id(id: Id) -> Self {
         Self { id }
     }
+
+    /// Sets the querying node ID in the arguments.
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
 }
 
 impl super::QueryArgs for PingQueryArgs {
@@ -34,10 +39,6 @@ impl super::QueryArgs for PingQueryArgs {
         self.id
     }
 
-    fn set_id(&mut self, id: Id) {
-        self.id = id;
-    }
-
     fn to_value(&self) -> Value {
         Value::from(self)
     }
@@ -47,6 +48,14 @@ impl TryFrom<Value> for PingQueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl TryFrom<&Value> for PingQueryArgs {
+    type Error = crate::error::Error;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
         Self::try_from(
             value
                 .as_dict()
@@ -94,12 +103,18 @@ impl PingRespValues {
         Self { id }
     }
 
-    pub fn id(&self) -> Id {
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
+}
+
+impl super::RespValue for PingRespValues {
+    fn id(&self) -> Id {
         self.id
     }
 
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    fn to_value(&self) -> Value {
+        Value::from(*self)
     }
 }
 
@@ -117,11 +132,17 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingRespValues {
 }
 
 impl From<PingRespValues> for Value {
-    fn from(ping_values: PingRespValues) -> Self {
+    fn from(values: PingRespValues) -> Self {
+        Value::from(&values)
+    }
+}
+
+impl From<&PingRespValues> for Value {
+    fn from(values: &PingRespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
-            Value::ByteStr(ByteBuf::from(ping_values.id)),
+            Value::ByteStr(ByteBuf::from(values.id)),
         );
         Value::Dict(args)
     }
@@ -132,7 +153,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespValue};
 
     #[test]
     fn test_serde_ping_query() -> Result<(), Error> {

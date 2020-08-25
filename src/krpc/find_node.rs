@@ -29,6 +29,11 @@ impl FindNodeQueryArgs {
         Self { id, target }
     }
 
+    /// Sets the querying node ID in the arguments.
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
+
     pub fn target(&self) -> Id {
         self.target
     }
@@ -47,10 +52,6 @@ impl super::QueryArgs for FindNodeQueryArgs {
         self.id
     }
 
-    fn set_id(&mut self, id: Id) {
-        self.id = id;
-    }
-
     fn to_value(&self) -> Value {
         Value::from(self)
     }
@@ -60,6 +61,14 @@ impl TryFrom<Value> for FindNodeQueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl TryFrom<&Value> for FindNodeQueryArgs {
+    type Error = crate::error::Error;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
         Self::try_from(
             value
                 .as_dict()
@@ -88,6 +97,12 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeQueryArgs {
 
 impl From<FindNodeQueryArgs> for Value {
     fn from(args: FindNodeQueryArgs) -> Self {
+        Value::from(&args)
+    }
+}
+
+impl From<&FindNodeQueryArgs> for Value {
+    fn from(args: &FindNodeQueryArgs) -> Self {
         let mut d: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         d.insert(
             ByteBuf::from(String::from("id")),
@@ -98,12 +113,6 @@ impl From<FindNodeQueryArgs> for Value {
             Value::ByteStr(ByteBuf::from(args.target)),
         );
         Value::Dict(d)
-    }
-}
-
-impl From<&FindNodeQueryArgs> for Value {
-    fn from(args: &FindNodeQueryArgs) -> Self {
-        Value::from(*args)
     }
 }
 
@@ -120,10 +129,6 @@ impl FindNodeRespValues {
         nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>,
     ) -> Self {
         Self { id, nodes, nodes6 }
-    }
-
-    pub fn id(&self) -> Id {
-        self.id
     }
 
     pub fn set_id(&mut self, id: Id) {
@@ -144,6 +149,16 @@ impl FindNodeRespValues {
 
     pub fn set_nodes6(&mut self, nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>) {
         self.nodes6 = nodes6;
+    }
+}
+
+impl super::RespValue for FindNodeRespValues {
+    fn id(&self) -> Id {
+        self.id
+    }
+
+    fn to_value(&self) -> Value {
+        Value::from(self)
     }
 }
 
@@ -213,13 +228,19 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
 
 impl From<FindNodeRespValues> for Value {
     fn from(values: FindNodeRespValues) -> Self {
+        Value::from(&values)
+    }
+}
+
+impl From<&FindNodeRespValues> for Value {
+    fn from(values: &FindNodeRespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
             Value::ByteStr(ByteBuf::from(values.id)),
         );
 
-        if let Some(nodes) = values.nodes {
+        if let Some(nodes) = &values.nodes {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes {
                 byte_str.extend_from_slice(&n.id.0);
@@ -231,7 +252,7 @@ impl From<FindNodeRespValues> for Value {
             );
         }
 
-        if let Some(nodes6) = values.nodes6 {
+        if let Some(nodes6) = &values.nodes6 {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes6 {
                 byte_str.extend_from_slice(&n.id.0);
@@ -252,7 +273,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespValue};
 
     #[test]
     fn test_serde_find_node_query() -> Result<(), Error> {

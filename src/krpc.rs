@@ -131,9 +131,6 @@ pub trait QueryArgs {
     /// The querying node ID.
     fn id(&self) -> Id;
 
-    /// Sets the querying node ID in the arguments.
-    fn set_id(&mut self, id: Id);
-
     /// Represents the arguments as a Bencoded Value.
     fn to_value(&self) -> Value;
 }
@@ -163,6 +160,16 @@ impl RespMsg for Value {
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
 }
+
+/// KRPC response values.
+pub trait RespValue {
+    /// The queried node ID.
+    fn id(&self) -> Id;
+
+    /// Represents the values as a Bencoded value.
+    fn to_value(&self) -> Value;
+}
+
 /// A KRPC error message.
 pub trait ErrorMsg: Msg {
     /// The error value.
@@ -203,14 +210,8 @@ pub trait ErrorVal {
     /// The error code.
     fn code(&self) -> ErrorCode;
 
-    /// Sets the error code.
-    fn set_code(&mut self, code: ErrorCode);
-
     /// The error description.
     fn description(&self) -> &String;
-
-    /// Sets the error description
-    fn set_description(&mut self, description: String);
 
     /// Represents the arguments as a Bencoded Value.
     fn to_value(&self) -> Value;

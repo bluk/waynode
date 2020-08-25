@@ -39,6 +39,11 @@ impl AnnouncePeerQueryArgs {
         }
     }
 
+    /// Sets the querying node ID in the arguments.
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
+
     pub fn info_hash(&self) -> InfoHash {
         self.info_hash
     }
@@ -81,10 +86,6 @@ impl super::QueryArgs for AnnouncePeerQueryArgs {
         self.id
     }
 
-    fn set_id(&mut self, id: Id) {
-        self.id = id;
-    }
-
     fn to_value(&self) -> Value {
         Value::from(self)
     }
@@ -94,6 +95,14 @@ impl TryFrom<Value> for AnnouncePeerQueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
+impl TryFrom<&Value> for AnnouncePeerQueryArgs {
+    type Error = crate::error::Error;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
         Self::try_from(
             value
                 .as_dict()
@@ -188,12 +197,18 @@ impl AnnouncePeerRespValues {
         Self { id }
     }
 
-    pub fn id(&self) -> Id {
+    pub fn set_id(&mut self, id: Id) {
+        self.id = id;
+    }
+}
+
+impl super::RespValue for AnnouncePeerRespValues {
+    fn id(&self) -> Id {
         self.id
     }
 
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    fn to_value(&self) -> Value {
+        Value::from(self)
     }
 }
 
@@ -214,6 +229,12 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for AnnouncePeerRespValues {
 
 impl From<AnnouncePeerRespValues> for Value {
     fn from(values: AnnouncePeerRespValues) -> Self {
+        Value::from(&values)
+    }
+}
+
+impl From<&AnnouncePeerRespValues> for Value {
+    fn from(values: &AnnouncePeerRespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
@@ -228,7 +249,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespValue};
 
     #[test]
     fn test_serde_announce_peer_query() -> Result<(), Error> {
