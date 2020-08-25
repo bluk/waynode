@@ -22,7 +22,7 @@ pub struct Id(pub(crate) [u8; 20]);
 impl Id {
     /// Instantiates an Id with bytes representing the 160-bit identifier.
     pub fn with_bytes(bytes: [u8; 20]) -> Self {
-        Id(bytes)
+        Self(bytes)
     }
 
     pub(crate) const fn min() -> Id {

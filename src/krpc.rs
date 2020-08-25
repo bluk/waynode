@@ -35,7 +35,6 @@ impl<'a> Kind<'a> {
     }
 }
 
-// pub const METHOD_GET_PEERS: &str = "get_peers";
 // pub const METHOD_ANNOUNCE_PEER: &str = "announce_peer";
 
 /// A KRPC message.
@@ -219,5 +218,6 @@ pub trait ErrorVal {
 
 pub mod error;
 pub mod find_node;
+pub mod get_peers;
 pub mod ping;
 pub(crate) mod ser;

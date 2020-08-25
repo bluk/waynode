@@ -21,6 +21,8 @@ pub enum Error {
     UnknownMessageKind,
     CannotResolveSocketAddr,
     InvalidLocalTransactionId,
+    InvalidInfoHash,
+    InvalidCompactAddr,
 }
 
 impl From<bt_bencode::Error> for Error {
