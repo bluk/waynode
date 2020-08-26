@@ -162,7 +162,7 @@ impl RespMsg for Value {
 }
 
 /// KRPC response values.
-pub trait RespValue {
+pub trait RespVal {
     /// The queried node ID.
     fn id(&self) -> Id;
 

@@ -202,7 +202,7 @@ impl AnnouncePeerRespValues {
     }
 }
 
-impl super::RespValue for AnnouncePeerRespValues {
+impl super::RespVal for AnnouncePeerRespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -249,7 +249,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespValue};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
 
     #[test]
     fn test_serde_announce_peer_query() -> Result<(), Error> {

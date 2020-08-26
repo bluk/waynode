@@ -152,7 +152,7 @@ impl FindNodeRespValues {
     }
 }
 
-impl super::RespValue for FindNodeRespValues {
+impl super::RespVal for FindNodeRespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -273,7 +273,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespValue};
+    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
 
     #[test]
     fn test_serde_find_node_query() -> Result<(), Error> {

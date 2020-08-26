@@ -37,7 +37,7 @@ pub mod transaction;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg},
+    krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
     msg_buffer::InboundMsg,
     node::AddrId,
 };
@@ -284,12 +284,15 @@ impl Dht {
         )
     }
 
-    pub fn write_resp(
+    pub fn write_resp<T>(
         &mut self,
         transaction_id: &ByteBuf,
-        resp: Option<Value>,
+        resp: Option<T>,
         addr_id: AddrId,
-    ) -> Result<(), error::Error> {
+    ) -> Result<(), error::Error>
+    where
+        T: RespVal,
+    {
         self.msg_buffer.write_resp(transaction_id, resp, addr_id)
     }
 

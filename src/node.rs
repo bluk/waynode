@@ -120,9 +120,33 @@ impl Id {
     }
 }
 
-impl Into<Vec<u8>> for Id {
-    fn into(self) -> Vec<u8> {
-        Vec::from(self.0)
+impl From<[u8; 20]> for Id {
+    fn from(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<&[u8; 20]> for Id {
+    fn from(bytes: &[u8; 20]) -> Self {
+        Self(*bytes)
+    }
+}
+
+impl From<&Id> for Vec<u8> {
+    fn from(id: &Id) -> Self {
+        Vec::from(id.0)
+    }
+}
+
+impl From<Id> for Vec<u8> {
+    fn from(id: Id) -> Self {
+        Vec::from(id.0)
+    }
+}
+
+impl From<Id> for [u8; 20] {
+    fn from(id: Id) -> Self {
+        id.0
     }
 }
 

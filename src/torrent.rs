@@ -20,9 +20,33 @@ impl InfoHash {
     }
 }
 
-impl Into<Vec<u8>> for InfoHash {
-    fn into(self) -> Vec<u8> {
-        Vec::from(self.0)
+impl From<[u8; 20]> for InfoHash {
+    fn from(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<&[u8; 20]> for InfoHash {
+    fn from(bytes: &[u8; 20]) -> Self {
+        Self(*bytes)
+    }
+}
+
+impl From<&InfoHash> for Vec<u8> {
+    fn from(info_hash: &InfoHash) -> Self {
+        Vec::from(info_hash.0)
+    }
+}
+
+impl From<InfoHash> for Vec<u8> {
+    fn from(info_hash: InfoHash) -> Self {
+        Vec::from(info_hash.0)
+    }
+}
+
+impl From<InfoHash> for [u8; 20] {
+    fn from(info_hash: InfoHash) -> Self {
+        info_hash.0
     }
 }
 

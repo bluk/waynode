@@ -6,18 +6,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::{
+    error::Error,
+    krpc::{self, ErrorVal, QueryArgs, RespVal},
+    node::AddrId,
+    transaction,
+};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
-};
-
-use crate::{
-    error::Error,
-    krpc::{self, ErrorVal, QueryArgs},
-    node::AddrId,
-    transaction,
 };
 
 #[derive(Debug)]
@@ -128,17 +127,20 @@ impl Buffer {
         Ok(tx_id)
     }
 
-    pub(crate) fn write_resp(
+    pub(crate) fn write_resp<T>(
         &mut self,
         transaction_id: &ByteBuf,
-        resp: Option<Value>,
+        resp: Option<T>,
         addr_id: AddrId,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        T: RespVal,
+    {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
             addr_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
-                r: resp.as_ref(),
+                r: resp.map(|resp| resp.to_value()).as_ref(),
                 t: &transaction_id,
                 v: self.client_version.as_ref(),
             })
