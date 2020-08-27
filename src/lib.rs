@@ -47,7 +47,7 @@ use crate::{
         transaction, CompactNodeInfo, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal,
     },
     msg_buffer::InboundMsg,
-    node::AddrId,
+    node::AddrOptId,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -104,9 +104,8 @@ pub struct Dht {
 impl Dht {
     pub fn with_config<'a, A, B>(
         config: Config,
-        // TODO: Use CompactNodeInfo to guarantee Ids
-        existing_addr_ids: A,
-        bootstrap_addr_ids: B,
+        node_infos: A,
+        bootstrap_socket_addrs: B,
     ) -> Result<Self, error::Error>
     where
         A: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
@@ -133,7 +132,7 @@ impl Dht {
                 routing::Table::new(local_id, max_node_count_per_bucket, now),
             ),
         };
-        routing_table.try_insert_addrs(existing_addr_ids, now);
+        routing_table.try_insert_node_infos(node_infos, now);
 
         let mut dht = Self {
             config,
@@ -148,7 +147,7 @@ impl Dht {
             &mut dht.tx_manager,
             &mut dht.msg_buffer,
             &mut dht.find_node_ops,
-            bootstrap_addr_ids,
+            bootstrap_socket_addrs,
             now,
         )?;
         Ok(dht)
@@ -185,7 +184,7 @@ impl Dht {
                             && queried_node_id != Some(self.config.local_id)
                             && tx.is_node_id_match(queried_node_id)
                         {
-                            if let Some(node_id) = tx.addr_id.id().or(queried_node_id) {
+                            if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
                                 self.routing_table.on_msg_received(
                                     CompactNodeInfo::with_addr_and_id(addr, node_id),
                                     &kind,
@@ -207,7 +206,7 @@ impl Dht {
                             }
                             self.find_node_ops.retain(|op| !op.is_done());
                             self.msg_buffer.push_inbound(InboundMsg {
-                                addr_id: tx.addr_id,
+                                addr_opt_id: tx.addr_opt_id,
                                 tx_id: Some(tx.tx_id),
                                 msg: msg_buffer::Msg::Resp(value),
                             });
@@ -228,9 +227,9 @@ impl Dht {
                         }
                     }
                     Kind::Error => {
-                        if let Some(node_id) = tx.addr_id.id() {
+                        if let Some(node_id) = tx.addr_opt_id.id() {
                             self.routing_table.on_msg_received(
-                                CompactNodeInfo::with_addr_and_id(tx.addr_id.addr(), node_id),
+                                CompactNodeInfo::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,
@@ -250,7 +249,7 @@ impl Dht {
                         }
                         self.find_node_ops.retain(|op| !op.is_done());
                         self.msg_buffer.push_inbound(InboundMsg {
-                            addr_id: tx.addr_id,
+                            addr_opt_id: tx.addr_opt_id,
                             tx_id: Some(tx.tx_id),
                             msg: msg_buffer::Msg::Error(value),
                         });
@@ -277,14 +276,14 @@ impl Dht {
                     Kind::Query => {
                         debug!("Recieved query. addr={}", addr);
                         let querying_node_id = QueryMsg::querying_node_id(&value);
-                        let addr_id = AddrId::with_addr_and_id(addr, querying_node_id);
+                        let addr_opt_id = AddrOptId::with_addr_and_id(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
                             self.routing_table.on_msg_received(CompactNodeInfo::with_addr_and_id(addr, node_id), &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         }
 
                         self.msg_buffer.push_inbound(InboundMsg {
-                            addr_id,
+                            addr_opt_id,
                             tx_id: None,
                             msg: msg_buffer::Msg::Query(value),
                         });
@@ -317,16 +316,16 @@ impl Dht {
     pub fn write_query<A, T>(
         &mut self,
         args: &T,
-        addr_id: A,
+        addr_opt_id: A,
         timeout: Option<Duration>,
     ) -> Result<transaction::Id, error::Error>
     where
         T: QueryArgs + std::fmt::Debug,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
         self.msg_buffer.write_query(
             args,
-            addr_id,
+            addr_opt_id,
             timeout.unwrap_or(self.config.default_query_timeout),
             &mut self.tx_manager,
         )
@@ -336,26 +335,28 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<T>,
-        addr_id: A,
+        addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: RespVal,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
-        self.msg_buffer.write_resp(transaction_id, resp, addr_id)
+        self.msg_buffer
+            .write_resp(transaction_id, resp, addr_opt_id)
     }
 
     pub fn write_err<A, T>(
         &mut self,
         transaction_id: &ByteBuf,
         details: T,
-        addr_id: A,
+        addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: ErrorVal,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
-        self.msg_buffer.write_err(transaction_id, details, addr_id)
+        self.msg_buffer
+            .write_err(transaction_id, details, addr_opt_id)
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
@@ -365,7 +366,7 @@ impl Dht {
                 .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
             let result = Some(SendInfo {
                 len: out_msg.msg_data.len(),
-                addr: out_msg.addr_id.addr(),
+                addr: out_msg.addr_opt_id.addr(),
             });
             if let Some(tx) = out_msg.into_transaction() {
                 self.tx_manager.push(tx);
@@ -400,9 +401,9 @@ impl Dht {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
                 debug!("tx timed out: {:?}", tx);
-                if let Some(node_id) = tx.addr_id.id() {
+                if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
-                        CompactNodeInfo::with_addr_and_id(tx.addr_id.addr(), node_id),
+                        CompactNodeInfo::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
@@ -421,7 +422,7 @@ impl Dht {
                 }
                 self.find_node_ops.retain(|op| !op.is_done());
                 self.msg_buffer.push_inbound(InboundMsg {
-                    addr_id: tx.addr_id,
+                    addr_opt_id: tx.addr_opt_id,
                     tx_id: Some(tx.tx_id),
                     msg: msg_buffer::Msg::Timeout,
                 });
@@ -497,12 +498,12 @@ mod tests {
     fn test_send_ping() -> Result<(), error::Error> {
         let id = node_id();
         let remote_addr = remote_addr();
-        let addr_id = AddrId::with_addr_and_id(remote_addr, Some(id));
+        let addr_opt_id = AddrOptId::with_addr_and_id(remote_addr, Some(id));
 
         let args = PingQueryArgs::with_id(id);
 
         let mut dht: Dht = Dht::with_config(new_config()?, std::iter::empty(), std::iter::empty())?;
-        let tx_id = dht.write_query(&args, addr_id, None).unwrap();
+        let tx_id = dht.write_query(&args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {

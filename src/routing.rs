@@ -11,7 +11,7 @@ use crate::{
     find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, CompactNodeInfo, Kind},
     msg_buffer,
-    node::{Addr, AddrId, Id},
+    node::{Addr, AddrOptId, Id},
     transaction,
 };
 use std::{
@@ -228,7 +228,7 @@ where
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
                 &PingQueryArgs::with_id(config.local_id),
-                AddrId::with_addr_and_id(
+                AddrOptId::with_addr_and_id(
                     node_to_ping.node_info.addr().into(),
                     Some(node_to_ping.node_info.id()),
                 ),
@@ -455,8 +455,8 @@ where
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .map(|a| AddrId::with_addr_and_id(a.addr(), Some(a.id())))
-            .chain(bootstrap_addrs.into_iter().map(|s| AddrId::with_addr(s)))
+            .map(|a| AddrOptId::with_addr_and_id(a.addr(), Some(a.id())))
+            .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr))
             .map(|n| n);
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
@@ -506,7 +506,7 @@ where
             .iter()
             .flat_map(|b| b.prioritized_nodes(now).copied())
             .collect::<Vec<_>>();
-        nodes.sort_by(|a, b| a.id().distance(id).cmp(&b.id().distance(id)));
+        nodes.sort_by_key(|a| a.id().distance(id));
         nodes.into_iter()
     }
 
@@ -663,7 +663,7 @@ pub(crate) enum RoutingTable {
 }
 
 impl RoutingTable {
-    pub(crate) fn try_insert_addrs<'a, I>(&mut self, addrs: I, now: Instant)
+    pub(crate) fn try_insert_node_infos<'a, I>(&mut self, addrs: I, now: Instant)
     where
         I: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
     {

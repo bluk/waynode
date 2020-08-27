@@ -8,7 +8,7 @@
 
 //! Transactions correlate a KRPC query with its response.
 
-use crate::{error::Error, node::AddrId};
+use crate::{error::Error, node::AddrOptId};
 use serde_bytes::ByteBuf;
 use std::{
     convert::{TryFrom, TryInto},
@@ -55,20 +55,20 @@ impl TryFrom<&ByteBuf> for Id {
 #[derive(Debug)]
 pub(crate) struct Transaction {
     pub(crate) tx_id: Id,
-    pub(crate) addr_id: AddrId<SocketAddr>,
+    pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
     pub(crate) deadline: Instant,
 }
 
 impl std::hash::Hash for Transaction {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.tx_id.hash(state);
-        self.addr_id.hash(state)
+        self.addr_opt_id.hash(state)
     }
 }
 
 impl Transaction {
     pub(crate) fn is_node_id_match(&self, other_node_id: Option<crate::node::Id>) -> bool {
-        self.addr_id
+        self.addr_opt_id
             .id()
             .map(|tx_node_id| {
                 other_node_id
@@ -114,7 +114,7 @@ impl Manager {
             .and_then(|tx_local_id| {
                 self.transactions
                     .iter()
-                    .position(|t| t.tx_id == tx_local_id && t.addr_id.addr() == addr)
+                    .position(|t| t.tx_id == tx_local_id && t.addr_opt_id.addr() == addr)
             })
             .map(|idx| self.transactions.remove(idx))
     }

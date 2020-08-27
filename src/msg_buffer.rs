@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
-    node::AddrId,
+    node::AddrOptId,
     transaction,
 };
 use bt_bencode::Value;
@@ -25,17 +25,17 @@ use std::{
 pub(crate) struct OutboundMsg {
     tx_id: Option<transaction::Id>,
     timeout: Duration,
-    pub(crate) addr_id: AddrId<SocketAddr>,
+    pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
     pub(crate) msg_data: Vec<u8>,
 }
 
 impl OutboundMsg {
     pub(crate) fn into_transaction(self) -> Option<transaction::Transaction> {
-        let addr_id = self.addr_id;
+        let addr_opt_id = self.addr_opt_id;
         let timeout = self.timeout;
         self.tx_id.map(|tx_id| transaction::Transaction {
             tx_id,
-            addr_id,
+            addr_opt_id,
             deadline: Instant::now() + timeout,
         })
     }
@@ -51,14 +51,14 @@ pub enum Msg {
 
 #[derive(Clone, Debug)]
 pub struct InboundMsg {
-    pub(crate) addr_id: AddrId<SocketAddr>,
+    pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
     pub(crate) tx_id: Option<transaction::Id>,
     pub(crate) msg: Msg,
 }
 
 impl InboundMsg {
-    pub fn addr_id(&self) -> AddrId<SocketAddr> {
-        self.addr_id
+    pub fn addr_opt_id(&self) -> AddrOptId<SocketAddr> {
+        self.addr_opt_id
     }
 
     pub fn tx_id(&self) -> Option<transaction::Id> {
@@ -97,29 +97,29 @@ impl Buffer {
     pub(crate) fn write_query<A, T>(
         &mut self,
         args: &T,
-        addr_id: A,
+        addr_opt_id: A,
         timeout: Duration,
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::Id, Error>
     where
         T: QueryArgs + fmt::Debug,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
         let tx_id = tx_manager.next_transaction_id();
 
-        let addr_id = addr_id.into();
+        let addr_opt_id = addr_opt_id.into();
 
         debug!(
-            "write_query tx_id={:?} method_name={:?} addr_id={:?} args={:?}",
+            "write_query tx_id={:?} method_name={:?} addr_opt_id={:?} args={:?}",
             tx_id,
             String::from_utf8(Vec::from(T::method_name())),
-            &addr_id,
+            &addr_opt_id,
             &args
         );
 
         self.outbound.push_back(OutboundMsg {
             tx_id: Some(tx_id),
-            addr_id,
+            addr_opt_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
@@ -136,15 +136,15 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<T>,
-        addr_id: A,
+        addr_opt_id: A,
     ) -> Result<(), Error>
     where
         T: RespVal,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id: addr_id.into(),
+            addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
                 t: &transaction_id,
@@ -160,15 +160,15 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         details: T,
-        addr_id: A,
+        addr_opt_id: A,
     ) -> Result<(), Error>
     where
         T: ErrorVal,
-        A: Into<AddrId<SocketAddr>>,
+        A: Into<AddrOptId<SocketAddr>>,
     {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id: addr_id.into(),
+            addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: Some(&details.to_value()),
                 t: &transaction_id,

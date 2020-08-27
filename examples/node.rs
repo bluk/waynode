@@ -152,7 +152,7 @@ fn main() -> io::Result<()> {
                                     match dht.write_resp(
                                         tx_id,
                                         Some(ping_resp),
-                                        inbound_msg.addr_id(),
+                                        inbound_msg.addr_opt_id(),
                                     ) {
                                         Ok(()) => {}
                                         Err(e) => error!("ping write_resp error: {:?}", e),
@@ -166,7 +166,7 @@ fn main() -> io::Result<()> {
                                             ErrorCode::MethodUnknown,
                                             method_name.to_string(),
                                         );
-                                    match dht.write_err(tx_id, error, inbound_msg.addr_id()) {
+                                    match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
@@ -179,7 +179,7 @@ fn main() -> io::Result<()> {
                                             ErrorCode::ProtocolError,
                                             String::from("method name not listed"),
                                         );
-                                    match dht.write_err(tx_id, error, inbound_msg.addr_id()) {
+                                    match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
