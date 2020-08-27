@@ -34,7 +34,6 @@ std::fmt::Binary
 #[macro_use]
 extern crate log;
 
-pub mod addr;
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
@@ -45,11 +44,10 @@ pub mod torrent;
 pub mod transaction;
 
 use crate::{
-    addr::SocketAddrId,
     find_node_op::FindNodeOp,
     krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
     msg_buffer::InboundMsg,
-    node::{AddrId, AddrIdT},
+    node::{AddrId, AddrIdT, SocketAddrId},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;

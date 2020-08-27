@@ -6,7 +6,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{addr::SocketAddrId, error::Error, node::AddrIdT};
+use crate::{
+    error::Error,
+    node::{AddrIdT, SocketAddrId},
+};
 use serde_bytes::ByteBuf;
 use std::{
     convert::{TryFrom, TryInto},

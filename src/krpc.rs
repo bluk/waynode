@@ -8,7 +8,7 @@
 
 //! KRPC messages are the protocol messages exchanged.
 
-use crate::{addr::CompactAddr, node::Id};
+use crate::{node::CompactAddr, node::Id};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::{collections::BTreeMap, convert::TryFrom};

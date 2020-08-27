@@ -7,9 +7,8 @@
 // except according to those terms.
 
 use crate::{
-    addr::{CompactAddressV4, CompactAddressV6},
     krpc::CompactNodeInfo,
-    node::Id,
+    node::{CompactAddressV4, CompactAddressV6, Id},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -316,8 +315,8 @@ mod tests {
 
     #[test]
     fn test_serde_find_node_response_values_one_node() -> Result<(), Error> {
-        use crate::addr::{CompactAddressV4, NodeIdGenerator};
-        use std::net::{Ipv4Addr, SocketAddrV4};
+        use crate::node::NodeIdGenerator;
+        use std::net::Ipv4Addr;
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234);
         let compact_addr = addr.to_compact_address();

@@ -7,9 +7,9 @@
 // except according to those terms.
 
 use crate::{
-    addr::SocketAddrId,
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
+    node::SocketAddrId,
     transaction,
 };
 use bt_bencode::Value;
