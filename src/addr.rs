@@ -6,17 +6,81 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, node::Id};
+use crate::{
+    error::Error,
+    node::{AddrId, AddrIdT, Id},
+};
 use rand::Rng;
-use std::convert::TryFrom;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use std::{
+    cmp::{Ord, PartialOrd},
+    convert::TryFrom,
+    fmt,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+};
 
-pub struct CompactNodeInfo<T: CompactAddr> {
-    pub id: Id,
-    pub addr: T,
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SocketAddrId {
+    V4(AddrId<SocketAddrV4>),
+    V6(AddrId<SocketAddrV6>),
 }
 
-pub trait CompactAddr {}
+impl AddrIdT for SocketAddrId {
+    type Addr = SocketAddr;
+
+    fn id(&self) -> Option<Id> {
+        match self {
+            SocketAddrId::V4(addr_id) => addr_id.id(),
+            SocketAddrId::V6(addr_id) => addr_id.id(),
+        }
+    }
+
+    fn addr(&self) -> SocketAddr {
+        match self {
+            SocketAddrId::V4(addr_id) => SocketAddr::V4(addr_id.addr()),
+            SocketAddrId::V6(addr_id) => SocketAddr::V6(addr_id.addr()),
+        }
+    }
+}
+
+impl From<AddrId<SocketAddr>> for SocketAddrId {
+    fn from(addr_id: AddrId<SocketAddr>) -> Self {
+        match addr_id.addr() {
+            SocketAddr::V4(addr) => SocketAddrId::V4(AddrId::with_addr_and_id(addr, addr_id.id())),
+            SocketAddr::V6(addr) => SocketAddrId::V6(AddrId::with_addr_and_id(addr, addr_id.id())),
+        }
+    }
+}
+
+impl From<AddrId<SocketAddrV4>> for SocketAddrId {
+    fn from(addr: AddrId<SocketAddrV4>) -> Self {
+        SocketAddrId::V4(addr)
+    }
+}
+
+impl From<AddrId<SocketAddrV6>> for SocketAddrId {
+    fn from(addr: AddrId<SocketAddrV6>) -> Self {
+        SocketAddrId::V6(addr)
+    }
+}
+
+impl From<SocketAddrV4> for SocketAddrId {
+    fn from(addr: SocketAddrV4) -> Self {
+        SocketAddrId::V4(AddrId::with_addr(addr))
+    }
+}
+
+impl From<SocketAddrV6> for SocketAddrId {
+    fn from(addr: SocketAddrV6) -> Self {
+        SocketAddrId::V6(AddrId::with_addr(addr))
+    }
+}
+
+pub trait CompactAddr:
+    fmt::Debug + Clone + Copy + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd + Into<SocketAddr>
+{
+}
+
+impl CompactAddr for SocketAddr {}
 
 pub trait CompactAddressV4: CompactAddr {
     fn to_compact_address(&self) -> [u8; 6];

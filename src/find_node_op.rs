@@ -7,24 +7,23 @@
 // except according to those terms.
 
 use crate::{
+    addr::SocketAddrId,
     error::Error,
     krpc::{
         find_node::{FindNodeQueryArgs, FindNodeRespValues},
         RespMsg,
     },
     msg_buffer,
-    node::{self, AddrId},
+    node::{self, AddrId, AddrIdT},
     transaction,
 };
 use bt_bencode::Value;
-use std::collections::BTreeSet;
-use std::convert::TryFrom;
-use std::net::SocketAddr;
+use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};
 
 #[derive(Debug)]
 struct PotentialAddrId {
     distance: Option<node::Id>,
-    addr_id: AddrId,
+    addr_id: SocketAddrId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -38,6 +37,7 @@ const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
 // TODO: Ping every possible node and don't use closest distances
+// TODO: Deal with IPv4 vs IPv6 and maintain two lists of closest_distances for each
 
 #[derive(Debug)]
 pub(crate) struct FindNodeOp {
@@ -55,7 +55,7 @@ impl FindNodeOp {
         potential_addr_ids: T,
     ) -> Self
     where
-        T: IntoIterator<Item = AddrId>,
+        T: IntoIterator<Item = SocketAddrId>,
     {
         let potential_addr_ids = potential_addr_ids
             .into_iter()
@@ -166,10 +166,7 @@ impl FindNodeOp {
                                 .iter()
                                 .map(|cn| PotentialAddrId {
                                     distance: Some(cn.id.distance(self.target_id)),
-                                    addr_id: AddrId::with_addr_and_id(
-                                        SocketAddr::V4(cn.addr),
-                                        cn.id,
-                                    ),
+                                    addr_id: AddrId::with_addr_and_id(cn.addr, Some(cn.id)).into(),
                                 })
                                 .filter(|potential_addr| {
                                     potential_addr

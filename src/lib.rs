@@ -22,6 +22,15 @@
 // http://bittorrent.org/beps/bep_0046.html
 // http://bittorrent.org/beps/bep_0051.html
 
+/*
+TODO: For Id and InfoHash:
+Binary number types provide Hex, Octal, Binary formatting (C-NUM-FMT)
+
+std::fmt::UpperHex
+std::fmt::LowerHex
+std::fmt::Octal
+std::fmt::Binary
+*/
 #[macro_use]
 extern crate log;
 
@@ -36,15 +45,18 @@ pub mod torrent;
 pub mod transaction;
 
 use crate::{
+    addr::SocketAddrId,
     find_node_op::FindNodeOp,
     krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
     msg_buffer::InboundMsg,
-    node::AddrId,
+    node::{AddrId, AddrIdT},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SendInfo {
@@ -71,7 +83,8 @@ pub struct Config {
 #[derive(Debug)]
 pub struct Dht {
     config: Config,
-    routing_table: routing::Table,
+    routing_table_v4: routing::Table<AddrId<SocketAddrV4>>,
+    routing_table_v6: routing::Table<AddrId<SocketAddrV6>>,
     tx_manager: transaction::Manager,
     msg_buffer: msg_buffer::Buffer,
 
@@ -79,30 +92,62 @@ pub struct Dht {
 }
 
 impl Dht {
-    pub fn with_config(config: Config, existing_addr_ids: &[AddrId]) -> Result<Self, error::Error> {
+    pub fn with_config<'a, A>(config: Config, existing_addr_ids: A) -> Result<Self, error::Error>
+    where
+        A: IntoIterator<Item = &'a SocketAddrId>,
+    {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let local_id = config.local_id;
         let client_version = config.client_version.clone();
         let now = Instant::now();
+        let mut existing_v4_addr_ids = Vec::new();
+        let mut existing_v6_addr_ids = Vec::new();
+
+        for existing_addr_id in existing_addr_ids.into_iter() {
+            match existing_addr_id {
+                SocketAddrId::V4(existing_addr_id) => {
+                    existing_v4_addr_ids.push(*existing_addr_id);
+                }
+                SocketAddrId::V6(existing_addr_id) => {
+                    existing_v6_addr_ids.push(*existing_addr_id);
+                }
+            }
+        }
+
         let mut dht = Self {
             config,
-            routing_table: routing::Table::new(
+            routing_table_v4: routing::Table::new(
                 local_id,
                 max_node_count_per_bucket,
-                existing_addr_ids,
+                existing_v4_addr_ids.clone(),
+                now,
+            ),
+            routing_table_v6: routing::Table::new(
+                local_id,
+                max_node_count_per_bucket,
+                existing_v6_addr_ids.clone(),
                 now,
             ),
             tx_manager: transaction::Manager::new(),
             msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
             find_node_ops: Vec::new(),
         };
-        dht.routing_table.find_node(
+        dht.routing_table_v4.find_node(
             dht.config.local_id,
             &dht.config,
             &mut dht.tx_manager,
             &mut dht.msg_buffer,
             &mut dht.find_node_ops,
-            &existing_addr_ids,
+            &existing_v4_addr_ids,
+            now,
+        )?;
+        dht.routing_table_v6.find_node(
+            dht.config.local_id,
+            &dht.config,
+            &mut dht.tx_manager,
+            &mut dht.msg_buffer,
+            &mut dht.find_node_ops,
+            &existing_v6_addr_ids,
             now,
         )?;
         Ok(dht)
@@ -128,7 +173,7 @@ impl Dht {
         if let Some(kind) = value.kind() {
             if let Some(tx) = value
                 .tx_id()
-                .and_then(|tx_id| self.tx_manager.find(tx_id, addr))
+                .and_then(|tx_id| self.tx_manager.remove(tx_id, addr))
             {
                 match kind {
                     Kind::Response => {
@@ -139,21 +184,48 @@ impl Dht {
                             && queried_node_id != Some(self.config.local_id)
                             && tx.is_node_id_match(queried_node_id)
                         {
-                            let routing_table_addr_id = if tx.addr_id.id().is_none() {
-                                queried_node_id.map(|queried_node_id| {
-                                    AddrId::with_addr_and_id(tx.addr_id.addr(), queried_node_id)
-                                })
-                            } else {
-                                None
-                            };
-                            self.routing_table.on_msg_received(
-                                routing_table_addr_id.unwrap_or(tx.addr_id),
-                                &kind,
-                                &self.config,
-                                &mut self.tx_manager,
-                                &mut self.msg_buffer,
-                                now,
-                            )?;
+                            match tx.addr_id {
+                                SocketAddrId::V4(addr_id) => {
+                                    let routing_table_addr_id = if addr_id.id().is_none() {
+                                        queried_node_id.map(|queried_node_id| {
+                                            AddrId::with_addr_and_id(
+                                                addr_id.addr(),
+                                                Some(queried_node_id),
+                                            )
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    self.routing_table_v4.on_msg_received(
+                                        routing_table_addr_id.unwrap_or(addr_id),
+                                        &kind,
+                                        &self.config,
+                                        &mut self.tx_manager,
+                                        &mut self.msg_buffer,
+                                        now,
+                                    )?;
+                                }
+                                SocketAddrId::V6(addr_id) => {
+                                    let routing_table_addr_id = if addr_id.id().is_none() {
+                                        queried_node_id.map(|queried_node_id| {
+                                            AddrId::with_addr_and_id(
+                                                addr_id.addr(),
+                                                Some(queried_node_id),
+                                            )
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    self.routing_table_v6.on_msg_received(
+                                        routing_table_addr_id.unwrap_or(addr_id),
+                                        &kind,
+                                        &self.config,
+                                        &mut self.tx_manager,
+                                        &mut self.msg_buffer,
+                                        now,
+                                    )?;
+                                }
+                            }
                             debug!("Received response for tx_id={:?}", tx.tx_id);
                             for op in &mut self.find_node_ops {
                                 op.handle(
@@ -187,14 +259,28 @@ impl Dht {
                         }
                     }
                     Kind::Error => {
-                        self.routing_table.on_msg_received(
-                            tx.addr_id,
-                            &kind,
-                            &self.config,
-                            &mut self.tx_manager,
-                            &mut self.msg_buffer,
-                            now,
-                        )?;
+                        match tx.addr_id {
+                            SocketAddrId::V4(addr_id) => {
+                                self.routing_table_v4.on_msg_received(
+                                    addr_id,
+                                    &kind,
+                                    &self.config,
+                                    &mut self.tx_manager,
+                                    &mut self.msg_buffer,
+                                    now,
+                                )?;
+                            }
+                            SocketAddrId::V6(addr_id) => {
+                                self.routing_table_v6.on_msg_received(
+                                    addr_id,
+                                    &kind,
+                                    &self.config,
+                                    &mut self.tx_manager,
+                                    &mut self.msg_buffer,
+                                    now,
+                                )?;
+                            }
+                        }
                         debug!("Received error for tx_local_id={:?}", tx.tx_id);
                         for op in &mut self.find_node_ops {
                             op.handle(
@@ -233,14 +319,31 @@ impl Dht {
                 match kind {
                     Kind::Query => {
                         debug!("Recieved query. addr={}", addr);
-                        let addr_id = QueryMsg::querying_node_id(&value).map(|id| AddrId::with_addr_and_id(addr,id)).unwrap_or_else(|| AddrId::with_addr(addr));
-                        self.routing_table.on_msg_received(addr_id, &kind, &self.config, &mut
+                        match addr {
+                            SocketAddr::V4(addr) => {
+                        let addr_id = AddrId::with_addr_and_id(addr, QueryMsg::querying_node_id(&value));
+                        self.routing_table_v4.on_msg_received(addr_id, &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         self.msg_buffer.push_inbound(InboundMsg {
-                            addr_id,
+                            addr_id: SocketAddrId::V4(addr_id),
                             tx_id: None,
                             msg: msg_buffer::Msg::Query(value),
                         });
+
+                            }
+                            SocketAddr::V6(addr) => {
+                        let addr_id = AddrId::with_addr_and_id(addr, QueryMsg::querying_node_id(&value));
+                        self.routing_table_v6.on_msg_received(addr_id, &kind, &self.config, &mut
+                            self.tx_manager, &mut self.msg_buffer, now)?;
+                        self.msg_buffer.push_inbound(InboundMsg {
+                            addr_id: SocketAddrId::V6(addr_id),
+                            tx_id: None,
+                            msg: msg_buffer::Msg::Query(value),
+                        });
+
+                            }
+
+                        }
                     }
                     // unexpected
                     Kind::Response | Kind::Error | Kind::Unknown(_) => error!(
@@ -267,14 +370,15 @@ impl Dht {
         self.msg_buffer.pop_inbound()
     }
 
-    pub fn write_query<T>(
+    pub fn write_query<A, T>(
         &mut self,
         args: &T,
-        addr_id: AddrId,
+        addr_id: A,
         timeout: Option<Duration>,
     ) -> Result<transaction::Id, error::Error>
     where
         T: QueryArgs + std::fmt::Debug,
+        A: Into<SocketAddrId>,
     {
         self.msg_buffer.write_query(
             args,
@@ -284,26 +388,28 @@ impl Dht {
         )
     }
 
-    pub fn write_resp<T>(
+    pub fn write_resp<A, T>(
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<T>,
-        addr_id: AddrId,
+        addr_id: A,
     ) -> Result<(), error::Error>
     where
         T: RespVal,
+        A: Into<SocketAddrId>,
     {
         self.msg_buffer.write_resp(transaction_id, resp, addr_id)
     }
 
-    pub fn write_err<T>(
+    pub fn write_err<A, T>(
         &mut self,
         transaction_id: &ByteBuf,
         details: T,
-        addr_id: AddrId,
+        addr_id: A,
     ) -> Result<(), error::Error>
     where
         T: ErrorVal,
+        A: Into<SocketAddrId>,
     {
         self.msg_buffer.write_err(transaction_id, details, addr_id)
     }
@@ -327,18 +433,22 @@ impl Dht {
     }
 
     pub fn timeout(&self) -> Option<Duration> {
-        [self.tx_manager.timeout(), self.routing_table.timeout()]
-            .iter()
-            .filter_map(|&deadline| deadline)
-            .min()
-            .map(|min_deadline| {
-                let now = Instant::now();
-                if now > min_deadline {
-                    Duration::from_secs(0)
-                } else {
-                    min_deadline - now
-                }
-            })
+        [
+            self.tx_manager.timeout(),
+            self.routing_table_v4.timeout(),
+            self.routing_table_v6.timeout(),
+        ]
+        .iter()
+        .filter_map(|&deadline| deadline)
+        .min()
+        .map(|min_deadline| {
+            let now = Instant::now();
+            if now > min_deadline {
+                Duration::from_secs(0)
+            } else {
+                min_deadline - now
+            }
+        })
     }
 
     pub fn on_timeout(&mut self) -> Result<(), error::Error> {
@@ -350,13 +460,26 @@ impl Dht {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
                 debug!("tx timed out: {:?}", tx);
-                self.routing_table.on_resp_timeout(
-                    tx.addr_id,
-                    &self.config,
-                    &mut self.tx_manager,
-                    &mut self.msg_buffer,
-                    now,
-                )?;
+                match tx.addr_id {
+                    SocketAddrId::V4(addr_id) => {
+                        self.routing_table_v4.on_resp_timeout(
+                            addr_id,
+                            &self.config,
+                            &mut self.tx_manager,
+                            &mut self.msg_buffer,
+                            now,
+                        )?;
+                    }
+                    SocketAddrId::V6(addr_id) => {
+                        self.routing_table_v6.on_resp_timeout(
+                            addr_id,
+                            &self.config,
+                            &mut self.tx_manager,
+                            &mut self.msg_buffer,
+                            now,
+                        )?;
+                    }
+                }
                 for op in &mut self.find_node_ops {
                     op.handle(
                         &tx,
@@ -375,7 +498,14 @@ impl Dht {
             }
         }
 
-        self.routing_table.on_timeout(
+        self.routing_table_v4.on_timeout(
+            &self.config,
+            &mut self.tx_manager,
+            &mut self.msg_buffer,
+            &mut self.find_node_ops,
+            now,
+        )?;
+        self.routing_table_v6.on_timeout(
             &self.config,
             &mut self.tx_manager,
             &mut self.msg_buffer,
@@ -388,8 +518,12 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors(&self, id: node::Id) -> impl Iterator<Item = AddrId> {
-        self.routing_table.find_neighbors(id, Instant::now())
+    pub fn find_neighbors_v4(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
+        self.routing_table_v4.find_neighbors(id, Instant::now())
+    }
+
+    pub fn find_neighbors_v6(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
+        self.routing_table_v6.find_neighbors(id, Instant::now())
     }
 }
 
@@ -433,7 +567,7 @@ mod tests {
     fn test_send_ping() -> Result<(), error::Error> {
         let id = node_id();
         let remote_addr = remote_addr();
-        let addr_id = AddrId::with_addr_and_id(remote_addr, id);
+        let addr_id = AddrId::with_addr_and_id(remote_addr, Some(id));
 
         let args = PingQueryArgs::with_id(id);
 
@@ -461,8 +595,11 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut dht: Dht =
-            Dht::with_config(new_config()?, &[AddrId::with_addr(bootstrap_remote_addr)])?;
+        let addr_id = match bootstrap_remote_addr {
+            SocketAddr::V4(addr) => SocketAddrId::V4(AddrId::with_addr(addr)),
+            SocketAddr::V6(addr) => SocketAddrId::V6(AddrId::with_addr(addr)),
+        };
+        let mut dht: Dht = Dht::with_config(new_config()?, &[addr_id])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {

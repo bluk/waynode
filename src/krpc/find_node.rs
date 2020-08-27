@@ -7,7 +7,8 @@
 // except according to those terms.
 
 use crate::{
-    addr::{CompactAddressV4, CompactAddressV6, CompactNodeInfo},
+    addr::{CompactAddressV4, CompactAddressV6},
+    krpc::CompactNodeInfo,
     node::Id,
 };
 use bt_bencode::Value;

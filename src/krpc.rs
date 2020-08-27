@@ -8,11 +8,10 @@
 
 //! KRPC messages are the protocol messages exchanged.
 
-use crate::node::Id;
+use crate::{addr::CompactAddr, node::Id};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
-use std::collections::BTreeMap;
-use std::convert::TryFrom;
+use std::{collections::BTreeMap, convert::TryFrom};
 
 /// Type of KRPC message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,6 +214,14 @@ pub trait ErrorVal {
 
     /// Represents the arguments as a Bencoded Value.
     fn to_value(&self) -> Value;
+}
+
+pub struct CompactNodeInfo<T>
+where
+    T: CompactAddr,
+{
+    pub id: Id,
+    pub addr: T,
 }
 
 pub mod announce_peer;

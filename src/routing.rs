@@ -11,12 +11,14 @@ use crate::{
     find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, Kind},
     msg_buffer,
-    node::{AddrId, Id},
+    node::{AddrIdT, Id},
     transaction,
 };
-use std::cmp::Ordering;
-use std::ops::RangeInclusive;
-use std::time::{Duration, Instant};
+use std::{
+    cmp::Ordering,
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, PartialEq)]
 enum NodeState {
@@ -26,18 +28,24 @@ enum NodeState {
 }
 
 #[derive(Debug)]
-struct Node {
-    addr_id: AddrId,
+struct Node<A>
+where
+    A: AddrIdT,
+{
+    addr_id: A,
     missing_responses: u8,
     next_response_deadline: Option<Instant>,
     next_query_deadline: Option<Instant>,
     last_pinged: Option<Instant>,
 }
 
-impl Node {
+impl<A> Node<A>
+where
+    A: AddrIdT,
+{
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-    fn with_addr_id(addr_id: AddrId) -> Self {
+    fn with_addr_id(addr_id: A) -> Self {
         Self {
             addr_id,
             missing_responses: 0,
@@ -123,14 +131,20 @@ impl Node {
 const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug)]
-struct Bucket {
+struct Bucket<A>
+where
+    A: AddrIdT,
+{
     range: RangeInclusive<Id>,
-    nodes: Vec<Node>,
-    replacement_nodes: Vec<Node>,
+    nodes: Vec<Node<A>>,
+    replacement_nodes: Vec<Node<A>>,
     expected_change_deadline: Instant,
 }
 
-impl Bucket {
+impl<A> Bucket<A>
+where
+    A: AddrIdT,
+{
     fn new(range: RangeInclusive<Id>, max_nodes_per_bucket: usize) -> Self {
         Bucket {
             range,
@@ -145,7 +159,7 @@ impl Bucket {
         self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
     }
 
-    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: AddrId, now: Instant) {
+    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: A, now: Instant) {
         if self.nodes.len() < max_nodes_per_bucket {
             let node = Node::with_addr_id(addr_id);
             self.nodes.push(node);
@@ -219,7 +233,7 @@ impl Bucket {
     fn on_msg_received<'a>(
         &mut self,
         max_nodes_per_bucket: usize,
-        addr_id: AddrId,
+        addr_id: A,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
@@ -297,7 +311,7 @@ impl Bucket {
 
     fn on_resp_timeout(
         &mut self,
-        addr_id: AddrId,
+        addr_id: A,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
@@ -327,7 +341,7 @@ impl Bucket {
         Ok(())
     }
 
-    fn split(self, max_nodes_per_bucket: usize) -> (Bucket, Bucket) {
+    fn split(self, max_nodes_per_bucket: usize) -> (Bucket<A>, Bucket<A>) {
         let middle = self.range.end().middle(*self.range.start());
 
         let mut lower_bucket =
@@ -361,7 +375,7 @@ impl Bucket {
         (lower_bucket, upper_bucket)
     }
 
-    fn prioritized_addr_ids(&self, now: Instant) -> impl Iterator<Item = &AddrId> {
+    fn prioritized_addr_ids(&self, now: Instant) -> impl Iterator<Item = &A> {
         self.nodes
             .iter()
             .filter(move |n| {
@@ -398,28 +412,37 @@ impl Bucket {
 const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug)]
-pub(crate) struct Table {
+pub(crate) struct Table<A>
+where
+    A: AddrIdT,
+{
     pivot: Id,
-    buckets: Vec<Bucket>,
+    buckets: Vec<Bucket<A>>,
     max_nodes_per_bucket: usize,
     find_pivot_id_deadline: Instant,
 }
 
-impl Table {
-    pub(crate) fn new(
+impl<A> Table<A>
+where
+    A: AddrIdT,
+{
+    pub(crate) fn new<I>(
         pivot: Id,
         max_nodes_per_bucket: usize,
-        existing_addr_ids: &[AddrId],
+        existing_addr_ids: I,
         now: Instant,
-    ) -> Self {
+    ) -> Self
+    where
+        I: IntoIterator<Item = A>,
+    {
         let mut table = Self {
             pivot,
             buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes_per_bucket)],
             max_nodes_per_bucket,
             find_pivot_id_deadline: now + FIND_LOCAL_ID_INTERVAL,
         };
-        for addr_id in existing_addr_ids {
-            table.try_insert(*addr_id, now);
+        for addr_id in existing_addr_ids.into_iter() {
+            table.try_insert(addr_id, now);
         }
         table
     }
@@ -431,20 +454,21 @@ impl Table {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
-        bootstrap_nodes: &[AddrId],
+        bootstrap_nodes: &[A],
         now: Instant,
     ) -> Result<(), Error> {
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .chain(bootstrap_nodes.iter().copied());
+            .chain(bootstrap_nodes.iter().cloned())
+            .map(|n| n.into());
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);
         Ok(())
     }
 
-    fn try_insert(&mut self, addr_id: AddrId, now: Instant) {
+    fn try_insert(&mut self, addr_id: A, now: Instant) {
         if let Some(node_id) = addr_id.id() {
             if node_id == self.pivot {
                 return;
@@ -478,7 +502,7 @@ impl Table {
         }
     }
 
-    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> impl Iterator<Item = AddrId> {
+    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> impl Iterator<Item = A> {
         let mut nodes = self
             .buckets
             .iter()
@@ -495,11 +519,11 @@ impl Table {
 
     pub(crate) fn on_msg_received<'a>(
         &mut self,
-        addr_id: AddrId,
+        addr_id: A,
         kind: &Kind<'a>,
         config: &crate::Config,
-        tx_manager: &mut crate::transaction::Manager,
-        msg_buffer: &mut crate::msg_buffer::Buffer,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
         if let Some(node_id) = addr_id.id() {
@@ -562,13 +586,13 @@ impl Table {
 
     pub(crate) fn on_resp_timeout(
         &mut self,
-        addr_id: AddrId,
+        addr_id: A,
         config: &crate::Config,
-        tx_manager: &mut crate::transaction::Manager,
-        msg_buffer: &mut crate::msg_buffer::Buffer,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(node_id) = addr_id.id() {
+        if let Some(node_id) = addr_id.into().id() {
             let bucket = self
                 .buckets
                 .iter_mut()
@@ -644,10 +668,12 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::AddrId;
+    use std::net::SocketAddrV4;
 
     #[test]
     fn test_split_bucket() {
-        let bucket = Bucket::new(Id::min()..=Id::max(), 8);
+        let bucket: Bucket<AddrId<SocketAddrV4>> = Bucket::new(Id::min()..=Id::max(), 8);
         let (first_bucket, second_bucket) = bucket.split(8);
         assert_eq!(
             first_bucket.range,

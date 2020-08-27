@@ -7,8 +7,9 @@
 // except according to those terms.
 
 use crate::{
-    addr::{CompactAddressV4, CompactAddressV6, CompactNodeInfo},
+    addr::{CompactAddressV4, CompactAddressV6},
     error::Error,
+    krpc::CompactNodeInfo,
     node::Id,
     torrent::InfoHash,
 };

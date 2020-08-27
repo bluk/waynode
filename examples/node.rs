@@ -74,7 +74,7 @@ fn main() -> io::Result<()> {
     .expect("addresses to resolve")
     .into_iter()
     .flatten()
-    .map(|a| sloppy::node::AddrId::with_addr(a))
+    .map(|a| sloppy::node::AddrId::with_addr(a).into())
     .collect::<Vec<_>>();
 
     let mut dht: Dht = Dht::with_config(
@@ -152,7 +152,7 @@ fn main() -> io::Result<()> {
                                 if let Some(tx_id) = msg.tx_id() {
                                     match dht.write_resp(
                                         tx_id,
-                                        Some(ping_resp.into()),
+                                        Some(ping_resp),
                                         inbound_msg.addr_id(),
                                     ) {
                                         Ok(()) => {}

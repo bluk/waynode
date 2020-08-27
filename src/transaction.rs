@@ -6,11 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, node::AddrId};
+use crate::{addr::SocketAddrId, error::Error, node::AddrIdT};
 use serde_bytes::ByteBuf;
-use std::convert::{TryFrom, TryInto};
-use std::net::SocketAddr;
-use std::time::Instant;
+use std::{
+    convert::{TryFrom, TryInto},
+    net::SocketAddr,
+    time::Instant,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct Id(u16);
@@ -44,7 +46,7 @@ impl TryFrom<&ByteBuf> for Id {
 #[derive(Debug)]
 pub(crate) struct Transaction {
     pub(crate) tx_id: Id,
-    pub(crate) addr_id: AddrId,
+    pub(crate) addr_id: SocketAddrId,
     pub(crate) deadline: Instant,
 }
 
@@ -97,7 +99,7 @@ impl Manager {
         self.transactions.iter().map(|t| t.deadline).min()
     }
 
-    pub(crate) fn find(&mut self, tx_id: &ByteBuf, addr: SocketAddr) -> Option<Transaction> {
+    pub(crate) fn remove(&mut self, tx_id: &ByteBuf, addr: SocketAddr) -> Option<Transaction> {
         Id::try_from(tx_id)
             .ok()
             .and_then(|tx_local_id| {

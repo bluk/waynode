@@ -8,12 +8,17 @@
 
 //! A node is a client/server which implements the DHT protocol.
 
-use crate::error::Error;
+use crate::{
+    addr::{CompactAddr, SocketAddrId},
+    error::Error,
+};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::convert::TryFrom;
-use std::fmt;
-use std::net::SocketAddr;
+use std::{
+    cmp::Ordering,
+    convert::TryFrom,
+    fmt,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+};
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 /// Every node is addressed via a 160-bit identifier.
@@ -280,6 +285,16 @@ impl IdBytes for [u8; 20] {
     }
 }
 
+pub trait AddrIdT:
+    Clone + Copy + fmt::Debug + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd + Into<SocketAddrId>
+{
+    type Addr: CompactAddr;
+
+    fn addr(&self) -> Self::Addr;
+
+    fn id(&self) -> Option<Id>;
+}
+
 /// A node's socket address and optional Id.
 ///
 /// In order to send messages to other nodes, a socket address is required.
@@ -289,63 +304,119 @@ impl IdBytes for [u8; 20] {
 /// Internally, a node must have both a socket address and an Id to be added to
 /// the DHT routing table. Queried nodes which reply with an Id which does not
 /// match the expected Id may have their responses dropped.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct AddrId {
-    addr: SocketAddr,
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AddrId<A>
+where
+    A: CompactAddr,
+{
+    addr: A,
     id: Option<Id>,
 }
 
-impl AddrId {
+impl<A> AddrId<A>
+where
+    A: CompactAddr,
+{
     /// Instantiate with only a socket address.
-    pub fn with_addr(addr: SocketAddr) -> Self {
+    pub fn with_addr(addr: A) -> Self {
         Self { addr, id: None }
     }
 
     /// Instantiate with a socket address and an Id.
-    pub fn with_addr_and_id(addr: SocketAddr, id: Id) -> Self {
-        Self { addr, id: Some(id) }
+    pub fn with_addr_and_id(addr: A, id: Option<Id>) -> Self {
+        Self { addr, id }
     }
+}
+
+impl AddrIdT for AddrId<SocketAddrV4> {
+    type Addr = SocketAddrV4;
 
     /// Returns the optional node Id.
-    pub fn id(&self) -> Option<Id> {
+    fn id(&self) -> Option<Id> {
         self.id
     }
 
     /// Returns the socket address.
-    pub fn addr(&self) -> SocketAddr {
+    fn addr(&self) -> SocketAddrV4 {
         self.addr
     }
 }
 
-impl AddrId {
-    // use crate::{addr::NodeIdGenerator, node::Id};
-    // use serde::{Deserialize, Serialize};
-    // use std::net::{SocketAddr, ToSocketAddrs};
-    // pub(crate) fn is_valid_node_id(&self) -> bool {
-    //     if let Some(id) = self.node_id.as_ref() {
-    //         match self.addr {
-    //             Addr::HostPort(ref host) => {
-    //                 let addrs = host.to_socket_addrs();
-    //                 match addrs {
-    //                     Ok(mut addrs) => match addrs.next() {
-    //                         Some(addr) => match addr {
-    //                             SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-    //                             SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-    //                         },
-    //                         None => return false,
-    //                     },
-    //                     Err(_) => return false,
-    //                 }
-    //             }
-    //             Addr::SocketAddr(addr) => match addr {
-    //                 SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
-    //                 SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
-    //             },
-    //         }
-    //     }
-    //     false
-    // }
+impl From<SocketAddrV4> for AddrId<SocketAddrV4> {
+    fn from(addr: SocketAddrV4) -> Self {
+        AddrId::with_addr(addr)
+    }
 }
+
+impl AddrIdT for AddrId<SocketAddrV6> {
+    type Addr = SocketAddrV6;
+
+    /// Returns the optional node Id.
+    fn id(&self) -> Option<Id> {
+        self.id
+    }
+
+    /// Returns the socket address.
+    fn addr(&self) -> SocketAddrV6 {
+        self.addr
+    }
+}
+
+impl From<SocketAddrV6> for AddrId<SocketAddrV6> {
+    fn from(addr: SocketAddrV6) -> Self {
+        AddrId::with_addr(addr)
+    }
+}
+
+impl AddrIdT for AddrId<SocketAddr> {
+    type Addr = SocketAddr;
+
+    /// Returns the optional node Id.
+    fn id(&self) -> Option<Id> {
+        self.id
+    }
+
+    /// Returns the socket address.
+    fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
+impl From<SocketAddr> for AddrId<SocketAddr> {
+    fn from(addr: SocketAddr) -> Self {
+        AddrId::with_addr(addr)
+    }
+}
+
+// impl AddrId {
+// use crate::{addr::NodeIdGenerator, node::Id};
+// use serde::{Deserialize, Serialize};
+// use std::net::{SocketAddr, ToSocketAddrs};
+// pub(crate) fn is_valid_node_id(&self) -> bool {
+//     if let Some(id) = self.node_id.as_ref() {
+//         match self.addr {
+//             Addr::HostPort(ref host) => {
+//                 let addrs = host.to_socket_addrs();
+//                 match addrs {
+//                     Ok(mut addrs) => match addrs.next() {
+//                         Some(addr) => match addr {
+//                             SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+//                             SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+//                         },
+//                         None => return false,
+//                     },
+//                     Err(_) => return false,
+//                 }
+//             }
+//             Addr::SocketAddr(addr) => match addr {
+//                 SocketAddr::V4(addr) => return addr.ip().is_valid_node_id(id),
+//                 SocketAddr::V6(addr) => return addr.ip().is_valid_node_id(id),
+//             },
+//         }
+//     }
+//     false
+// }
+// }
 
 #[cfg(test)]
 mod test {
