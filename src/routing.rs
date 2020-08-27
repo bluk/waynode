@@ -16,7 +16,7 @@ use crate::{
 };
 use std::{
     cmp::Ordering,
-    net::SocketAddr,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::RangeInclusive,
     time::{Duration, Instant},
 };
@@ -428,41 +428,32 @@ impl<A> Table<A>
 where
     A: Addr + Into<SocketAddr>,
 {
-    pub(crate) fn new<I>(
-        pivot: Id,
-        max_nodes_per_bucket: usize,
-        existing_addr_ids: I,
-        now: Instant,
-    ) -> Self
-    where
-        I: IntoIterator<Item = AddrId<A>>,
-    {
-        let mut table = Self {
+    pub(crate) fn new(pivot: Id, max_nodes_per_bucket: usize, now: Instant) -> Self {
+        Self {
             pivot,
             buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes_per_bucket)],
             max_nodes_per_bucket,
             find_pivot_id_deadline: now + FIND_LOCAL_ID_INTERVAL,
-        };
-        for addr_id in existing_addr_ids.into_iter() {
-            table.try_insert(addr_id, now);
         }
-        table
     }
 
-    pub(crate) fn find_node(
+    pub(crate) fn find_node<I>(
         &mut self,
         target_id: Id,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
-        bootstrap_nodes: &[AddrId<A>],
+        bootstrap_nodes: I,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = AddrId<A>>,
+    {
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .chain(bootstrap_nodes.iter().cloned())
+            .chain(bootstrap_nodes.into_iter())
             .map(|n| n);
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
@@ -504,7 +495,7 @@ where
         }
     }
 
-    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> impl Iterator<Item = AddrId<A>> {
+    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>> {
         let mut nodes = self
             .buckets
             .iter()
@@ -628,7 +619,7 @@ where
                 tx_manager,
                 msg_buffer,
                 find_node_ops,
-                &[],
+                std::iter::empty(),
                 now,
             )?;
             self.find_pivot_id_deadline = now + FIND_LOCAL_ID_INTERVAL;
@@ -654,7 +645,7 @@ where
                 tx_manager,
                 msg_buffer,
                 find_node_ops,
-                &[],
+                std::iter::empty(),
                 now,
             )?;
             debug!(
@@ -664,6 +655,241 @@ where
             );
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum RoutingTable {
+    Ipv4(Table<SocketAddrV4>),
+    Ipv6(Table<SocketAddrV6>),
+    Ipv4AndIpv6(Table<SocketAddrV4>, Table<SocketAddrV6>),
+}
+
+impl RoutingTable {
+    pub(crate) fn try_insert_addrs<'a, I>(&mut self, addrs: I, now: Instant)
+    where
+        I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
+    {
+        for existing_addr_id in addrs.into_iter() {
+            match existing_addr_id.addr() {
+                SocketAddr::V4(existing_addr) => match self {
+                    RoutingTable::Ipv4(routing_table)
+                    | RoutingTable::Ipv4AndIpv6(routing_table, _) => routing_table.try_insert(
+                        AddrId::with_addr_and_id(existing_addr, existing_addr_id.id()),
+                        now,
+                    ),
+                    RoutingTable::Ipv6(_) => {}
+                },
+                SocketAddr::V6(existing_addr) => match self {
+                    RoutingTable::Ipv4(_) => {}
+                    RoutingTable::Ipv6(routing_table)
+                    | RoutingTable::Ipv4AndIpv6(_, routing_table) => routing_table.try_insert(
+                        AddrId::with_addr_and_id(existing_addr, existing_addr_id.id()),
+                        now,
+                    ),
+                },
+            }
+        }
+    }
+
+    pub(crate) fn find_node<I>(
+        &mut self,
+        target_id: Id,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        find_node_ops: &mut Vec<FindNodeOp>,
+        bootstrap_addr_ids: I,
+        now: Instant,
+    ) -> Result<(), Error>
+    where
+        // TODO: Change bootstrap_addr_ids to just SocketAddr
+        I: IntoIterator<Item = AddrId<SocketAddr>>,
+    {
+        let mut ipv4_addr_ids = Vec::new();
+        let mut ipv6_addr_ids = Vec::new();
+        for addr_id in bootstrap_addr_ids.into_iter() {
+            match addr_id.addr() {
+                SocketAddr::V4(addr) => {
+                    ipv4_addr_ids.push(AddrId::with_addr_and_id(addr, addr_id.id()));
+                }
+                SocketAddr::V6(addr) => {
+                    ipv6_addr_ids.push(AddrId::with_addr_and_id(addr, addr_id.id()));
+                }
+            }
+        }
+        match self {
+            RoutingTable::Ipv4(routing_table) => routing_table.find_node(
+                target_id,
+                &config,
+                tx_manager,
+                msg_buffer,
+                find_node_ops,
+                ipv4_addr_ids,
+                now,
+            ),
+            RoutingTable::Ipv6(routing_table) => routing_table.find_node(
+                target_id,
+                &config,
+                tx_manager,
+                msg_buffer,
+                find_node_ops,
+                ipv6_addr_ids,
+                now,
+            ),
+            RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
+                routing_table_v4.find_node(
+                    config.local_id,
+                    &config,
+                    tx_manager,
+                    msg_buffer,
+                    find_node_ops,
+                    ipv4_addr_ids,
+                    now,
+                )?;
+                routing_table_v6.find_node(
+                    config.local_id,
+                    &config,
+                    tx_manager,
+                    msg_buffer,
+                    find_node_ops,
+                    ipv6_addr_ids,
+                    now,
+                )?;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn on_msg_received<'a>(
+        &mut self,
+        addr_id: AddrId<SocketAddr>,
+        kind: &Kind<'a>,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), Error> {
+        match addr_id.addr() {
+            SocketAddr::V4(addr) => match self {
+                RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
+                    routing_table.on_msg_received(
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        kind,
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
+                }
+                RoutingTable::Ipv6(_) => {}
+            },
+            SocketAddr::V6(addr) => match self {
+                RoutingTable::Ipv4(_) => {}
+                RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
+                    routing_table.on_msg_received(
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        kind,
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
+                }
+            },
+        }
+        Ok(())
+    }
+
+    pub(crate) fn on_resp_timeout(
+        &mut self,
+        addr_id: AddrId<SocketAddr>,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        now: Instant,
+    ) -> Result<(), crate::error::Error> {
+        match addr_id.addr() {
+            SocketAddr::V4(addr) => match self {
+                RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
+                    routing_table.on_resp_timeout(
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
+                }
+                RoutingTable::Ipv6(_) => {}
+            },
+            SocketAddr::V6(addr) => match self {
+                RoutingTable::Ipv4(_) => {}
+                RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
+                    routing_table.on_resp_timeout(
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        now,
+                    )?;
+                }
+            },
+        }
+        Ok(())
+    }
+
+    pub(crate) fn timeout(&self) -> Option<Instant> {
+        match self {
+            RoutingTable::Ipv4(routing_table) => routing_table.timeout(),
+            RoutingTable::Ipv6(routing_table) => routing_table.timeout(),
+            RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
+                [routing_table_v4.timeout(), routing_table_v6.timeout()]
+                    .iter()
+                    .filter_map(|&deadline| deadline)
+                    .min()
+            }
+        }
+    }
+
+    pub(crate) fn on_timeout(
+        &mut self,
+        config: &crate::Config,
+        tx_manager: &mut transaction::Manager,
+        msg_buffer: &mut msg_buffer::Buffer,
+        find_node_ops: &mut Vec<FindNodeOp>,
+        now: Instant,
+    ) -> Result<(), Error> {
+        match self {
+            RoutingTable::Ipv4(routing_table) => {
+                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)
+            }
+            RoutingTable::Ipv6(routing_table) => {
+                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)
+            }
+            RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
+                routing_table_v4.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)?;
+                routing_table_v6.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)?;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn find_neighbors_ipv4(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
+        match self {
+            RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
+                routing_table.find_neighbors(id, Instant::now())
+            }
+            RoutingTable::Ipv6(_) => Vec::new().into_iter(),
+        }
+    }
+
+    pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
+        match self {
+            RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
+                routing_table.find_neighbors(id, Instant::now())
+            }
+            RoutingTable::Ipv4(_) => Vec::new().into_iter(),
+        }
     }
 }
 

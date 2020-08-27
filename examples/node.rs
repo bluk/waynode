@@ -84,8 +84,10 @@ fn main() -> io::Result<()> {
             default_query_timeout: Duration::from_secs(30),
             is_read_only_node: true,
             max_node_count_per_bucket: 10,
+            supported_addr: sloppy::SupportedAddr::Ipv4AndIpv6,
         },
         &bootstrap_addrs[..],
+        bootstrap_addrs.clone(),
     )
     .expect("dht to bootstrap successfully");
     let dht_token = Token(0);
