@@ -8,8 +8,8 @@
 
 use crate::{
     error::Error,
-    krpc::CompactNodeInfo,
-    node::{CompactAddressV4, CompactAddressV6, Id},
+    krpc::{CompactAddrV4Info, CompactAddrV6Info, CompactNodeInfo},
+    node::Id,
     torrent::InfoHash,
 };
 use bt_bencode::Value;

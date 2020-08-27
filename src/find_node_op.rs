@@ -13,7 +13,7 @@ use crate::{
         RespMsg,
     },
     msg_buffer,
-    node::{self, AddrId, AddrIdT, SocketAddrId},
+    node::{self, AddrId, NodeAddrId},
     transaction,
 };
 use bt_bencode::Value;
@@ -22,7 +22,7 @@ use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};
 #[derive(Debug)]
 struct PotentialAddrId {
     distance: Option<node::Id>,
-    addr_id: SocketAddrId,
+    addr_id: NodeAddrId<SocketAddr>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,7 +54,7 @@ impl FindNodeOp {
         potential_addr_ids: T,
     ) -> Self
     where
-        T: IntoIterator<Item = SocketAddrId>,
+        T: IntoIterator<Item = NodeAddrId<SocketAddr>>,
     {
         let potential_addr_ids = potential_addr_ids
             .into_iter()
@@ -165,7 +165,8 @@ impl FindNodeOp {
                                 .iter()
                                 .map(|cn| PotentialAddrId {
                                     distance: Some(cn.id.distance(self.target_id)),
-                                    addr_id: AddrId::with_addr_and_id(cn.addr, Some(cn.id)).into(),
+                                    addr_id: NodeAddrId::with_addr_and_id(cn.addr, Some(cn.id))
+                                        .into(),
                                 })
                                 .filter(|potential_addr| {
                                     potential_addr

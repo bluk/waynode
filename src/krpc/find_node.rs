@@ -7,8 +7,8 @@
 // except according to those terms.
 
 use crate::{
-    krpc::CompactNodeInfo,
-    node::{CompactAddressV4, CompactAddressV6, Id},
+    krpc::{CompactAddrV4Info, CompactAddrV6Info, CompactNodeInfo},
+    node::Id,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;

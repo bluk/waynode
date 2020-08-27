@@ -11,11 +11,12 @@ use crate::{
     find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, Kind},
     msg_buffer,
-    node::{AddrIdT, Id},
+    node::{AddrId, Id, NodeAddrId},
     transaction,
 };
 use std::{
     cmp::Ordering,
+    net::SocketAddr,
     ops::RangeInclusive,
     time::{Duration, Instant},
 };
@@ -30,7 +31,7 @@ enum NodeState {
 #[derive(Debug)]
 struct Node<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     addr_id: A,
     missing_responses: u8,
@@ -41,7 +42,7 @@ where
 
 impl<A> Node<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
@@ -133,7 +134,7 @@ const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 #[derive(Debug)]
 struct Bucket<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     range: RangeInclusive<Id>,
     nodes: Vec<Node<A>>,
@@ -143,7 +144,7 @@ where
 
 impl<A> Bucket<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     fn new(range: RangeInclusive<Id>, max_nodes_per_bucket: usize) -> Self {
         Bucket {
@@ -414,7 +415,7 @@ const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
 #[derive(Debug)]
 pub(crate) struct Table<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     pivot: Id,
     buckets: Vec<Bucket<A>>,
@@ -424,7 +425,7 @@ where
 
 impl<A> Table<A>
 where
-    A: AddrIdT,
+    A: AddrId + Into<NodeAddrId<SocketAddr>>,
 {
     pub(crate) fn new<I>(
         pivot: Id,
@@ -592,7 +593,7 @@ where
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        if let Some(node_id) = addr_id.into().id() {
+        if let Some(node_id) = addr_id.id() {
             let bucket = self
                 .buckets
                 .iter_mut()
@@ -668,12 +669,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::AddrId;
+    use crate::node::NodeAddrId;
     use std::net::SocketAddrV4;
 
     #[test]
     fn test_split_bucket() {
-        let bucket: Bucket<AddrId<SocketAddrV4>> = Bucket::new(Id::min()..=Id::max(), 8);
+        let bucket: Bucket<NodeAddrId<SocketAddrV4>> = Bucket::new(Id::min()..=Id::max(), 8);
         let (first_bucket, second_bucket) = bucket.split(8);
         assert_eq!(
             first_bucket.range,

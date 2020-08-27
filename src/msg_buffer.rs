@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
-    node::SocketAddrId,
+    node::NodeAddrId,
     transaction,
 };
 use bt_bencode::Value;
@@ -17,6 +17,7 @@ use serde_bytes::ByteBuf;
 use std::{
     collections::VecDeque,
     fmt,
+    net::SocketAddr,
     time::{Duration, Instant},
 };
 
@@ -24,7 +25,7 @@ use std::{
 pub(crate) struct OutboundMsg {
     tx_id: Option<transaction::Id>,
     timeout: Duration,
-    pub(crate) addr_id: SocketAddrId,
+    pub(crate) addr_id: NodeAddrId<SocketAddr>,
     pub(crate) msg_data: Vec<u8>,
 }
 
@@ -50,13 +51,13 @@ pub enum Msg {
 
 #[derive(Clone, Debug)]
 pub struct InboundMsg {
-    pub(crate) addr_id: SocketAddrId,
+    pub(crate) addr_id: NodeAddrId<SocketAddr>,
     pub(crate) tx_id: Option<transaction::Id>,
     pub(crate) msg: Msg,
 }
 
 impl InboundMsg {
-    pub fn addr_id(&self) -> SocketAddrId {
+    pub fn addr_id(&self) -> NodeAddrId<SocketAddr> {
         self.addr_id
     }
 
@@ -102,7 +103,7 @@ impl Buffer {
     ) -> Result<transaction::Id, Error>
     where
         T: QueryArgs + fmt::Debug,
-        A: Into<SocketAddrId>,
+        A: Into<NodeAddrId<SocketAddr>>,
     {
         let tx_id = tx_manager.next_transaction_id();
 
@@ -139,7 +140,7 @@ impl Buffer {
     ) -> Result<(), Error>
     where
         T: RespVal,
-        A: Into<SocketAddrId>,
+        A: Into<NodeAddrId<SocketAddr>>,
     {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
@@ -163,7 +164,7 @@ impl Buffer {
     ) -> Result<(), Error>
     where
         T: ErrorVal,
-        A: Into<SocketAddrId>,
+        A: Into<NodeAddrId<SocketAddr>>,
     {
         self.outbound.push_back(OutboundMsg {
             tx_id: None,

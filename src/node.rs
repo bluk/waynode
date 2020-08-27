@@ -20,11 +20,11 @@ use std::{
 };
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
-/// Every node is addressed via a 160-bit identifier.
+/// A 160-bit value which is used to identify a node.
 pub struct Id(pub(crate) [u8; 20]);
 
 impl Id {
-    /// Instantiates an Id with bytes representing the 160-bit identifier.
+    /// Instantiates an Id with bytes representing the 160-bit value.
     pub fn with_bytes(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
@@ -284,184 +284,132 @@ impl IdBytes for [u8; 20] {
     }
 }
 
-pub trait CompactAddr:
-    fmt::Debug + Clone + Copy + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd + Into<SocketAddr>
+/// A node's network address.
+///
+/// External code should not implement this trait.
+pub trait Addr:
+    fmt::Debug + Clone + Copy + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd
 {
 }
 
-impl CompactAddr for SocketAddr {}
+impl Addr for SocketAddr {}
 
-pub trait CompactAddressV4: CompactAddr {
-    fn to_compact_address(&self) -> [u8; 6];
+impl Addr for SocketAddrV4 {}
 
-    fn from_compact_address(bytes: [u8; 6]) -> Self;
-}
+impl Addr for SocketAddrV6 {}
 
-impl CompactAddr for SocketAddrV4 {}
-
-impl CompactAddressV4 for SocketAddrV4 {
-    fn to_compact_address(&self) -> [u8; 6] {
-        let mut a: [u8; 6] = [0; 6];
-        a[0..4].copy_from_slice(&self.ip().octets());
-        a[4..6].copy_from_slice(&self.port().to_be_bytes());
-        a
-    }
-
-    fn from_compact_address(bytes: [u8; 6]) -> Self {
-        let mut ip: [u8; 4] = [0; 4];
-        ip[0..4].copy_from_slice(&bytes[0..4]);
-        let ip = Ipv4Addr::from(ip);
-
-        let mut port: [u8; 2] = [0; 2];
-        port[0..2].copy_from_slice(&bytes[4..6]);
-        let port = u16::from_be_bytes(port);
-
-        SocketAddrV4::new(ip, port)
-    }
-}
-
-pub trait CompactAddressV6: CompactAddr {
-    fn to_compact_address(&self) -> [u8; 18];
-
-    fn from_compact_address(bytes: [u8; 18]) -> Self;
-}
-
-impl CompactAddr for SocketAddrV6 {}
-
-impl CompactAddressV6 for SocketAddrV6 {
-    fn to_compact_address(&self) -> [u8; 18] {
-        let mut a: [u8; 18] = [0; 18];
-        a[0..16].copy_from_slice(&self.ip().octets());
-        a[16..18].copy_from_slice(&self.port().to_be_bytes());
-        a
-    }
-
-    fn from_compact_address(bytes: [u8; 18]) -> Self {
-        let mut ip: [u8; 16] = [0; 16];
-        ip[0..16].copy_from_slice(&bytes[0..16]);
-        let ip = Ipv6Addr::from(ip);
-
-        let mut port: [u8; 2] = [0; 2];
-        port[0..2].copy_from_slice(&bytes[16..18]);
-        let port = u16::from_be_bytes(port);
-
-        SocketAddrV6::new(ip, port, 0, 0)
-    }
-}
-
-/// A node's socket address and optional Id.
-///
-/// In order to send messages to other nodes, a socket address is required.
-///
-/// The node's Id may not be known, so it is optional.
-///
-/// Internally, a node must have both a socket address and an Id to be added to
-/// the DHT routing table. Queried nodes which reply with an Id which does not
-/// match the expected Id may have their responses dropped.
-pub trait AddrIdT:
-    Clone + Copy + fmt::Debug + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd + Into<SocketAddrId>
+/// A network address and optional Id.
+pub trait AddrId:
+    Clone + Copy + fmt::Debug + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd
+// TODO: Add serialize/deserialize
 {
-    type Addr: CompactAddr;
+    type Addr: Addr;
 
+    /// Returns the socket address.
     fn addr(&self) -> Self::Addr;
 
+    /// Returns the optional node Id.
     fn id(&self) -> Option<Id>;
 }
 
-/// A node's socket address and optional Id.
+/// A node's network address and optional Id.
 ///
-/// In order to send messages to other nodes, a socket address is required.
+/// In order to send messages to other nodes, a network address is required.
 ///
 /// The node's Id may not be known, so it is optional.
-///
-/// Internally, a node must have both a socket address and an Id to be added to
-/// the DHT routing table. Queried nodes which reply with an Id which does not
-/// match the expected Id may have their responses dropped.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AddrId<A>
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct NodeAddrId<A>
 where
-    A: CompactAddr,
+    A: Addr,
 {
     addr: A,
     id: Option<Id>,
 }
 
-impl<A> AddrId<A>
+// TODO: Add serialize/deserialize for NodeAddrId
+
+impl<A> NodeAddrId<A>
 where
-    A: CompactAddr,
+    A: Addr,
 {
     /// Instantiate with only a socket address.
     pub fn with_addr(addr: A) -> Self {
         Self { addr, id: None }
     }
 
-    /// Instantiate with a socket address and an Id.
+    /// Instantiate with a socket address and an optional Id.
     pub fn with_addr_and_id(addr: A, id: Option<Id>) -> Self {
         Self { addr, id }
     }
 }
 
-impl AddrIdT for AddrId<SocketAddrV4> {
+impl AddrId for NodeAddrId<SocketAddrV4> {
     type Addr = SocketAddrV4;
 
-    /// Returns the optional node Id.
-    fn id(&self) -> Option<Id> {
-        self.id
-    }
-
-    /// Returns the socket address.
     fn addr(&self) -> SocketAddrV4 {
         self.addr
     }
-}
 
-impl From<SocketAddrV4> for AddrId<SocketAddrV4> {
-    fn from(addr: SocketAddrV4) -> Self {
-        AddrId::with_addr(addr)
-    }
-}
-
-impl AddrIdT for AddrId<SocketAddrV6> {
-    type Addr = SocketAddrV6;
-
-    /// Returns the optional node Id.
     fn id(&self) -> Option<Id> {
         self.id
     }
+}
 
-    /// Returns the socket address.
+impl From<SocketAddrV4> for NodeAddrId<SocketAddrV4> {
+    fn from(addr: SocketAddrV4) -> Self {
+        NodeAddrId::with_addr(addr)
+    }
+}
+
+impl AddrId for NodeAddrId<SocketAddrV6> {
+    type Addr = SocketAddrV6;
+
     fn addr(&self) -> SocketAddrV6 {
         self.addr
     }
-}
 
-impl From<SocketAddrV6> for AddrId<SocketAddrV6> {
-    fn from(addr: SocketAddrV6) -> Self {
-        AddrId::with_addr(addr)
-    }
-}
-
-impl AddrIdT for AddrId<SocketAddr> {
-    type Addr = SocketAddr;
-
-    /// Returns the optional node Id.
     fn id(&self) -> Option<Id> {
         self.id
     }
+}
 
-    /// Returns the socket address.
+impl From<SocketAddrV6> for NodeAddrId<SocketAddrV6> {
+    fn from(addr: SocketAddrV6) -> Self {
+        NodeAddrId::with_addr(addr)
+    }
+}
+
+impl AddrId for NodeAddrId<SocketAddr> {
+    type Addr = SocketAddr;
+
     fn addr(&self) -> SocketAddr {
         self.addr
     }
-}
 
-impl From<SocketAddr> for AddrId<SocketAddr> {
-    fn from(addr: SocketAddr) -> Self {
-        AddrId::with_addr(addr)
+    fn id(&self) -> Option<Id> {
+        self.id
     }
 }
 
-// impl AddrId {
+impl From<SocketAddr> for NodeAddrId<SocketAddr> {
+    fn from(addr: SocketAddr) -> Self {
+        NodeAddrId::with_addr(addr)
+    }
+}
+
+impl From<NodeAddrId<SocketAddrV4>> for NodeAddrId<SocketAddr> {
+    fn from(addr_id: NodeAddrId<SocketAddrV4>) -> Self {
+        NodeAddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+    }
+}
+
+impl From<NodeAddrId<SocketAddrV6>> for NodeAddrId<SocketAddr> {
+    fn from(addr_id: NodeAddrId<SocketAddrV6>) -> Self {
+        NodeAddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+    }
+}
+
+// impl NodeAddrId {
 // use crate::{addr::NodeIdGenerator, node::Id};
 // use serde::{Deserialize, Serialize};
 // use std::net::{SocketAddr, ToSocketAddrs};
@@ -490,63 +438,6 @@ impl From<SocketAddr> for AddrId<SocketAddr> {
 //     false
 // }
 // }
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum SocketAddrId {
-    V4(AddrId<SocketAddrV4>),
-    V6(AddrId<SocketAddrV6>),
-}
-
-impl AddrIdT for SocketAddrId {
-    type Addr = SocketAddr;
-
-    fn id(&self) -> Option<Id> {
-        match self {
-            SocketAddrId::V4(addr_id) => addr_id.id(),
-            SocketAddrId::V6(addr_id) => addr_id.id(),
-        }
-    }
-
-    fn addr(&self) -> SocketAddr {
-        match self {
-            SocketAddrId::V4(addr_id) => SocketAddr::V4(addr_id.addr()),
-            SocketAddrId::V6(addr_id) => SocketAddr::V6(addr_id.addr()),
-        }
-    }
-}
-
-impl From<AddrId<SocketAddr>> for SocketAddrId {
-    fn from(addr_id: AddrId<SocketAddr>) -> Self {
-        match addr_id.addr() {
-            SocketAddr::V4(addr) => SocketAddrId::V4(AddrId::with_addr_and_id(addr, addr_id.id())),
-            SocketAddr::V6(addr) => SocketAddrId::V6(AddrId::with_addr_and_id(addr, addr_id.id())),
-        }
-    }
-}
-
-impl From<AddrId<SocketAddrV4>> for SocketAddrId {
-    fn from(addr: AddrId<SocketAddrV4>) -> Self {
-        SocketAddrId::V4(addr)
-    }
-}
-
-impl From<AddrId<SocketAddrV6>> for SocketAddrId {
-    fn from(addr: AddrId<SocketAddrV6>) -> Self {
-        SocketAddrId::V6(addr)
-    }
-}
-
-impl From<SocketAddrV4> for SocketAddrId {
-    fn from(addr: SocketAddrV4) -> Self {
-        SocketAddrId::V4(AddrId::with_addr(addr))
-    }
-}
-
-impl From<SocketAddrV6> for SocketAddrId {
-    fn from(addr: SocketAddrV6) -> Self {
-        SocketAddrId::V6(AddrId::with_addr(addr))
-    }
-}
 
 trait Crc32cMaker {
     fn make_crc32c(&self, rand: u8) -> u32;

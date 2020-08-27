@@ -8,7 +8,7 @@
 
 use crate::{
     error::Error,
-    node::{AddrIdT, SocketAddrId},
+    node::{AddrId, NodeAddrId},
 };
 use serde_bytes::ByteBuf;
 use std::{
@@ -49,7 +49,7 @@ impl TryFrom<&ByteBuf> for Id {
 #[derive(Debug)]
 pub(crate) struct Transaction {
     pub(crate) tx_id: Id,
-    pub(crate) addr_id: SocketAddrId,
+    pub(crate) addr_id: NodeAddrId<SocketAddr>,
     pub(crate) deadline: Instant,
 }
 
