@@ -6,10 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{
-    error::Error,
-    node::{AddrId, NodeAddrId},
-};
+//! Transactions correlate a KRPC query with its response.
+
+use crate::{error::Error, node::AddrId};
 use serde_bytes::ByteBuf;
 use std::{
     convert::{TryFrom, TryInto},
@@ -17,6 +16,13 @@ use std::{
     time::Instant,
 };
 
+/// An opaque identifer which correlates a KRPC query with a response or error.
+///
+/// An `Id` is returned when a query is written to the `Dht`. The caller should
+/// hold onto the `Id`. When a message is read from the `Dht`, then the caller
+/// should determine if the read message's `Id` is equal to the previously held
+/// `Id`. If they are the same, then the read message is in response to the
+/// original query.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct Id(u16);
 
@@ -49,7 +55,7 @@ impl TryFrom<&ByteBuf> for Id {
 #[derive(Debug)]
 pub(crate) struct Transaction {
     pub(crate) tx_id: Id,
-    pub(crate) addr_id: NodeAddrId<SocketAddr>,
+    pub(crate) addr_id: AddrId<SocketAddr>,
     pub(crate) deadline: Instant,
 }
 

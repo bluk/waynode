@@ -20,7 +20,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
-/// A 160-bit value which is used to identify a node.
+/// A 160-bit value which is used to identify a node's position within the distributed hash table.
 pub struct Id(pub(crate) [u8; 20]);
 
 impl Id {
@@ -37,7 +37,39 @@ impl Id {
         Id([0xff; 20])
     }
 
+    /// Determines the distance between this `Id` and the `Id` argument.
+    ///
+    /// The distance is calculated by XORing the corresponding bytes.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use sloppy::node::Id;
+    ///
+    /// let id1 = Id::with_bytes([0xFF, 0x00, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xF0, 0x0F, 0x00, 0x0F, 0xF0, 0x00, 0xFF, 0x01, 0x10, 0xAA, 0xAB]);
+    ///
+    /// assert_eq!(id1.distance(id1), Id::with_bytes([0x00; 20]));
+    ///
+    /// let id2 = Id::with_bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14]);
+    ///
+    /// assert_eq!(id1.distance(id2), Id::with_bytes([0xFE, 0x02, 0xFC, 0x04, 0xFA, 0xF9, 0xF8, 0xF7, 0x09, 0xFA, 0x04, 0x0C, 0x02, 0xFE, 0x0F, 0xEF, 0x10, 0x02, 0xB9, 0xBF]));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn distance(&self, other: Id) -> Id {
+        let mut data = [0; 20];
+        for (idx, val) in self.0.iter().enumerate() {
+            data[idx] = val ^ other.0[idx];
+        }
+        Id(data)
+    }
+
     /// Instantiates an Id with a random value.
+    ///
+    /// It may be useful to generate a random `Id` when initializing a DHT node
+    /// for the first time.
     pub fn rand() -> Result<Id, Error> {
         use rand::thread_rng;
         let mut arr: [u8; 20] = [0; 20];
@@ -76,16 +108,6 @@ impl Id {
         smaller.twos_complement();
         let _ = bigger.overflowing_add(&smaller);
         Id(bigger)
-    }
-
-    /// Determines the distance between this node ID and the node ID argument.
-    #[must_use]
-    pub(crate) fn distance(&self, other: Id) -> Id {
-        let mut data = [0; 20];
-        for (idx, val) in self.0.iter().enumerate() {
-            data[idx] = val ^ other.0[idx];
-        }
-        Id(data)
     }
 
     /// Finds the middle id between this node ID and the node ID argument.
@@ -284,11 +306,19 @@ impl IdBytes for [u8; 20] {
     }
 }
 
-/// A node's network address.
+/// A network address.
 ///
-/// External code should not implement this trait.
+/// This trait is sealed and cannot be implemented for types outside this crate.
 pub trait Addr:
-    fmt::Debug + Clone + Copy + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd
+    fmt::Debug
+    + Clone
+    + Copy
+    + Eq
+    + std::hash::Hash
+    + Ord
+    + PartialEq
+    + PartialOrd
+    + private::SealedAddr
 {
 }
 
@@ -298,27 +328,13 @@ impl Addr for SocketAddrV4 {}
 
 impl Addr for SocketAddrV6 {}
 
-/// A network address and optional Id.
-pub trait AddrId:
-    Clone + Copy + fmt::Debug + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd
-// TODO: Add serialize/deserialize
-{
-    type Addr: Addr;
-
-    /// Returns the socket address.
-    fn addr(&self) -> Self::Addr;
-
-    /// Returns the optional node Id.
-    fn id(&self) -> Option<Id>;
-}
-
 /// A node's network address and optional Id.
 ///
 /// In order to send messages to other nodes, a network address is required.
 ///
 /// The node's Id may not be known, so it is optional.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct NodeAddrId<A>
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct AddrId<A>
 where
     A: Addr,
 {
@@ -326,86 +342,91 @@ where
     id: Option<Id>,
 }
 
-// TODO: Add serialize/deserialize for NodeAddrId
-
-impl<A> NodeAddrId<A>
+impl<A> AddrId<A>
 where
     A: Addr,
 {
-    /// Instantiate with only a socket address.
+    /// Instantiate with only a network address.
+    ///
+    /// Useful when a new node needs to be bootstrapped and may only have the network address of another node.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use std::net::ToSocketAddrs;
+    /// use sloppy::node::AddrId;
+    ///
+    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
+    /// let addr_id = AddrId::with_addr(socket_addr);
+    /// assert_eq!(addr_id.addr(), socket_addr);
+    /// assert_eq!(addr_id.id(), None);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_addr(addr: A) -> Self {
         Self { addr, id: None }
     }
 
-    /// Instantiate with a socket address and an optional Id.
+    /// Instantiate with a network address and an optional Id.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use std::net::ToSocketAddrs;
+    /// use sloppy::node::{AddrId, Id};
+    ///
+    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
+    /// let node_id = Id::rand().unwrap();
+    /// let addr_id = AddrId::with_addr_and_id(socket_addr, Some(node_id));
+    /// assert_eq!(addr_id.addr(), socket_addr);
+    /// assert_eq!(addr_id.id(), Some(node_id));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_addr_and_id(addr: A, id: Option<Id>) -> Self {
         Self { addr, id }
     }
-}
 
-impl AddrId for NodeAddrId<SocketAddrV4> {
-    type Addr = SocketAddrV4;
-
-    fn addr(&self) -> SocketAddrV4 {
+    /// Returns the network address.
+    pub fn addr(&self) -> A {
         self.addr
     }
 
-    fn id(&self) -> Option<Id> {
+    /// Returns the optional node Id.
+    pub fn id(&self) -> Option<Id> {
         self.id
     }
 }
 
-impl From<SocketAddrV4> for NodeAddrId<SocketAddrV4> {
+impl From<SocketAddrV4> for AddrId<SocketAddrV4> {
     fn from(addr: SocketAddrV4) -> Self {
-        NodeAddrId::with_addr(addr)
+        AddrId::with_addr(addr)
     }
 }
 
-impl AddrId for NodeAddrId<SocketAddrV6> {
-    type Addr = SocketAddrV6;
-
-    fn addr(&self) -> SocketAddrV6 {
-        self.addr
-    }
-
-    fn id(&self) -> Option<Id> {
-        self.id
-    }
-}
-
-impl From<SocketAddrV6> for NodeAddrId<SocketAddrV6> {
+impl From<SocketAddrV6> for AddrId<SocketAddrV6> {
     fn from(addr: SocketAddrV6) -> Self {
-        NodeAddrId::with_addr(addr)
+        AddrId::with_addr(addr)
     }
 }
 
-impl AddrId for NodeAddrId<SocketAddr> {
-    type Addr = SocketAddr;
-
-    fn addr(&self) -> SocketAddr {
-        self.addr
-    }
-
-    fn id(&self) -> Option<Id> {
-        self.id
-    }
-}
-
-impl From<SocketAddr> for NodeAddrId<SocketAddr> {
+impl From<SocketAddr> for AddrId<SocketAddr> {
     fn from(addr: SocketAddr) -> Self {
-        NodeAddrId::with_addr(addr)
+        AddrId::with_addr(addr)
     }
 }
 
-impl From<NodeAddrId<SocketAddrV4>> for NodeAddrId<SocketAddr> {
-    fn from(addr_id: NodeAddrId<SocketAddrV4>) -> Self {
-        NodeAddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+impl From<AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
+    fn from(addr_id: AddrId<SocketAddrV4>) -> Self {
+        AddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
     }
 }
 
-impl From<NodeAddrId<SocketAddrV6>> for NodeAddrId<SocketAddr> {
-    fn from(addr_id: NodeAddrId<SocketAddrV6>) -> Self {
-        NodeAddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+impl From<AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
+    fn from(addr_id: AddrId<SocketAddrV6>) -> Self {
+        AddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
     }
 }
 
@@ -572,6 +593,16 @@ impl NodeIdGenerator for Ipv6Addr {
 
         true
     }
+}
+
+mod private {
+    use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+
+    pub trait SealedAddr {}
+
+    impl SealedAddr for SocketAddr {}
+    impl SealedAddr for SocketAddrV4 {}
+    impl SealedAddr for SocketAddrV6 {}
 }
 
 #[cfg(test)]

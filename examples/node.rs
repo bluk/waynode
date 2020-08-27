@@ -74,7 +74,7 @@ fn main() -> io::Result<()> {
     .expect("addresses to resolve")
     .into_iter()
     .flatten()
-    .map(|a| sloppy::node::NodeAddrId::with_addr(a).into())
+    .map(|a| sloppy::node::AddrId::with_addr(a).into())
     .collect::<Vec<_>>();
 
     let mut dht: Dht = Dht::with_config(

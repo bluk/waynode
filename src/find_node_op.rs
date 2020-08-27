@@ -13,7 +13,7 @@ use crate::{
         RespMsg,
     },
     msg_buffer,
-    node::{self, AddrId, NodeAddrId},
+    node::{self, Addr, AddrId},
     transaction,
 };
 use bt_bencode::Value;
@@ -22,7 +22,7 @@ use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};
 #[derive(Debug)]
 struct PotentialAddrId {
     distance: Option<node::Id>,
-    addr_id: NodeAddrId<SocketAddr>,
+    addr_id: AddrId<SocketAddr>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,18 +49,19 @@ pub(crate) struct FindNodeOp {
 }
 
 impl FindNodeOp {
-    pub(crate) fn with_target_id_and_neighbors<T>(
+    pub(crate) fn with_target_id_and_neighbors<A, T>(
         target_id: node::Id,
         potential_addr_ids: T,
     ) -> Self
     where
-        T: IntoIterator<Item = NodeAddrId<SocketAddr>>,
+        T: IntoIterator<Item = AddrId<A>>,
+        A: Addr + Into<SocketAddr>,
     {
         let potential_addr_ids = potential_addr_ids
             .into_iter()
             .map(|addr_id| PotentialAddrId {
                 distance: addr_id.id().map(|node_id| node_id.distance(target_id)),
-                addr_id,
+                addr_id: AddrId::with_addr_and_id(addr_id.addr().into(), addr_id.id()),
             })
             .collect();
         Self {
@@ -165,8 +166,7 @@ impl FindNodeOp {
                                 .iter()
                                 .map(|cn| PotentialAddrId {
                                     distance: Some(cn.id.distance(self.target_id)),
-                                    addr_id: NodeAddrId::with_addr_and_id(cn.addr, Some(cn.id))
-                                        .into(),
+                                    addr_id: AddrId::with_addr_and_id(cn.addr, Some(cn.id)).into(),
                                 })
                                 .filter(|potential_addr| {
                                     potential_addr

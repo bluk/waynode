@@ -6,15 +6,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! A torrent is a peer to peer network exchanging data.
+
 use crate::error::Error;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, fmt};
 
+/// A 160-bit value which is used to identify a torrent.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct InfoHash(pub(crate) [u8; 20]);
 
 impl InfoHash {
-    /// Instantiates an Id with bytes representing the 160-bit identifier.
+    /// Instantiates an InfoHash with bytes representing the 160-bit value.
     pub fn with_bytes(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
