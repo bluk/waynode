@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
-    node::{Addr, AddrId},
+    node::AddrId,
     transaction,
 };
 use bt_bencode::Value;
@@ -97,17 +97,17 @@ impl Buffer {
     pub(crate) fn write_query<A, T>(
         &mut self,
         args: &T,
-        addr_id: AddrId<A>,
+        addr_id: A,
         timeout: Duration,
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::Id, Error>
     where
         T: QueryArgs + fmt::Debug,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
         let tx_id = tx_manager.next_transaction_id();
 
-        let addr_id = AddrId::with_addr_and_id(addr_id.addr().into(), addr_id.id());
+        let addr_id = addr_id.into();
 
         debug!(
             "write_query tx_id={:?} method_name={:?} addr_id={:?} args={:?}",
@@ -136,17 +136,15 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<T>,
-        addr_id: AddrId<A>,
+        addr_id: A,
     ) -> Result<(), Error>
     where
         T: RespVal,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
-        let addr_id = AddrId::with_addr_and_id(addr_id.addr().into(), addr_id.id());
-
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id,
+            addr_id: addr_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
                 t: &transaction_id,
@@ -162,17 +160,15 @@ impl Buffer {
         &mut self,
         transaction_id: &ByteBuf,
         details: T,
-        addr_id: AddrId<A>,
+        addr_id: A,
     ) -> Result<(), Error>
     where
         T: ErrorVal,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
-        let addr_id = AddrId::with_addr_and_id(addr_id.addr().into(), addr_id.id());
-
         self.outbound.push_back(OutboundMsg {
             tx_id: None,
-            addr_id,
+            addr_id: addr_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: Some(&details.to_value()),
                 t: &transaction_id,

@@ -71,11 +71,8 @@ fn main() -> io::Result<()> {
         s.to_socket_addrs()
     })
     .collect::<Result<Vec<_>, std::io::Error>>()
-    .expect("addresses to resolve")
-    .into_iter()
-    .flatten()
-    .map(|a| sloppy::node::AddrId::with_addr(a).into())
-    .collect::<Vec<_>>();
+    .map(|v| v.into_iter().flatten().collect::<Vec<_>>())
+    .expect("addresses to resolve");
 
     let mut dht: Dht = Dht::with_config(
         sloppy::Config {
@@ -86,8 +83,8 @@ fn main() -> io::Result<()> {
             max_node_count_per_bucket: 10,
             supported_addr: sloppy::SupportedAddr::Ipv4AndIpv6,
         },
-        &bootstrap_addrs[..],
-        bootstrap_addrs.clone(),
+        &[],
+        bootstrap_addrs,
     )
     .expect("dht to bootstrap successfully");
     let dht_token = Token(0);

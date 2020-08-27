@@ -10,11 +10,12 @@
 
 use crate::{node::Addr, node::Id};
 use bt_bencode::Value;
+use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
 /// Type of KRPC message.
@@ -297,14 +298,49 @@ mod private {
 }
 
 /// A node's network address and Id.
-pub struct CompactNodeInfo<T>
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct CompactNodeInfo<A>
 where
-    T: Addr + Into<SocketAddr>,
+    A: Addr,
 {
-    /// The node Id.
-    pub id: Id,
-    /// The network address.
-    pub addr: T,
+    addr: A,
+    id: Id,
+}
+
+impl<A> CompactNodeInfo<A>
+where
+    A: Addr,
+{
+    /// Instantiate with a network address and an optional Id.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use std::net::ToSocketAddrs;
+    /// use sloppy::{node::Id, krpc::CompactNodeInfo};
+    ///
+    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
+    /// let node_id = Id::rand().unwrap();
+    /// let compact_node_info = CompactNodeInfo::with_addr_and_id(socket_addr, node_id);
+    /// assert_eq!(compact_node_info.addr(), socket_addr);
+    /// assert_eq!(compact_node_info.id(), node_id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_addr_and_id(addr: A, id: Id) -> Self {
+        Self { addr, id }
+    }
+
+    /// Returns the network address.
+    pub fn addr(&self) -> A {
+        self.addr
+    }
+
+    /// Returns the node Id.
+    pub fn id(&self) -> Id {
+        self.id
+    }
 }
 
 pub mod announce_peer;

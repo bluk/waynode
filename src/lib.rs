@@ -12,7 +12,6 @@
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-// TODO: Configuration option for IPv6 and IPv4 tables
 // TODO: Configuration for whether node IDs are valid for IP
 // TODO: Should process the responses if the queried_node_id returned is the same as config.local_id
 // http://bittorrent.org/beps/bep_0005.html
@@ -44,9 +43,11 @@ pub mod torrent;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{transaction, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
+    krpc::{
+        transaction, CompactNodeInfo, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal,
+    },
     msg_buffer::InboundMsg,
-    node::{Addr, AddrId},
+    node::AddrId,
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -108,8 +109,8 @@ impl Dht {
         bootstrap_addr_ids: B,
     ) -> Result<Self, error::Error>
     where
-        A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
-        B: IntoIterator<Item = AddrId<SocketAddr>>,
+        A: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
+        B: IntoIterator<Item = SocketAddr>,
     {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
         let local_id = config.local_id;
@@ -309,12 +310,12 @@ impl Dht {
     pub fn write_query<A, T>(
         &mut self,
         args: &T,
-        addr_id: AddrId<A>,
+        addr_id: A,
         timeout: Option<Duration>,
     ) -> Result<transaction::Id, error::Error>
     where
         T: QueryArgs + std::fmt::Debug,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
         self.msg_buffer.write_query(
             args,
@@ -328,11 +329,11 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         resp: Option<T>,
-        addr_id: AddrId<A>,
+        addr_id: A,
     ) -> Result<(), error::Error>
     where
         T: RespVal,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
         self.msg_buffer.write_resp(transaction_id, resp, addr_id)
     }
@@ -341,11 +342,11 @@ impl Dht {
         &mut self,
         transaction_id: &ByteBuf,
         details: T,
-        addr_id: AddrId<A>,
+        addr_id: A,
     ) -> Result<(), error::Error>
     where
         T: ErrorVal,
-        A: Addr + Into<SocketAddr>,
+        A: Into<AddrId<SocketAddr>>,
     {
         self.msg_buffer.write_err(transaction_id, details, addr_id)
     }
@@ -509,11 +510,8 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut dht: Dht = Dht::with_config(
-            new_config()?,
-            &[bootstrap_remote_addr.into()],
-            vec![bootstrap_remote_addr.into()],
-        )?;
+        let mut dht: Dht =
+            Dht::with_config(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {

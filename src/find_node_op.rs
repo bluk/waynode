@@ -164,8 +164,8 @@ impl FindNodeOp {
                             nodes
                                 .iter()
                                 .map(|cn| PotentialAddrId {
-                                    distance: Some(cn.id.distance(self.target_id)),
-                                    addr_id: AddrId::with_addr_and_id(cn.addr, Some(cn.id)).into(),
+                                    distance: Some(cn.id().distance(self.target_id)),
+                                    addr_id: cn.into(),
                                 })
                                 .filter(|potential_addr| {
                                     potential_addr

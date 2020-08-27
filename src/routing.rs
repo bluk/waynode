@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     find_node_op::FindNodeOp,
-    krpc::{ping::PingQueryArgs, Kind},
+    krpc::{ping::PingQueryArgs, CompactNodeInfo, Kind},
     msg_buffer,
     node::{Addr, AddrId, Id},
     transaction,
@@ -223,7 +223,10 @@ where
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
                 &PingQueryArgs::with_id(config.local_id),
-                node_to_ping.addr_id,
+                AddrId::with_addr_and_id(
+                    node_to_ping.addr_id.addr().into(),
+                    node_to_ping.addr_id.id(),
+                ),
                 config.default_query_timeout,
                 tx_manager,
             )?;
@@ -444,16 +447,16 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
-        bootstrap_nodes: I,
+        bootstrap_addrs: I,
         now: Instant,
     ) -> Result<(), Error>
     where
-        I: IntoIterator<Item = AddrId<A>>,
+        I: IntoIterator<Item = A>,
     {
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .chain(bootstrap_nodes.into_iter())
+            .chain(bootstrap_addrs.into_iter().map(|s| AddrId::with_addr(s)))
             .map(|n| n);
         let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
@@ -668,14 +671,14 @@ pub(crate) enum RoutingTable {
 impl RoutingTable {
     pub(crate) fn try_insert_addrs<'a, I>(&mut self, addrs: I, now: Instant)
     where
-        I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
+        I: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
     {
         for existing_addr_id in addrs.into_iter() {
             match existing_addr_id.addr() {
                 SocketAddr::V4(existing_addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => routing_table.try_insert(
-                        AddrId::with_addr_and_id(existing_addr, existing_addr_id.id()),
+                        AddrId::with_addr_and_id(existing_addr, Some(existing_addr_id.id())),
                         now,
                     ),
                     RoutingTable::Ipv6(_) => {}
@@ -684,7 +687,7 @@ impl RoutingTable {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => routing_table.try_insert(
-                        AddrId::with_addr_and_id(existing_addr, existing_addr_id.id()),
+                        AddrId::with_addr_and_id(existing_addr, Some(existing_addr_id.id())),
                         now,
                     ),
                 },
@@ -699,22 +702,21 @@ impl RoutingTable {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
-        bootstrap_addr_ids: I,
+        bootstrap_addrs: I,
         now: Instant,
     ) -> Result<(), Error>
     where
-        // TODO: Change bootstrap_addr_ids to just SocketAddr
-        I: IntoIterator<Item = AddrId<SocketAddr>>,
+        I: IntoIterator<Item = SocketAddr>,
     {
-        let mut ipv4_addr_ids = Vec::new();
-        let mut ipv6_addr_ids = Vec::new();
-        for addr_id in bootstrap_addr_ids.into_iter() {
-            match addr_id.addr() {
+        let mut ipv4_socket_addrs = Vec::new();
+        let mut ipv6_socket_addrs = Vec::new();
+        for socket_addr in bootstrap_addrs.into_iter() {
+            match socket_addr {
                 SocketAddr::V4(addr) => {
-                    ipv4_addr_ids.push(AddrId::with_addr_and_id(addr, addr_id.id()));
+                    ipv4_socket_addrs.push(addr);
                 }
                 SocketAddr::V6(addr) => {
-                    ipv6_addr_ids.push(AddrId::with_addr_and_id(addr, addr_id.id()));
+                    ipv6_socket_addrs.push(addr);
                 }
             }
         }
@@ -725,7 +727,7 @@ impl RoutingTable {
                 tx_manager,
                 msg_buffer,
                 find_node_ops,
-                ipv4_addr_ids,
+                ipv4_socket_addrs,
                 now,
             ),
             RoutingTable::Ipv6(routing_table) => routing_table.find_node(
@@ -734,7 +736,7 @@ impl RoutingTable {
                 tx_manager,
                 msg_buffer,
                 find_node_ops,
-                ipv6_addr_ids,
+                ipv6_socket_addrs,
                 now,
             ),
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
@@ -744,7 +746,7 @@ impl RoutingTable {
                     tx_manager,
                     msg_buffer,
                     find_node_ops,
-                    ipv4_addr_ids,
+                    ipv4_socket_addrs,
                     now,
                 )?;
                 routing_table_v6.find_node(
@@ -753,7 +755,7 @@ impl RoutingTable {
                     tx_manager,
                     msg_buffer,
                     find_node_ops,
-                    ipv6_addr_ids,
+                    ipv6_socket_addrs,
                     now,
                 )?;
                 Ok(())
