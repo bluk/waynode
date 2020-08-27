@@ -14,7 +14,7 @@ use serde_bytes::ByteBuf;
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
 /// Type of KRPC message.
@@ -37,8 +37,6 @@ impl<'a> Kind<'a> {
         }
     }
 }
-
-// pub const METHOD_ANNOUNCE_PEER: &str = "announce_peer";
 
 /// A KRPC message.
 pub trait Msg {
@@ -187,6 +185,7 @@ impl ErrorMsg for Value {
     }
 }
 
+/// Standard error codes in KRPC error messages.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ErrorCode {
     GenericError,
@@ -224,8 +223,8 @@ pub trait ErrorVal {
 ///
 /// The trait is intended to help convert an IPv4 socket address to the compact form used in KRPC messages.
 ///
-/// External code should not implement this trait.
-pub trait CompactAddrV4Info {
+/// This trait is sealed and cannot be implemented for types outside this crate.
+pub trait CompactAddrV4Info: private::Sealed {
     /// Returns the address encoded as a compact address.
     fn to_compact_address(&self) -> [u8; 6];
 
@@ -258,8 +257,8 @@ impl CompactAddrV4Info for SocketAddrV4 {
 ///
 /// The trait is intended to help convert an IPv6 socket address to the compact form used in KRPC messages.
 ///
-/// External code should not implement this trait.
-pub trait CompactAddrV6Info {
+/// This trait is sealed and cannot be implemented for types outside this crate.
+pub trait CompactAddrV6Info: private::Sealed {
     /// Returns the address encoded as a compact address.
     fn to_compact_address(&self) -> [u8; 18];
 
@@ -288,11 +287,23 @@ impl CompactAddrV6Info for SocketAddrV6 {
     }
 }
 
+mod private {
+    use std::net::{SocketAddrV4, SocketAddrV6};
+
+    pub trait Sealed {}
+
+    impl Sealed for SocketAddrV6 {}
+    impl Sealed for SocketAddrV4 {}
+}
+
+/// A node's network address and Id.
 pub struct CompactNodeInfo<T>
 where
-    T: Addr,
+    T: Addr + Into<SocketAddr>,
 {
+    /// The node Id.
     pub id: Id,
+    /// The network address.
     pub addr: T,
 }
 
