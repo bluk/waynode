@@ -185,14 +185,16 @@ impl Dht {
                             && queried_node_id != Some(self.config.local_id)
                             && tx.is_node_id_match(queried_node_id)
                         {
-                            self.routing_table.on_msg_received(
-                                AddrId::with_addr_and_id(addr, tx.addr_id.id().or(queried_node_id)),
-                                &kind,
-                                &self.config,
-                                &mut self.tx_manager,
-                                &mut self.msg_buffer,
-                                now,
-                            )?;
+                            if let Some(node_id) = tx.addr_id.id().or(queried_node_id) {
+                                self.routing_table.on_msg_received(
+                                    CompactNodeInfo::with_addr_and_id(addr, node_id),
+                                    &kind,
+                                    &self.config,
+                                    &mut self.tx_manager,
+                                    &mut self.msg_buffer,
+                                    now,
+                                )?;
+                            }
                             debug!("Received response for tx_id={:?}", tx.tx_id);
                             for op in &mut self.find_node_ops {
                                 op.handle(
@@ -226,14 +228,16 @@ impl Dht {
                         }
                     }
                     Kind::Error => {
-                        self.routing_table.on_msg_received(
-                            tx.addr_id,
-                            &kind,
-                            &self.config,
-                            &mut self.tx_manager,
-                            &mut self.msg_buffer,
-                            now,
-                        )?;
+                        if let Some(node_id) = tx.addr_id.id() {
+                            self.routing_table.on_msg_received(
+                                CompactNodeInfo::with_addr_and_id(tx.addr_id.addr(), node_id),
+                                &kind,
+                                &self.config,
+                                &mut self.tx_manager,
+                                &mut self.msg_buffer,
+                                now,
+                            )?;
+                        }
                         debug!("Received error for tx_local_id={:?}", tx.tx_id);
                         for op in &mut self.find_node_ops {
                             op.handle(
@@ -274,8 +278,11 @@ impl Dht {
                         debug!("Recieved query. addr={}", addr);
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_id = AddrId::with_addr_and_id(addr, querying_node_id);
-                        self.routing_table.on_msg_received(addr_id, &kind, &self.config, &mut
+                        if let Some(node_id) = querying_node_id {
+                            self.routing_table.on_msg_received(CompactNodeInfo::with_addr_and_id(addr, node_id), &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
+                        }
+
                         self.msg_buffer.push_inbound(InboundMsg {
                             addr_id,
                             tx_id: None,
@@ -393,13 +400,15 @@ impl Dht {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
                 debug!("tx timed out: {:?}", tx);
-                self.routing_table.on_resp_timeout(
-                    tx.addr_id,
-                    &self.config,
-                    &mut self.tx_manager,
-                    &mut self.msg_buffer,
-                    now,
-                )?;
+                if let Some(node_id) = tx.addr_id.id() {
+                    self.routing_table.on_resp_timeout(
+                        CompactNodeInfo::with_addr_and_id(tx.addr_id.addr(), node_id),
+                        &self.config,
+                        &mut self.tx_manager,
+                        &mut self.msg_buffer,
+                        now,
+                    )?;
+                }
 
                 for op in &mut self.find_node_ops {
                     op.handle(
@@ -432,11 +441,17 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors_ipv4(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
+    pub fn find_neighbors_ipv4(
+        &self,
+        id: node::Id,
+    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV4>> {
         self.routing_table.find_neighbors_ipv4(id)
     }
 
-    pub fn find_neighbors_ipv6(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
+    pub fn find_neighbors_ipv6(
+        &self,
+        id: node::Id,
+    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV6>> {
         self.routing_table.find_neighbors_ipv6(id)
     }
 }

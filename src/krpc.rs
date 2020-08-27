@@ -15,7 +15,7 @@ use serde_bytes::ByteBuf;
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
 /// Type of KRPC message.
@@ -340,6 +340,36 @@ where
     /// Returns the node Id.
     pub fn id(&self) -> Id {
         self.id
+    }
+}
+
+impl From<CompactNodeInfo<SocketAddrV4>> for SocketAddrV4 {
+    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> SocketAddrV4 {
+        node_info.addr()
+    }
+}
+
+impl From<CompactNodeInfo<SocketAddrV6>> for SocketAddrV6 {
+    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> SocketAddrV6 {
+        node_info.addr()
+    }
+}
+
+impl From<CompactNodeInfo<SocketAddr>> for SocketAddr {
+    fn from(node_info: CompactNodeInfo<SocketAddr>) -> SocketAddr {
+        node_info.addr()
+    }
+}
+
+impl From<CompactNodeInfo<SocketAddrV4>> for SocketAddr {
+    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> SocketAddr {
+        SocketAddr::V4(node_info.addr())
+    }
+}
+
+impl From<CompactNodeInfo<SocketAddrV6>> for SocketAddr {
+    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> SocketAddr {
+        SocketAddr::V6(node_info.addr())
     }
 }
 

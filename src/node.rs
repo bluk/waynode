@@ -528,7 +528,7 @@ impl From<&CompactNodeInfo<SocketAddr>> for AddrId<SocketAddr> {
     }
 }
 
-// impl NodeAddrId {
+// impl AddrId {
 // use crate::{addr::NodeIdGenerator, node::Id};
 // use serde::{Deserialize, Serialize};
 // use std::net::{SocketAddr, ToSocketAddrs};
