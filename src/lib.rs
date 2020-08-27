@@ -41,11 +41,10 @@ pub mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
 pub mod torrent;
-pub mod transaction;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
+    krpc::{transaction, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
     msg_buffer::InboundMsg,
     node::{Addr, AddrId},
 };

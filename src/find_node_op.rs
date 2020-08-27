@@ -10,11 +10,10 @@ use crate::{
     error::Error,
     krpc::{
         find_node::{FindNodeQueryArgs, FindNodeRespValues},
-        RespMsg,
+        transaction, RespMsg,
     },
     msg_buffer,
     node::{self, Addr, AddrId},
-    transaction,
 };
 use bt_bencode::Value;
 use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};

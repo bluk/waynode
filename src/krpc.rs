@@ -302,3 +302,4 @@ pub mod find_node;
 pub mod get_peers;
 pub mod ping;
 pub(crate) mod ser;
+pub mod transaction;
