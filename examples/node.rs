@@ -74,9 +74,9 @@ fn main() -> io::Result<()> {
     .map(|v| v.into_iter().flatten().collect::<Vec<_>>())
     .expect("addresses to resolve");
 
-    let mut dht: Dht = Dht::with_config(
+    let mut dht: Dht = Dht::new(
         sloppy::Config {
-            local_id: sloppy::NodeId::rand().unwrap(),
+            local_id: sloppy::node::Id::rand().unwrap(),
             client_version: Some(serde_bytes::ByteBuf::from("ab12")),
             default_query_timeout: Duration::from_secs(30),
             is_read_only_node: true,
@@ -144,7 +144,7 @@ fn main() -> io::Result<()> {
                 if let Some(inbound_msg) = dht.read() {
                     // debug!("Read message: {:?}", inbound_msg);
                     match inbound_msg.msg() {
-                        sloppy::msg_buffer::Msg::Query(msg) => match msg.method_name_str() {
+                        sloppy::MsgEvent::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
                                 let ping_resp =
                                     ping::PingRespValues::with_id(dht.config().local_id);
@@ -186,9 +186,9 @@ fn main() -> io::Result<()> {
                                 }
                             }
                         },
-                        sloppy::msg_buffer::Msg::Resp(_)
-                        | sloppy::msg_buffer::Msg::Error(_)
-                        | sloppy::msg_buffer::Msg::Timeout => {}
+                        sloppy::MsgEvent::Resp(_)
+                        | sloppy::MsgEvent::Error(_)
+                        | sloppy::MsgEvent::Timeout => {}
                     }
                 } else {
                     break 'read;

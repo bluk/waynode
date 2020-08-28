@@ -10,9 +10,8 @@ use crate::{
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
     node::AddrOptId,
-    transaction,
+    transaction, ReadEvent,
 };
-use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::{
     collections::VecDeque,
@@ -41,39 +40,10 @@ impl OutboundMsg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Msg {
-    Resp(Value),
-    Error(Value),
-    Query(Value),
-    Timeout,
-}
-
-#[derive(Clone, Debug)]
-pub struct InboundMsg {
-    pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
-    pub(crate) tx_id: Option<transaction::Id>,
-    pub(crate) msg: Msg,
-}
-
-impl InboundMsg {
-    pub fn addr_opt_id(&self) -> AddrOptId<SocketAddr> {
-        self.addr_opt_id
-    }
-
-    pub fn tx_id(&self) -> Option<transaction::Id> {
-        self.tx_id
-    }
-
-    pub fn msg(&self) -> &Msg {
-        &self.msg
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct Buffer {
     client_version: Option<ByteBuf>,
-    inbound: VecDeque<InboundMsg>,
+    inbound: VecDeque<ReadEvent>,
     outbound: VecDeque<OutboundMsg>,
 }
 
@@ -86,11 +56,11 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn push_inbound(&mut self, msg: InboundMsg) {
+    pub(crate) fn push_inbound(&mut self, msg: ReadEvent) {
         self.inbound.push_back(msg);
     }
 
-    pub(crate) fn pop_inbound(&mut self) -> Option<InboundMsg> {
+    pub(crate) fn pop_inbound(&mut self) -> Option<ReadEvent> {
         self.inbound.pop_front()
     }
 

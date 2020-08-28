@@ -36,15 +36,14 @@ extern crate log;
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
-pub mod msg_buffer;
+pub(crate) mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
 pub mod torrent;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{transaction, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
-    msg_buffer::InboundMsg,
+    krpc::{transaction, ErrorVal, Kind, QueryArgs, QueryMsg, RespMsg, RespVal},
     node::{AddrId, AddrOptId},
 };
 use bt_bencode::Value;
@@ -53,6 +52,41 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
 };
+
+/// Events related to KRPC messages including responses, errors, queries, and timeouts.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MsgEvent {
+    Resp(Value),
+    Error(Value),
+    Query(Value),
+    Timeout,
+}
+
+/// A deserialized message event with the relevant node information and local
+/// transaction identifier.
+#[derive(Clone, Debug)]
+pub struct ReadEvent {
+    addr_opt_id: AddrOptId<SocketAddr>,
+    tx_id: Option<transaction::Id>,
+    msg: MsgEvent,
+}
+
+impl ReadEvent {
+    /// Returns the relevant node's network address and optional Id.
+    pub fn addr_opt_id(&self) -> AddrOptId<SocketAddr> {
+        self.addr_opt_id
+    }
+
+    /// Returns the relevant local transaction Id if the event is related to a query sent by the local node.
+    pub fn tx_id(&self) -> Option<transaction::Id> {
+        self.tx_id
+    }
+
+    /// Returns the message event which may contain a query, response, error, or timeout.
+    pub fn msg(&self) -> &MsgEvent {
+        &self.msg
+    }
+}
 
 /// Information about the data to send.
 #[derive(Clone, Copy, Debug)]
@@ -100,7 +134,7 @@ pub struct Dht {
 }
 
 impl Dht {
-    pub fn with_config<'a, A, B>(
+    pub fn new<'a, A, B>(
         config: Config,
         addr_ids: A,
         bootstrap_socket_addrs: B,
@@ -151,6 +185,7 @@ impl Dht {
         Ok(dht)
     }
 
+    /// Returns the config.
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -165,6 +200,8 @@ impl Dht {
         addr: SocketAddr,
         now: Instant,
     ) -> Result<(), error::Error> {
+        use krpc::Msg as KrpcMsg;
+
         debug!("on_recv_with_now addr={}", addr);
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
@@ -203,10 +240,10 @@ impl Dht {
                                 )?;
                             }
                             self.find_node_ops.retain(|op| !op.is_done());
-                            self.msg_buffer.push_inbound(InboundMsg {
+                            self.msg_buffer.push_inbound(ReadEvent {
                                 addr_opt_id: tx.addr_opt_id,
                                 tx_id: Some(tx.tx_id),
-                                msg: msg_buffer::Msg::Resp(value),
+                                msg: MsgEvent::Resp(value),
                             });
                         } else {
                             error!(
@@ -246,10 +283,10 @@ impl Dht {
                             )?;
                         }
                         self.find_node_ops.retain(|op| !op.is_done());
-                        self.msg_buffer.push_inbound(InboundMsg {
+                        self.msg_buffer.push_inbound(ReadEvent {
                             addr_opt_id: tx.addr_opt_id,
                             tx_id: Some(tx.tx_id),
-                            msg: msg_buffer::Msg::Error(value),
+                            msg: MsgEvent::Error(value),
                         });
                     }
                     // unexpected
@@ -280,10 +317,10 @@ impl Dht {
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         }
 
-                        self.msg_buffer.push_inbound(InboundMsg {
+                        self.msg_buffer.push_inbound(ReadEvent {
                             addr_opt_id,
                             tx_id: None,
-                            msg: msg_buffer::Msg::Query(value),
+                            msg: MsgEvent::Query(value),
                         });
                     }
                     // unexpected
@@ -307,7 +344,7 @@ impl Dht {
         Ok(())
     }
 
-    pub fn read(&mut self) -> Option<InboundMsg> {
+    pub fn read(&mut self) -> Option<ReadEvent> {
         self.msg_buffer.pop_inbound()
     }
 
@@ -419,10 +456,10 @@ impl Dht {
                     )?;
                 }
                 self.find_node_ops.retain(|op| !op.is_done());
-                self.msg_buffer.push_inbound(InboundMsg {
+                self.msg_buffer.push_inbound(ReadEvent {
                     addr_opt_id: tx.addr_opt_id,
                     tx_id: Some(tx.tx_id),
-                    msg: msg_buffer::Msg::Timeout,
+                    msg: MsgEvent::Timeout,
                 });
             }
         }
@@ -494,7 +531,7 @@ mod tests {
 
         let args = PingQueryArgs::with_id(id);
 
-        let mut dht: Dht = Dht::with_config(new_config()?, std::iter::empty(), std::iter::empty())?;
+        let mut dht: Dht = Dht::new(new_config()?, std::iter::empty(), std::iter::empty())?;
         let tx_id = dht.write_query(&args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
@@ -518,8 +555,7 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut dht: Dht =
-            Dht::with_config(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
+        let mut dht: Dht = Dht::new(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match dht.send_to(&mut out)? {
@@ -542,5 +578,3 @@ mod tests {
         }
     }
 }
-
-pub use node::Id as NodeId;
