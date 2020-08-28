@@ -15,7 +15,7 @@
 use crate::{
     error::Error,
     krpc::{CompactAddrV4Info, CompactAddrV6Info},
-    node::{AddrId, Id},
+    node::{AddrId, Id, LocalId},
     torrent::InfoHash,
 };
 use bt_bencode::Value;
@@ -38,13 +38,19 @@ pub struct GetPeersQueryArgs {
 
 impl GetPeersQueryArgs {
     /// Instantiates a new query message.
-    pub fn with_local_and_info_hash(id: Id, info_hash: InfoHash) -> Self {
-        Self { id, info_hash }
+    pub fn with_local_and_info_hash(id: LocalId, info_hash: InfoHash) -> Self {
+        Self {
+            id: Id::from(id),
+            info_hash,
+        }
     }
 
     /// Sets the querying node ID in the arguments.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 
     /// Returns the `InfoHash` for the relevant torrent.
@@ -143,14 +149,14 @@ pub struct GetPeersRespValues {
 impl GetPeersRespValues {
     /// Instantiates a new instance.
     pub fn new(
-        id: Id,
+        id: LocalId,
         token: ByteBuf,
         values: Option<Vec<SocketAddr>>,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
         nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
     ) -> Self {
         Self {
-            id,
+            id: Id::from(id),
             token,
             values,
             nodes,
@@ -159,8 +165,11 @@ impl GetPeersRespValues {
     }
 
     /// Sets the queried node Id.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 
     /// Returns an opaque token which can be used in an announce peer message.

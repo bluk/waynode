@@ -109,7 +109,7 @@ pub enum SupportedAddr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Local node id
-    pub local_id: node::Id,
+    pub local_id: node::LocalId,
     /// Client version identifier
     pub client_version: Option<ByteBuf>,
     /// The default amount of time before a query without a response is considered timed out
@@ -144,7 +144,7 @@ impl Dht {
         B: IntoIterator<Item = SocketAddr>,
     {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
-        let local_id = config.local_id;
+        let local_id = node::Id::from(config.local_id);
         let client_version = config.client_version.clone();
         let now = Instant::now();
 
@@ -174,7 +174,7 @@ impl Dht {
             find_node_ops: Vec::new(),
         };
         dht.routing_table.find_node(
-            dht.config.local_id,
+            node::Id::from(dht.config.local_id),
             &dht.config,
             &mut dht.tx_manager,
             &mut dht.msg_buffer,
@@ -216,7 +216,7 @@ impl Dht {
                         // TODO: Process result but don't add to routing table if queried_node_id
                         // is equal to self.config.local_id
                         if queried_node_id.is_some()
-                            && queried_node_id != Some(self.config.local_id)
+                            && queried_node_id != Some(node::Id::from(self.config.local_id))
                             && tx.is_node_id_match(queried_node_id)
                         {
                             if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
@@ -355,7 +355,7 @@ impl Dht {
         timeout: Option<Duration>,
     ) -> Result<transaction::Id, error::Error>
     where
-        T: QueryArgs + std::fmt::Debug,
+        T: QueryArgs,
         A: Into<AddrOptId<SocketAddr>>,
     {
         self.msg_buffer.write_query(
@@ -501,7 +501,7 @@ mod tests {
 
     fn new_config() -> Result<Config, error::Error> {
         Ok(Config {
-            local_id: node::Id::rand()?,
+            local_id: node::LocalId::from(node::Id::rand()?),
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -525,11 +525,12 @@ mod tests {
 
     #[test]
     fn test_send_ping() -> Result<(), error::Error> {
+        let local_id = node::LocalId(node_id());
         let id = node_id();
         let remote_addr = remote_addr();
         let addr_opt_id = AddrOptId::with_addr_and_id(remote_addr, Some(id));
 
-        let args = PingQueryArgs::with_id(id);
+        let args = PingQueryArgs::with_id(local_id);
 
         let mut dht: Dht = Dht::new(new_config()?, std::iter::empty(), std::iter::empty())?;
         let tx_id = dht.write_query(&args, addr_opt_id, None).unwrap();
@@ -569,8 +570,14 @@ mod tests {
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
-                assert_eq!(find_node_query_args.target(), dht.config.local_id);
-                assert_eq!(find_node_query_args.id(), dht.config.local_id);
+                assert_eq!(
+                    find_node_query_args.target(),
+                    node::Id::from(dht.config.local_id)
+                );
+                assert_eq!(
+                    find_node_query_args.id(),
+                    node::Id::from(dht.config.local_id)
+                );
 
                 Ok(())
             }

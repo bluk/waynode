@@ -724,7 +724,7 @@ impl RoutingTable {
             ),
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
                 routing_table_v4.find_node(
-                    config.local_id,
+                    target_id,
                     &config,
                     tx_manager,
                     msg_buffer,
@@ -733,7 +733,7 @@ impl RoutingTable {
                     now,
                 )?;
                 routing_table_v6.find_node(
-                    config.local_id,
+                    target_id,
                     &config,
                     tx_manager,
                     msg_buffer,

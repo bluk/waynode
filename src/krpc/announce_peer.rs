@@ -12,7 +12,11 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::{error::Error, node::Id, torrent::InfoHash};
+use crate::{
+    error::Error,
+    node::{Id, LocalId},
+    torrent::InfoHash,
+};
 use bt_bencode::{value::Number, Value};
 use serde_bytes::ByteBuf;
 use std::{collections::BTreeMap, convert::TryFrom};
@@ -33,14 +37,14 @@ pub struct AnnouncePeerQueryArgs {
 impl AnnouncePeerQueryArgs {
     /// Instantiates a new query message.
     pub fn new(
-        id: Id,
+        id: LocalId,
         info_hash: InfoHash,
         token: ByteBuf,
         port: Option<u16>,
         implied_port: Option<bool>,
     ) -> Self {
         Self {
-            id,
+            id: Id::from(id),
             info_hash,
             token,
             port,
@@ -49,8 +53,11 @@ impl AnnouncePeerQueryArgs {
     }
 
     /// Sets the querying node ID in the arguments.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 
     /// Returns the `InfoHash` for the relevant torrent.
@@ -212,13 +219,16 @@ pub struct AnnouncePeerRespValues {
 
 impl AnnouncePeerRespValues {
     /// Instantiates a new instance.
-    pub fn new(id: Id) -> Self {
-        Self { id }
+    pub fn new(id: LocalId) -> Self {
+        Self { id: id.into() }
     }
 
     /// Sets the queried node Id.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 }
 

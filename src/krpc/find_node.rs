@@ -14,7 +14,7 @@
 
 use crate::{
     krpc::{CompactAddrV4Info, CompactAddrV6Info},
-    node::{AddrId, Id},
+    node::{AddrId, Id, LocalId},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -34,13 +34,19 @@ pub struct FindNodeQueryArgs {
 
 impl FindNodeQueryArgs {
     /// Instantiates a new query message with the local querying node Id and the target Id.
-    pub fn with_local_and_target(id: Id, target: Id) -> Self {
-        Self { id, target }
+    pub fn with_local_and_target(id: LocalId, target: Id) -> Self {
+        Self {
+            id: id.into(),
+            target,
+        }
     }
 
     /// Sets the querying node ID in the arguments.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 
     /// Returns the target Id.
@@ -137,16 +143,23 @@ pub struct FindNodeRespValues {
 impl FindNodeRespValues {
     /// Instantiates a new instance.
     pub fn with_id_and_nodes_and_nodes6(
-        id: Id,
+        id: LocalId,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
         nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
     ) -> Self {
-        Self { id, nodes, nodes6 }
+        Self {
+            id: Id::from(id),
+            nodes,
+            nodes6,
+        }
     }
 
     /// Sets the queried node Id.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 
     /// Returns the IPv4 nodes.

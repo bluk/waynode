@@ -15,7 +15,6 @@ use crate::{
 use serde_bytes::ByteBuf;
 use std::{
     collections::VecDeque,
-    fmt,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -72,20 +71,12 @@ impl Buffer {
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::Id, Error>
     where
-        T: QueryArgs + fmt::Debug,
+        T: QueryArgs,
         A: Into<AddrOptId<SocketAddr>>,
     {
         let tx_id = tx_manager.next_transaction_id();
 
         let addr_opt_id = addr_opt_id.into();
-
-        debug!(
-            "write_query tx_id={:?} method_name={:?} addr_opt_id={:?} args={:?}",
-            tx_id,
-            String::from_utf8(Vec::from(T::method_name())),
-            &addr_opt_id,
-            &args
-        );
 
         self.outbound.push_back(OutboundMsg {
             tx_id: Some(tx_id),

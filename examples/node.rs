@@ -76,7 +76,7 @@ fn main() -> io::Result<()> {
 
     let mut dht: Dht = Dht::new(
         sloppy::Config {
-            local_id: sloppy::node::Id::rand().unwrap(),
+            local_id: sloppy::node::LocalId::new(sloppy::node::Id::rand().unwrap()),
             client_version: Some(serde_bytes::ByteBuf::from("ab12")),
             default_query_timeout: Duration::from_secs(30),
             is_read_only_node: true,

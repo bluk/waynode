@@ -12,7 +12,7 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::node::Id;
+use crate::node::{Id, LocalId};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::collections::BTreeMap;
@@ -29,13 +29,16 @@ pub struct PingQueryArgs {
 
 impl PingQueryArgs {
     /// Instantiates a new query message.
-    pub fn with_id(id: Id) -> Self {
-        Self { id }
+    pub fn with_id(id: LocalId) -> Self {
+        Self { id: Id::from(id) }
     }
 
     /// Sets the querying node ID in the arguments.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 }
 
@@ -110,13 +113,16 @@ pub struct PingRespValues {
 
 impl PingRespValues {
     /// Instantiates a new instance.
-    pub fn with_id(id: Id) -> Self {
-        Self { id }
+    pub fn with_id(id: LocalId) -> Self {
+        Self { id: Id::from(id) }
     }
 
     /// Sets the queried node Id.
-    pub fn set_id(&mut self, id: Id) {
-        self.id = id;
+    pub fn set_id<I>(&mut self, id: I)
+    where
+        I: Into<Id>,
+    {
+        self.id = id.into();
     }
 }
 

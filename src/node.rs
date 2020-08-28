@@ -191,6 +191,12 @@ impl From<Id> for [u8; 20] {
     }
 }
 
+impl From<LocalId> for Id {
+    fn from(local_id: LocalId) -> Id {
+        local_id.0
+    }
+}
+
 impl Ord for Id {
     fn cmp(&self, other: &Self) -> Ordering {
         for idx in 0..self.0.len() {
@@ -229,6 +235,24 @@ impl TryFrom<&[u8]> for Id {
         let mut data: [u8; 20] = [0; 20];
         data.copy_from_slice(value);
         Ok(Id(data))
+    }
+}
+
+/// An `Id` that identifies the local node.
+///
+/// It is a newtype to prevent using the local node ID in KRPC message arguments when a target Id is desired (or vice-versa).
+#[derive(Debug, Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct LocalId(pub(crate) Id);
+
+impl LocalId {
+    pub fn new(id: Id) -> Self {
+        Self(id)
+    }
+}
+
+impl From<Id> for LocalId {
+    fn from(id: Id) -> LocalId {
+        LocalId(id)
     }
 }
 
