@@ -43,11 +43,9 @@ pub mod torrent;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{
-        transaction, CompactNodeInfo, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal,
-    },
+    krpc::{transaction, ErrorVal, Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal},
     msg_buffer::InboundMsg,
-    node::AddrOptId,
+    node::{AddrId, AddrOptId},
 };
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
@@ -104,11 +102,11 @@ pub struct Dht {
 impl Dht {
     pub fn with_config<'a, A, B>(
         config: Config,
-        node_infos: A,
+        addr_ids: A,
         bootstrap_socket_addrs: B,
     ) -> Result<Self, error::Error>
     where
-        A: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
+        A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
     {
         let max_node_count_per_bucket = config.max_node_count_per_bucket;
@@ -132,7 +130,7 @@ impl Dht {
                 routing::Table::new(local_id, max_node_count_per_bucket, now),
             ),
         };
-        routing_table.try_insert_node_infos(node_infos, now);
+        routing_table.try_insert_addr_ids(addr_ids, now);
 
         let mut dht = Self {
             config,
@@ -186,7 +184,7 @@ impl Dht {
                         {
                             if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
                                 self.routing_table.on_msg_received(
-                                    CompactNodeInfo::with_addr_and_id(addr, node_id),
+                                    AddrId::with_addr_and_id(addr, node_id),
                                     &kind,
                                     &self.config,
                                     &mut self.tx_manager,
@@ -229,7 +227,7 @@ impl Dht {
                     Kind::Error => {
                         if let Some(node_id) = tx.addr_opt_id.id() {
                             self.routing_table.on_msg_received(
-                                CompactNodeInfo::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
+                                AddrId::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,
@@ -278,7 +276,7 @@ impl Dht {
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::with_addr_and_id(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
-                            self.routing_table.on_msg_received(CompactNodeInfo::with_addr_and_id(addr, node_id), &kind, &self.config, &mut
+                            self.routing_table.on_msg_received(AddrId::with_addr_and_id(addr, node_id), &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         }
 
@@ -403,7 +401,7 @@ impl Dht {
                 debug!("tx timed out: {:?}", tx);
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
-                        CompactNodeInfo::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
+                        AddrId::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
@@ -442,17 +440,11 @@ impl Dht {
         Ok(())
     }
 
-    pub fn find_neighbors_ipv4(
-        &self,
-        id: node::Id,
-    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV4>> {
+    pub fn find_neighbors_ipv4(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
         self.routing_table.find_neighbors_ipv4(id)
     }
 
-    pub fn find_neighbors_ipv6(
-        &self,
-        id: node::Id,
-    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV6>> {
+    pub fn find_neighbors_ipv6(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         self.routing_table.find_neighbors_ipv6(id)
     }
 }

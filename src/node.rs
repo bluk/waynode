@@ -9,7 +9,6 @@
 //! A node is a client/server which implements the DHT protocol.
 
 use crate::error::Error;
-use crate::krpc::CompactNodeInfo;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -336,6 +335,106 @@ impl Addr for SocketAddrV4 {}
 
 impl Addr for SocketAddrV6 {}
 
+/// A node's network address and Id.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct AddrId<A>
+where
+    A: Addr,
+{
+    addr: A,
+    id: Id,
+}
+
+impl<A> AddrId<A>
+where
+    A: Addr,
+{
+    /// Instantiate with a network address and an Id.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use std::net::ToSocketAddrs;
+    /// use sloppy::node::{AddrId, Id};
+    ///
+    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
+    /// let node_id = Id::rand().unwrap();
+    /// let addr_id = AddrId::with_addr_and_id(socket_addr, node_id);
+    /// assert_eq!(addr_id .addr(), socket_addr);
+    /// assert_eq!(addr_id.id(), node_id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_addr_and_id(addr: A, id: Id) -> Self {
+        Self { addr, id }
+    }
+
+    /// Returns the network address.
+    pub fn addr(&self) -> A {
+        self.addr
+    }
+
+    /// Returns the node Id.
+    pub fn id(&self) -> Id {
+        self.id
+    }
+}
+
+impl From<AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
+    fn from(addr_id: AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
+        AddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+    }
+}
+
+impl From<AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
+    fn from(addr_id: AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
+        AddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+    }
+}
+
+impl From<&AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
+    fn from(addr_id: &AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
+        AddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+    }
+}
+
+impl From<&AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
+    fn from(addr_id: &AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
+        AddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+    }
+}
+
+impl From<AddrId<SocketAddrV4>> for SocketAddrV4 {
+    fn from(addr_id: AddrId<SocketAddrV4>) -> SocketAddrV4 {
+        addr_id.addr()
+    }
+}
+
+impl From<AddrId<SocketAddrV6>> for SocketAddrV6 {
+    fn from(addr_id: AddrId<SocketAddrV6>) -> SocketAddrV6 {
+        addr_id.addr()
+    }
+}
+
+impl From<AddrId<SocketAddr>> for SocketAddr {
+    fn from(addr_id: AddrId<SocketAddr>) -> SocketAddr {
+        addr_id.addr()
+    }
+}
+
+impl From<AddrId<SocketAddrV4>> for SocketAddr {
+    fn from(addr_id: AddrId<SocketAddrV4>) -> SocketAddr {
+        SocketAddr::V4(addr_id.addr())
+    }
+}
+
+impl From<AddrId<SocketAddrV6>> for SocketAddr {
+    fn from(addr_id: AddrId<SocketAddrV6>) -> SocketAddr {
+        SocketAddr::V6(addr_id.addr())
+    }
+}
+
 /// A node's network address and optional Id.
 ///
 /// In order to send messages to other nodes, a network address is required.
@@ -470,67 +569,97 @@ impl From<&AddrOptId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     }
 }
 
-impl From<CompactNodeInfo<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
-    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
+    fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-impl From<CompactNodeInfo<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
-    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
+    fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-impl From<CompactNodeInfo<SocketAddrV4>> for AddrOptId<SocketAddr> {
-    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(node_info.addr()), Some(node_info.id()))
+impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
+        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
-impl From<CompactNodeInfo<SocketAddrV6>> for AddrOptId<SocketAddr> {
-    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(node_info.addr()), Some(node_info.id()))
+impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
+        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
-impl From<CompactNodeInfo<SocketAddr>> for AddrOptId<SocketAddr> {
-    fn from(node_info: CompactNodeInfo<SocketAddr>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: AddrId<SocketAddr>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-impl From<&CompactNodeInfo<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
-    fn from(node_info: &CompactNodeInfo<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
+    fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-impl From<&CompactNodeInfo<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
-    fn from(node_info: &CompactNodeInfo<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
+    fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-impl From<&CompactNodeInfo<SocketAddrV4>> for AddrOptId<SocketAddr> {
-    fn from(node_info: &CompactNodeInfo<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(node_info.addr()), Some(node_info.id()))
+impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
+        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
-impl From<&CompactNodeInfo<SocketAddrV6>> for AddrOptId<SocketAddr> {
-    fn from(node_info: &CompactNodeInfo<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(node_info.addr()), Some(node_info.id()))
+impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
+        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
-impl From<&CompactNodeInfo<SocketAddr>> for AddrOptId<SocketAddr> {
-    fn from(node_info: &CompactNodeInfo<SocketAddr>) -> Self {
-        AddrOptId::with_addr_and_id(node_info.addr(), Some(node_info.id()))
+impl From<&AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
+    fn from(addr_opt_id: &AddrId<SocketAddr>) -> Self {
+        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
-// impl AddrId {
+impl From<AddrOptId<SocketAddrV4>> for SocketAddrV4 {
+    fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> SocketAddrV4 {
+        addr_opt_id.addr()
+    }
+}
+
+impl From<AddrOptId<SocketAddrV6>> for SocketAddrV6 {
+    fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> SocketAddrV6 {
+        addr_opt_id.addr()
+    }
+}
+
+impl From<AddrOptId<SocketAddr>> for SocketAddr {
+    fn from(addr_opt_id: AddrOptId<SocketAddr>) -> SocketAddr {
+        addr_opt_id.addr()
+    }
+}
+
+impl From<AddrOptId<SocketAddrV4>> for SocketAddr {
+    fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> SocketAddr {
+        SocketAddr::V4(addr_opt_id.addr())
+    }
+}
+
+impl From<AddrOptId<SocketAddrV6>> for SocketAddr {
+    fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> SocketAddr {
+        SocketAddr::V6(addr_opt_id.addr())
+    }
+}
+
+// impl AddrOptId {
 // use crate::{addr::NodeIdGenerator, node::Id};
 // use serde::{Deserialize, Serialize};
 // use std::net::{SocketAddr, ToSocketAddrs};

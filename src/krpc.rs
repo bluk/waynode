@@ -8,14 +8,13 @@
 
 //! KRPC messages are the protocol messages exchanged.
 
-use crate::{node::Addr, node::Id};
+use crate::node::Id;
 use bt_bencode::Value;
-use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
 /// Type of KRPC message.
@@ -295,82 +294,6 @@ mod private {
 
     impl Sealed for SocketAddrV6 {}
     impl Sealed for SocketAddrV4 {}
-}
-
-/// A node's network address and Id.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct CompactNodeInfo<A>
-where
-    A: Addr,
-{
-    addr: A,
-    id: Id,
-}
-
-impl<A> CompactNodeInfo<A>
-where
-    A: Addr,
-{
-    /// Instantiate with a network address and an optional Id.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), std::io::Error> {
-    /// use std::net::ToSocketAddrs;
-    /// use sloppy::{node::Id, krpc::CompactNodeInfo};
-    ///
-    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
-    /// let node_id = Id::rand().unwrap();
-    /// let compact_node_info = CompactNodeInfo::with_addr_and_id(socket_addr, node_id);
-    /// assert_eq!(compact_node_info.addr(), socket_addr);
-    /// assert_eq!(compact_node_info.id(), node_id);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_addr_and_id(addr: A, id: Id) -> Self {
-        Self { addr, id }
-    }
-
-    /// Returns the network address.
-    pub fn addr(&self) -> A {
-        self.addr
-    }
-
-    /// Returns the node Id.
-    pub fn id(&self) -> Id {
-        self.id
-    }
-}
-
-impl From<CompactNodeInfo<SocketAddrV4>> for SocketAddrV4 {
-    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> SocketAddrV4 {
-        node_info.addr()
-    }
-}
-
-impl From<CompactNodeInfo<SocketAddrV6>> for SocketAddrV6 {
-    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> SocketAddrV6 {
-        node_info.addr()
-    }
-}
-
-impl From<CompactNodeInfo<SocketAddr>> for SocketAddr {
-    fn from(node_info: CompactNodeInfo<SocketAddr>) -> SocketAddr {
-        node_info.addr()
-    }
-}
-
-impl From<CompactNodeInfo<SocketAddrV4>> for SocketAddr {
-    fn from(node_info: CompactNodeInfo<SocketAddrV4>) -> SocketAddr {
-        SocketAddr::V4(node_info.addr())
-    }
-}
-
-impl From<CompactNodeInfo<SocketAddrV6>> for SocketAddr {
-    fn from(node_info: CompactNodeInfo<SocketAddrV6>) -> SocketAddr {
-        SocketAddr::V6(node_info.addr())
-    }
 }
 
 pub mod announce_peer;

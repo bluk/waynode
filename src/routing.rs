@@ -9,9 +9,9 @@
 use crate::{
     error::Error,
     find_node_op::FindNodeOp,
-    krpc::{ping::PingQueryArgs, CompactNodeInfo, Kind},
+    krpc::{ping::PingQueryArgs, Kind},
     msg_buffer,
-    node::{Addr, AddrOptId, Id},
+    node::{Addr, AddrId, AddrOptId, Id},
     transaction,
 };
 use std::{
@@ -33,7 +33,7 @@ struct Node<A>
 where
     A: Addr + Into<SocketAddr>,
 {
-    node_info: CompactNodeInfo<A>,
+    addr_id: AddrId<A>,
     missing_responses: u8,
     next_response_deadline: Option<Instant>,
     next_query_deadline: Option<Instant>,
@@ -46,9 +46,9 @@ where
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-    fn with_node_info(node_info: CompactNodeInfo<A>) -> Self {
+    fn with_addr_id(addr_id: AddrId<A>) -> Self {
         Self {
-            node_info,
+            addr_id,
             missing_responses: 0,
             next_response_deadline: None,
             next_query_deadline: None,
@@ -161,14 +161,9 @@ where
         self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
     }
 
-    fn try_insert(
-        &mut self,
-        max_nodes_per_bucket: usize,
-        node_info: CompactNodeInfo<A>,
-        now: Instant,
-    ) {
+    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: AddrId<A>, now: Instant) {
         if self.nodes.len() < max_nodes_per_bucket {
-            let node = Node::with_node_info(node_info);
+            let node = Node::with_addr_id(addr_id);
             self.nodes.push(node);
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -178,7 +173,7 @@ where
             .rev()
             .position(|n| n.state_with_now(now) == NodeState::Bad)
         {
-            let node = Node::with_node_info(node_info);
+            let node = Node::with_addr_id(addr_id);
             self.nodes[pos] = node;
             self.sort_node_ids(now);
             self.update_expected_change_deadline();
@@ -190,7 +185,7 @@ where
                 .rev()
                 .position(|n| n.state_with_now(now) == NodeState::Questionable)
             {
-                let node = Node::with_node_info(node_info);
+                let node = Node::with_addr_id(addr_id);
                 self.nodes[pos] = node;
                 self.update_expected_change_deadline();
             }
@@ -229,8 +224,8 @@ where
             msg_buffer.write_query(
                 &PingQueryArgs::with_id(config.local_id),
                 AddrOptId::with_addr_and_id(
-                    node_to_ping.node_info.addr().into(),
-                    Some(node_to_ping.node_info.id()),
+                    node_to_ping.addr_id.addr().into(),
+                    Some(node_to_ping.addr_id.id()),
                 ),
                 config.default_query_timeout,
                 tx_manager,
@@ -243,14 +238,14 @@ where
     fn on_msg_received<'a>(
         &mut self,
         max_nodes_per_bucket: usize,
-        node_info: CompactNodeInfo<A>,
+        addr_id: AddrId<A>,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.node_info == node_info) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
             node.on_msg_received(kind, now);
             match kind {
                 Kind::Response | Kind::Query => {
@@ -290,7 +285,7 @@ where
             }
 
             if self.nodes.len() < max_nodes_per_bucket {
-                let mut node = Node::with_node_info(node_info);
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.nodes.push(node);
                 self.sort_node_ids(now);
@@ -301,13 +296,13 @@ where
                 .rev()
                 .position(|n| n.state_with_now(now) == NodeState::Bad)
             {
-                let mut node = Node::with_node_info(node_info);
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = node;
                 self.sort_node_ids(now);
                 self.update_expected_change_deadline();
             } else if self.replacement_nodes.len() < self.max_replacement_nodes(now) {
-                let mut node = Node::with_node_info(node_info);
+                let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
                 self.replacement_nodes.push(node);
                 self.sort_node_ids(now);
@@ -321,13 +316,13 @@ where
 
     fn on_resp_timeout(
         &mut self,
-        node_info: CompactNodeInfo<A>,
+        addr_id: AddrId<A>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.node_info == node_info) {
+        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
             node.on_resp_timeout();
             match node.state_with_now(now) {
                 NodeState::Good => {
@@ -359,7 +354,7 @@ where
         let mut upper_bucket = Bucket::new(middle..=*self.range.end(), max_nodes_per_bucket);
 
         for node in self.nodes.into_iter() {
-            let node_id = node.node_info.id();
+            let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
                 lower_bucket.nodes.push(node);
             } else {
@@ -368,7 +363,7 @@ where
         }
 
         for node in self.replacement_nodes.into_iter() {
-            let node_id = node.node_info.id();
+            let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
                 lower_bucket.replacement_nodes.push(node);
             } else {
@@ -379,14 +374,14 @@ where
         (lower_bucket, upper_bucket)
     }
 
-    fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &CompactNodeInfo<A>> {
+    fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &AddrId<A>> {
         self.nodes
             .iter()
             .filter(move |n| {
                 n.state_with_now(now) == NodeState::Questionable
                     || n.state_with_now(now) == NodeState::Good
             })
-            .map(|n| &n.node_info)
+            .map(|n| &n.addr_id)
     }
 
     fn sort_node_ids(&mut self, now: Instant) {
@@ -464,8 +459,8 @@ where
         Ok(())
     }
 
-    fn try_insert(&mut self, node_info: CompactNodeInfo<A>, now: Instant) {
-        let node_id = node_info.id();
+    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
+        let node_id = addr_id.id();
         if node_id == self.pivot {
             return;
         }
@@ -479,9 +474,9 @@ where
             let bucket = self.buckets.pop().expect("last bucket should always exist");
             let (mut first_bucket, mut second_bucket) = bucket.split(self.max_nodes_per_bucket);
             if first_bucket.range.contains(&node_id) {
-                first_bucket.try_insert(self.max_nodes_per_bucket, node_info, now);
+                first_bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
             } else {
-                second_bucket.try_insert(self.max_nodes_per_bucket, node_info, now);
+                second_bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -492,15 +487,11 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.try_insert(self.max_nodes_per_bucket, node_info, now);
+            bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
         }
     }
 
-    pub(crate) fn find_neighbors(
-        &self,
-        id: Id,
-        now: Instant,
-    ) -> std::vec::IntoIter<CompactNodeInfo<A>> {
+    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>> {
         let mut nodes = self
             .buckets
             .iter()
@@ -512,14 +503,14 @@ where
 
     pub(crate) fn on_msg_received<'a>(
         &mut self,
-        node_info: CompactNodeInfo<A>,
+        addr_id: AddrId<A>,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        let node_id = node_info.id();
+        let node_id = addr_id.id();
         if node_id == self.pivot {
             return Ok(());
         }
@@ -535,7 +526,7 @@ where
             if first_bucket.range.contains(&node_id) {
                 first_bucket.on_msg_received(
                     self.max_nodes_per_bucket,
-                    node_info,
+                    addr_id,
                     kind,
                     config,
                     tx_manager,
@@ -545,7 +536,7 @@ where
             } else {
                 second_bucket.on_msg_received(
                     self.max_nodes_per_bucket,
-                    node_info,
+                    addr_id,
                     kind,
                     config,
                     tx_manager,
@@ -564,7 +555,7 @@ where
         } else {
             bucket.on_msg_received(
                 self.max_nodes_per_bucket,
-                node_info,
+                addr_id,
                 kind,
                 config,
                 tx_manager,
@@ -577,19 +568,19 @@ where
 
     pub(crate) fn on_resp_timeout(
         &mut self,
-        node_info: CompactNodeInfo<A>,
+        addr_id: AddrId<A>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        let node_id = node_info.id();
+        let node_id = addr_id.id();
         let bucket = self
             .buckets
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        bucket.on_resp_timeout(node_info, config, tx_manager, msg_buffer, now)?;
+        bucket.on_resp_timeout(addr_id, config, tx_manager, msg_buffer, now)?;
         Ok(())
     }
 
@@ -663,23 +654,25 @@ pub(crate) enum RoutingTable {
 }
 
 impl RoutingTable {
-    pub(crate) fn try_insert_node_infos<'a, I>(&mut self, addrs: I, now: Instant)
+    pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: Instant)
     where
-        I: IntoIterator<Item = &'a CompactNodeInfo<SocketAddr>>,
+        I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
     {
-        for node_info in addrs.into_iter() {
-            match node_info.addr() {
+        for addr_id in addrs.into_iter() {
+            match addr_id.addr() {
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
-                    | RoutingTable::Ipv4AndIpv6(routing_table, _) => routing_table
-                        .try_insert(CompactNodeInfo::with_addr_and_id(addr, node_info.id()), now),
+                    | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
+                        routing_table.try_insert(AddrId::with_addr_and_id(addr, addr_id.id()), now)
+                    }
                     RoutingTable::Ipv6(_) => {}
                 },
                 SocketAddr::V6(addr) => match self {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
-                    | RoutingTable::Ipv4AndIpv6(_, routing_table) => routing_table
-                        .try_insert(CompactNodeInfo::with_addr_and_id(addr, node_info.id()), now),
+                    | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
+                        routing_table.try_insert(AddrId::with_addr_and_id(addr, addr_id.id()), now)
+                    }
                 },
             }
         }
@@ -755,18 +748,18 @@ impl RoutingTable {
 
     pub(crate) fn on_msg_received<'a>(
         &mut self,
-        node_info: CompactNodeInfo<SocketAddr>,
+        addr_id: AddrId<SocketAddr>,
         kind: &Kind<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        match node_info.addr() {
+        match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_msg_received(
-                        CompactNodeInfo::with_addr_and_id(addr, node_info.id()),
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -780,7 +773,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_msg_received(
-                        CompactNodeInfo::with_addr_and_id(addr, node_info.id()),
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -795,17 +788,17 @@ impl RoutingTable {
 
     pub(crate) fn on_resp_timeout(
         &mut self,
-        node_info: CompactNodeInfo<SocketAddr>,
+        addr_id: AddrId<SocketAddr>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), crate::error::Error> {
-        match node_info.addr() {
+        match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_resp_timeout(
-                        CompactNodeInfo::with_addr_and_id(addr, node_info.id()),
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
@@ -818,7 +811,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_resp_timeout(
-                        CompactNodeInfo::with_addr_and_id(addr, node_info.id()),
+                        AddrId::with_addr_and_id(addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
@@ -866,10 +859,7 @@ impl RoutingTable {
         }
     }
 
-    pub fn find_neighbors_ipv4(
-        &self,
-        id: Id,
-    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV4>> {
+    pub fn find_neighbors_ipv4(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
         match self {
             RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                 routing_table.find_neighbors(id, Instant::now())
@@ -878,10 +868,7 @@ impl RoutingTable {
         }
     }
 
-    pub fn find_neighbors_ipv6(
-        &self,
-        id: Id,
-    ) -> impl Iterator<Item = CompactNodeInfo<SocketAddrV6>> {
+    pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         match self {
             RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                 routing_table.find_neighbors(id, Instant::now())

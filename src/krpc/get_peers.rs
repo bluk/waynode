@@ -8,8 +8,8 @@
 
 use crate::{
     error::Error,
-    krpc::{CompactAddrV4Info, CompactAddrV6Info, CompactNodeInfo},
-    node::Id,
+    krpc::{CompactAddrV4Info, CompactAddrV6Info},
+    node::{AddrId, Id},
     torrent::InfoHash,
 };
 use bt_bencode::Value;
@@ -124,8 +124,8 @@ pub struct GetPeersRespValues {
     id: Id,
     token: ByteBuf,
     values: Option<Vec<SocketAddr>>,
-    nodes: Option<Vec<CompactNodeInfo<SocketAddrV4>>>,
-    nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>,
+    nodes: Option<Vec<AddrId<SocketAddrV4>>>,
+    nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
 }
 
 impl GetPeersRespValues {
@@ -133,8 +133,8 @@ impl GetPeersRespValues {
         id: Id,
         token: ByteBuf,
         values: Option<Vec<SocketAddr>>,
-        nodes: Option<Vec<CompactNodeInfo<SocketAddrV4>>>,
-        nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>,
+        nodes: Option<Vec<AddrId<SocketAddrV4>>>,
+        nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
     ) -> Self {
         Self {
             id,
@@ -165,19 +165,19 @@ impl GetPeersRespValues {
         self.values = values;
     }
 
-    pub fn nodes(&self) -> Option<&Vec<CompactNodeInfo<SocketAddrV4>>> {
+    pub fn nodes(&self) -> Option<&Vec<AddrId<SocketAddrV4>>> {
         self.nodes.as_ref()
     }
 
-    pub fn set_nodes(&mut self, nodes: Option<Vec<CompactNodeInfo<SocketAddrV4>>>) {
+    pub fn set_nodes(&mut self, nodes: Option<Vec<AddrId<SocketAddrV4>>>) {
         self.nodes = nodes;
     }
 
-    pub fn nodes6(&self) -> Option<&Vec<CompactNodeInfo<SocketAddrV6>>> {
+    pub fn nodes6(&self) -> Option<&Vec<AddrId<SocketAddrV6>>> {
         self.nodes6.as_ref()
     }
 
-    pub fn set_nodes6(&mut self, nodes6: Option<Vec<CompactNodeInfo<SocketAddrV6>>>) {
+    pub fn set_nodes6(&mut self, nodes6: Option<Vec<AddrId<SocketAddrV6>>>) {
         self.nodes6 = nodes6;
     }
 }
@@ -241,7 +241,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                 .and_then(|nodes| nodes.as_byte_str())
                 .map(|nodes| {
                     let mut c = 0;
-                    let mut node_info: Vec<CompactNodeInfo<SocketAddrV4>> = vec![];
+                    let mut addr_ids: Vec<AddrId<SocketAddrV4>> = vec![];
                     // TODO: For all of these, need to verify that nodes.len() is a correct multiple and all of the data is consumed. If not, return an error.
                     while c * 26 < nodes.len() {
                         let offset = c * 26;
@@ -254,11 +254,11 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                         compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
                         let addr = SocketAddrV4::from_compact_address(compact_addr);
 
-                        node_info.push(CompactNodeInfo { id, addr });
+                        addr_ids.push(AddrId::with_addr_and_id(addr, id));
 
                         c += 1;
                     }
-                    node_info
+                    addr_ids
                 }),
             values
                 .get(&ByteBuf::from(String::from("nodes6")))
@@ -266,7 +266,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                 .map(|nodes6| {
                     // TODO: For all of these, need to verify that nodes.len() is a correct multiple and all of the data is consumed. If not, return an error.
                     let mut c = 0;
-                    let mut node_info: Vec<CompactNodeInfo<SocketAddrV6>> = vec![];
+                    let mut addr_ids: Vec<AddrId<SocketAddrV6>> = vec![];
                     while c * 38 < nodes6.len() {
                         let offset = c * 38;
 
@@ -278,11 +278,11 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                         compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);
                         let addr = SocketAddrV6::from_compact_address(compact_addr);
 
-                        node_info.push(CompactNodeInfo { id, addr });
+                        addr_ids.push(AddrId::with_addr_and_id(addr, id));
 
                         c += 1;
                     }
-                    node_info
+                    addr_ids
                 }),
         ) {
             (Some(id), Some(token), values, nodes, nodes6) => match values {
@@ -317,8 +317,8 @@ impl From<&GetPeersRespValues> for Value {
         if let Some(nodes) = &values.nodes {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes {
-                byte_str.extend_from_slice(&n.id.0);
-                byte_str.extend_from_slice(&n.addr.to_compact_address());
+                byte_str.extend_from_slice(&n.id().0);
+                byte_str.extend_from_slice(&n.addr().to_compact_address());
             }
             args.insert(
                 ByteBuf::from(String::from("nodes")),
@@ -329,8 +329,8 @@ impl From<&GetPeersRespValues> for Value {
         if let Some(nodes6) = &values.nodes6 {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes6 {
-                byte_str.extend_from_slice(&n.id.0);
-                byte_str.extend_from_slice(&n.addr.to_compact_address());
+                byte_str.extend_from_slice(&n.id().0);
+                byte_str.extend_from_slice(&n.addr().to_compact_address());
             }
             args.insert(
                 ByteBuf::from(String::from("nodes6")),
