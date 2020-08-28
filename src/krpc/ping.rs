@@ -6,20 +6,29 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Pings a node.
+//!
+//! The query and response are described in [BEP 5][bep_0005].
+//!
+//! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
 use crate::node::Id;
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
+/// The "ping" query method name.
 pub const METHOD_PING: &str = "ping";
 
+/// The arguments for the ping query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PingQueryArgs {
     id: Id,
 }
 
 impl PingQueryArgs {
+    /// Instantiates a new query message.
     pub fn with_id(id: Id) -> Self {
         Self { id }
     }
@@ -93,16 +102,19 @@ impl From<&PingQueryArgs> for Value {
     }
 }
 
+/// The value for the ping response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PingRespValues {
     id: Id,
 }
 
 impl PingRespValues {
+    /// Instantiates a new instance.
     pub fn with_id(id: Id) -> Self {
         Self { id }
     }
 
+    /// Sets the queried node Id.
     pub fn set_id(&mut self, id: Id) {
         self.id = id;
     }

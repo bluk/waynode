@@ -6,11 +6,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Error message values.
+//!
+//! Error messages are described in [BEP 5][bep_0005].
+//!
+//! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
 use super::ErrorCode;
 use bt_bencode::{value::Number, Value};
 use serde_bytes::ByteBuf;
 use std::convert::TryFrom;
 
+/// The error message values.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ErrorValues {
     code: ErrorCode,
@@ -18,18 +25,19 @@ pub struct ErrorValues {
 }
 
 impl ErrorValues {
+    /// Instantiates a standard error value with a code and description.
     pub fn with_code_and_desc(code: ErrorCode, description: String) -> Self {
         Self { code, description }
     }
 }
 
 impl ErrorValues {
-    /// Sets the error code.
+    /// Sets the code.
     pub fn set_code(&mut self, code: ErrorCode) {
         self.code = code;
     }
 
-    /// Sets the error description
+    /// Sets the description.
     pub fn set_description(&mut self, description: String) {
         self.description = description
     }

@@ -6,13 +6,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Announces a peer for a torrent.
+//!
+//! The query and response are described in [BEP 5][bep_0005].
+//!
+//! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
 use crate::{error::Error, node::Id, torrent::InfoHash};
 use bt_bencode::{value::Number, Value};
 use serde_bytes::ByteBuf;
 use std::{collections::BTreeMap, convert::TryFrom};
 
+/// The "announce_peer" query method name.
 pub const METHOD_ANNOUNCE_PEER: &str = "announce_peer";
 
+/// The arguments for the announce peer query message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnnouncePeerQueryArgs {
     id: Id,
@@ -23,12 +31,13 @@ pub struct AnnouncePeerQueryArgs {
 }
 
 impl AnnouncePeerQueryArgs {
-    pub fn with_id_and_info_hash_port_and_port_and_token(
+    /// Instantiates a new query message.
+    pub fn new(
         id: Id,
         info_hash: InfoHash,
         token: ByteBuf,
-        implied_port: Option<bool>,
         port: Option<u16>,
+        implied_port: Option<bool>,
     ) -> Self {
         Self {
             id,
@@ -44,34 +53,42 @@ impl AnnouncePeerQueryArgs {
         self.id = id;
     }
 
+    /// Returns the `InfoHash` for the relevant torrent.
     pub fn info_hash(&self) -> InfoHash {
         self.info_hash
     }
 
+    /// Sets the `InfoHash` for the relevant torrent.
     pub fn set_info_hash(&mut self, info_hash: InfoHash) {
         self.info_hash = info_hash;
     }
 
+    /// Returns the token which is used by the queried node for verification.
     pub fn token(&self) -> &ByteBuf {
         &self.token
     }
 
+    /// Sets the token which is used by the queried node for verification.
     pub fn set_token(&mut self, token: ByteBuf) {
         self.token = token;
     }
 
+    /// Returns the port which peers in the torrent should connect to.
     pub fn port(&self) -> Option<u16> {
         self.port
     }
 
+    /// Sets the port which peers in the torrent should connect to.
     pub fn set_port(&mut self, port: Option<u16>) {
         self.port = port;
     }
 
+    /// Returns if the port should be implied from the querying node's DHT sending port.
     pub fn implied_port(&self) -> Option<bool> {
         self.implied_port
     }
 
+    /// Sets if the port should be implied from the querying node's DHT sending port.
     pub fn set_implied_port(&mut self, implied_port: Option<bool>) {
         self.implied_port = implied_port;
     }
@@ -188,15 +205,18 @@ impl From<&AnnouncePeerQueryArgs> for Value {
     }
 }
 
+/// The value for the announce peer response.
 pub struct AnnouncePeerRespValues {
     id: Id,
 }
 
 impl AnnouncePeerRespValues {
-    pub fn with_id(id: Id) -> Self {
+    /// Instantiates a new instance.
+    pub fn new(id: Id) -> Self {
         Self { id }
     }
 
+    /// Sets the queried node Id.
     pub fn set_id(&mut self, id: Id) {
         self.id = id;
     }

@@ -6,6 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Finds nodes in the distributed hash table.
+//!
+//! The query and response are described in [BEP 5][bep_0005].
+//!
+//! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
 use crate::{
     krpc::{CompactAddrV4Info, CompactAddrV6Info},
     node::{AddrId, Id},
@@ -16,8 +22,10 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::net::{SocketAddrV4, SocketAddrV6};
 
+/// The "find_node" query method name.
 pub const METHOD_FIND_NODE: &str = "find_node";
 
+/// The arguments for the find node query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FindNodeQueryArgs {
     id: Id,
@@ -25,6 +33,7 @@ pub struct FindNodeQueryArgs {
 }
 
 impl FindNodeQueryArgs {
+    /// Instantiates a new query message with the local querying node Id and the target Id.
     pub fn with_local_and_target(id: Id, target: Id) -> Self {
         Self { id, target }
     }
@@ -34,10 +43,12 @@ impl FindNodeQueryArgs {
         self.id = id;
     }
 
+    /// Returns the target Id.
     pub fn target(&self) -> Id {
         self.target
     }
 
+    /// Sets the target Id.
     pub fn set_target(&mut self, target: Id) {
         self.target = target;
     }
@@ -116,6 +127,7 @@ impl From<&FindNodeQueryArgs> for Value {
     }
 }
 
+/// The value for the find node response.
 pub struct FindNodeRespValues {
     id: Id,
     nodes: Option<Vec<AddrId<SocketAddrV4>>>,
@@ -123,6 +135,7 @@ pub struct FindNodeRespValues {
 }
 
 impl FindNodeRespValues {
+    /// Instantiates a new instance.
     pub fn with_id_and_nodes_and_nodes6(
         id: Id,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
@@ -131,22 +144,27 @@ impl FindNodeRespValues {
         Self { id, nodes, nodes6 }
     }
 
+    /// Sets the queried node Id.
     pub fn set_id(&mut self, id: Id) {
         self.id = id;
     }
 
+    /// Returns the IPv4 nodes.
     pub fn nodes(&self) -> Option<&Vec<AddrId<SocketAddrV4>>> {
         self.nodes.as_ref()
     }
 
+    /// Sets the IPv4 nodes.
     pub fn set_nodes(&mut self, nodes: Option<Vec<AddrId<SocketAddrV4>>>) {
         self.nodes = nodes;
     }
 
+    /// Returns the IPv6 nodes.
     pub fn nodes6(&self) -> Option<&Vec<AddrId<SocketAddrV6>>> {
         self.nodes6.as_ref()
     }
 
+    /// Sets the IPv6 nodes.
     pub fn set_nodes6(&mut self, nodes6: Option<Vec<AddrId<SocketAddrV6>>>) {
         self.nodes6 = nodes6;
     }

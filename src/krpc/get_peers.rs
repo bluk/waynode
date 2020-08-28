@@ -6,6 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Gets peers for a torrent.
+//!
+//! The query and response are described in [BEP 5][bep_0005].
+//!
+//! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+
 use crate::{
     error::Error,
     krpc::{CompactAddrV4Info, CompactAddrV6Info},
@@ -20,8 +26,10 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
+/// The "get_peers" query method name.
 pub const METHOD_GET_PEERS: &str = "get_peers";
 
+/// The arguments for the get peers query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GetPeersQueryArgs {
     id: Id,
@@ -29,6 +37,7 @@ pub struct GetPeersQueryArgs {
 }
 
 impl GetPeersQueryArgs {
+    /// Instantiates a new query message.
     pub fn with_local_and_info_hash(id: Id, info_hash: InfoHash) -> Self {
         Self { id, info_hash }
     }
@@ -38,10 +47,12 @@ impl GetPeersQueryArgs {
         self.id = id;
     }
 
+    /// Returns the `InfoHash` for the relevant torrent.
     pub fn info_hash(&self) -> InfoHash {
         self.info_hash
     }
 
+    /// Sets the `InfoHash` for the relevant torrent.
     pub fn set_info_hash(&mut self, info_hash: InfoHash) {
         self.info_hash = info_hash;
     }
@@ -120,6 +131,7 @@ impl From<&GetPeersQueryArgs> for Value {
     }
 }
 
+/// The value for the get peers response.
 pub struct GetPeersRespValues {
     id: Id,
     token: ByteBuf,
@@ -129,7 +141,8 @@ pub struct GetPeersRespValues {
 }
 
 impl GetPeersRespValues {
-    pub fn with_id_and_token_and_values_and_nodes_and_nodes6(
+    /// Instantiates a new instance.
+    pub fn new(
         id: Id,
         token: ByteBuf,
         values: Option<Vec<SocketAddr>>,
@@ -145,38 +158,47 @@ impl GetPeersRespValues {
         }
     }
 
+    /// Sets the queried node Id.
     pub fn set_id(&mut self, id: Id) {
         self.id = id;
     }
 
+    /// Returns an opaque token which can be used in an announce peer message.
     pub fn token(&self) -> &ByteBuf {
         &self.token
     }
 
+    /// Sets an opaque token which can be used in an announce peer message.
     pub fn set_token(&mut self, token: ByteBuf) {
         self.token = token
     }
 
+    /// Returns peers' socket addresses for the torrent.
     pub fn values(&self) -> Option<&Vec<SocketAddr>> {
         self.values.as_ref()
     }
 
+    /// Sets peers' socket addresses for the torrent.
     pub fn set_values(&mut self, values: Option<Vec<SocketAddr>>) {
         self.values = values;
     }
 
+    /// Returns IPv4 nodes which may have more relevant information for the torrent.
     pub fn nodes(&self) -> Option<&Vec<AddrId<SocketAddrV4>>> {
         self.nodes.as_ref()
     }
 
+    /// Sets IPv4 nodes which may have more relevant information for the torrent.
     pub fn set_nodes(&mut self, nodes: Option<Vec<AddrId<SocketAddrV4>>>) {
         self.nodes = nodes;
     }
 
+    /// Returns IPv6 nodes which may have more relevant information for the torrent.
     pub fn nodes6(&self) -> Option<&Vec<AddrId<SocketAddrV6>>> {
         self.nodes6.as_ref()
     }
 
+    /// Sets IPv6 nodes which may have more relevant information for the torrent.
     pub fn set_nodes6(&mut self, nodes6: Option<Vec<AddrId<SocketAddrV6>>>) {
         self.nodes6 = nodes6;
     }
