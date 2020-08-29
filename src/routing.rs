@@ -190,7 +190,7 @@ where
         let pinged_nodes_count = self
             .nodes
             .iter()
-            .flat_map(|n| n)
+            .flatten()
             .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
             .count();
         let replacement_nodes_count = self
@@ -199,7 +199,7 @@ where
             .filter(|n| n.is_some())
             .count();
         if pinged_nodes_count < replacement_nodes_count {
-            if let Some(node_to_ping) = self.nodes.iter_mut().rev().flat_map(|n| n).find(|n| {
+            if let Some(node_to_ping) = self.nodes.iter_mut().rev().flatten().find(|n| {
                 n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
             }) {
                 msg_buffer.write_query(
@@ -230,7 +230,7 @@ where
         if let Some(node) = self
             .nodes
             .iter_mut()
-            .flat_map(|n| n)
+            .flatten()
             .find(|n| n.addr_id == addr_id)
         {
             node.on_msg_received(kind, now);
@@ -319,7 +319,7 @@ where
         if let Some(node) = self
             .nodes
             .iter_mut()
-            .flat_map(|n| n)
+            .flatten()
             .find(|n| n.addr_id == addr_id)
         {
             node.on_resp_timeout();
@@ -371,7 +371,7 @@ where
         let mut lower_bucket = Bucket::new(*self.range.start()..=middle.prev());
         let mut upper_bucket = Bucket::new(middle..=*self.range.end());
 
-        for node in self.nodes.iter().flat_map(|n| n) {
+        for node in self.nodes.iter().flatten() {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
                 lower_bucket.split_insert(*node);
@@ -380,7 +380,7 @@ where
             }
         }
 
-        for node in self.replacement_nodes.iter().flat_map(|n| n) {
+        for node in self.replacement_nodes.iter().flatten() {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
                 lower_bucket.split_replacement_insert(*node);
@@ -395,7 +395,7 @@ where
     fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &AddrId<A>> {
         self.nodes
             .iter()
-            .flat_map(|n| n)
+            .flatten()
             .filter(move |n| {
                 n.state_with_now(now) == NodeState::Questionable
                     || n.state_with_now(now) == NodeState::Good
@@ -462,10 +462,9 @@ where
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
-        find_node_ops: &mut Vec<FindNodeOp>,
         bootstrap_addrs: I,
         now: Instant,
-    ) -> Result<(), Error>
+    ) -> Result<FindNodeOp, Error>
     where
         I: IntoIterator<Item = A>,
     {
@@ -473,12 +472,10 @@ where
             .find_neighbors(target_id, now)
             .take(8)
             .map(|a| AddrOptId::new(a.addr(), Some(a.id())))
-            .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr))
-            .map(|n| n);
+            .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
         let mut find_node_op = FindNodeOp::new(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
-        find_node_ops.push(find_node_op);
-        Ok(())
+        Ok(find_node_op)
     }
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
@@ -600,15 +597,14 @@ where
         now: Instant,
     ) -> Result<(), Error> {
         if self.find_pivot_id_deadline <= now {
-            self.find_node(
+            find_node_ops.push(self.find_node(
                 self.pivot,
                 config,
                 tx_manager,
                 msg_buffer,
-                find_node_ops,
                 std::iter::empty(),
                 now,
-            )?;
+            )?);
             self.find_pivot_id_deadline = now + FIND_LOCAL_ID_INTERVAL;
         }
 
@@ -626,15 +622,14 @@ where
             debug!("bucket: {:?}", b);
         }
         for target_id in target_ids {
-            self.find_node(
+            find_node_ops.push(self.find_node(
                 target_id,
                 config,
                 tx_manager,
                 msg_buffer,
-                find_node_ops,
                 std::iter::empty(),
                 now,
-            )?;
+            )?);
             debug!(
                 "starting to find target_id={:?} find_node_ops.len={}",
                 target_id,
@@ -703,46 +698,42 @@ impl RoutingTable {
             }
         }
         match self {
-            RoutingTable::Ipv4(routing_table) => routing_table.find_node(
+            RoutingTable::Ipv4(routing_table) => find_node_ops.push(routing_table.find_node(
                 target_id,
                 &config,
                 tx_manager,
                 msg_buffer,
-                find_node_ops,
                 ipv4_socket_addrs,
                 now,
-            ),
-            RoutingTable::Ipv6(routing_table) => routing_table.find_node(
+            )?),
+            RoutingTable::Ipv6(routing_table) => find_node_ops.push(routing_table.find_node(
                 target_id,
                 &config,
                 tx_manager,
                 msg_buffer,
-                find_node_ops,
                 ipv6_socket_addrs,
                 now,
-            ),
+            )?),
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
-                routing_table_v4.find_node(
+                find_node_ops.push(routing_table_v4.find_node(
                     target_id,
                     &config,
                     tx_manager,
                     msg_buffer,
-                    find_node_ops,
                     ipv4_socket_addrs,
                     now,
-                )?;
-                routing_table_v6.find_node(
+                )?);
+                find_node_ops.push(routing_table_v6.find_node(
                     target_id,
                     &config,
                     tx_manager,
                     msg_buffer,
-                    find_node_ops,
                     ipv6_socket_addrs,
                     now,
-                )?;
-                Ok(())
+                )?);
             }
         }
+        Ok(())
     }
 
     pub(crate) fn on_msg_received<'a>(

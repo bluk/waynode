@@ -34,7 +34,6 @@ pub(crate) enum Response<'a> {
 const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
-// TODO: Ping every possible node and don't use closest distances
 // TODO: Deal with IPv4 vs IPv6 and maintain two lists of closest_distances for each
 
 #[derive(Debug)]
