@@ -8,7 +8,10 @@
 
 //! KRPC messages are the protocol messages exchanged.
 
-use crate::node::Id;
+use crate::{
+    error::Error,
+    node::{AddrId, Id},
+};
 use bt_bencode::Value;
 use serde_bytes::ByteBuf;
 use std::{
@@ -251,6 +254,50 @@ impl CompactAddrV4Info for SocketAddrV4 {
 
         SocketAddrV4::new(ip, port)
     }
+}
+
+fn decode_addr_ipv4_list(nodes: &ByteBuf) -> Result<Vec<AddrId<SocketAddrV4>>, Error> {
+    if nodes.len() % 26 != 0 {
+        return Err(Error::CannotDeserializeKrpcMessage);
+    }
+
+    let addr_len = nodes.len() / 26;
+    Ok((0..addr_len)
+        .map(|i| {
+            let offset = i * 26;
+
+            let mut id: [u8; 20] = [0; 20];
+            id.copy_from_slice(&nodes[offset..offset + 20]);
+            let id = Id::new(id);
+
+            let mut compact_addr: [u8; 6] = [0; 6];
+            compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
+            AddrId::new(SocketAddrV4::from_compact_address(compact_addr), id)
+        })
+        .collect::<Vec<_>>())
+}
+
+fn decode_addr_ipv6_list(nodes6: &ByteBuf) -> Result<Vec<AddrId<SocketAddrV6>>, Error> {
+    if nodes6.len() % 38 != 0 {
+        return Err(Error::CannotDeserializeKrpcMessage);
+    }
+
+    let addr_len = nodes6.len() / 38;
+    Ok((0..addr_len)
+        .map(|i| {
+            let offset = i * 38;
+
+            let mut id: [u8; 20] = [0; 20];
+            id.copy_from_slice(&nodes6[offset..offset + 20]);
+            let id = Id::new(id);
+
+            let mut compact_addr: [u8; 18] = [0; 18];
+            compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);
+            let addr = SocketAddrV6::from_compact_address(compact_addr);
+
+            AddrId::new(addr, id)
+        })
+        .collect::<Vec<_>>())
 }
 
 /// An IPv6 socket address representable by a compact format.

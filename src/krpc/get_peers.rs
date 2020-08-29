@@ -265,67 +265,29 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                             }
                         })
                         .collect::<Result<Vec<SocketAddr>, Error>>()
-                })
-                .transpose(),
+                }),
             values
                 .get(&ByteBuf::from(String::from("nodes")))
                 .and_then(|nodes| nodes.as_byte_str())
-                .map(|nodes| {
-                    let mut c = 0;
-                    let mut addr_ids: Vec<AddrId<SocketAddrV4>> = vec![];
-                    // TODO: For all of these, need to verify that nodes.len() is a correct multiple and all of the data is consumed. If not, return an error.
-                    while c * 26 < nodes.len() {
-                        let offset = c * 26;
-
-                        let mut id: [u8; 20] = [0; 20];
-                        id.copy_from_slice(&nodes[offset..offset + 20]);
-                        let id = Id::new(id);
-
-                        let mut compact_addr: [u8; 6] = [0; 6];
-                        compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
-                        let addr = SocketAddrV4::from_compact_address(compact_addr);
-
-                        addr_ids.push(AddrId::new(addr, id));
-
-                        c += 1;
-                    }
-                    addr_ids
-                }),
+                .map(|nodes| super::decode_addr_ipv4_list(nodes)),
             values
                 .get(&ByteBuf::from(String::from("nodes6")))
                 .and_then(|nodes6| nodes6.as_byte_str())
-                .map(|nodes6| {
-                    // TODO: For all of these, need to verify that nodes.len() is a correct multiple and all of the data is consumed. If not, return an error.
-                    let mut c = 0;
-                    let mut addr_ids: Vec<AddrId<SocketAddrV6>> = vec![];
-                    while c * 38 < nodes6.len() {
-                        let offset = c * 38;
-
-                        let mut id: [u8; 20] = [0; 20];
-                        id.copy_from_slice(&nodes6[offset..offset + 20]);
-                        let id = Id::new(id);
-
-                        let mut compact_addr: [u8; 18] = [0; 18];
-                        compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);
-                        let addr = SocketAddrV6::from_compact_address(compact_addr);
-
-                        addr_ids.push(AddrId::new(addr, id));
-
-                        c += 1;
-                    }
-                    addr_ids
-                }),
+                .map(|nodes6| super::decode_addr_ipv6_list(nodes6)),
         ) {
-            (Some(id), Some(token), values, nodes, nodes6) => match values {
-                Ok(values) => Ok(GetPeersRespValues {
+            (Some(id), Some(token), values, nodes, nodes6) => {
+                let values = values.transpose()?;
+                let nodes = nodes.transpose()?;
+                let nodes6 = nodes6.transpose()?;
+
+                Ok(GetPeersRespValues {
                     id,
                     token,
                     values,
                     nodes,
                     nodes6,
-                }),
-                Err(e) => Err(e),
-            },
+                })
+            }
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
