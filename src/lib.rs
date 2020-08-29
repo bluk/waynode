@@ -13,7 +13,6 @@
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
 // TODO: Configuration for whether node IDs are valid for IP
-// TODO: Should process the responses if the queried_node_id returned is the same as config.local_id
 // http://bittorrent.org/beps/bep_0005.html
 // http://bittorrent.org/beps/bep_0043.html
 // http://bittorrent.org/beps/bep_0044.html
@@ -107,6 +106,8 @@ pub struct Config {
     default_query_timeout: Duration,
     /// If the node is read only
     is_read_only_node: bool,
+    /// If responses from queried nodes are strictly checked for expected node ID
+    is_response_queried_node_id_strictly_checked: bool,
     /// The types of socket addresses supported.
     supported_addr: SupportedAddr,
 }
@@ -122,6 +123,7 @@ impl Config {
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: false,
+            is_response_queried_node_id_strictly_checked: true,
             supported_addr: SupportedAddr::Ipv4AndIpv6,
         }
     }
@@ -172,6 +174,20 @@ impl Config {
         self.is_read_only_node = is_read_only_node;
     }
 
+    /// Returns true if responses from queried nodes are strictly checked for the expected node Id, false otherwise.
+    pub fn is_response_queried_node_id_strictly_checked(&self) -> bool {
+        self.is_response_queried_node_id_strictly_checked
+    }
+
+    /// Set to true if the responses from queried nodes are strictly checked for the expected node Id.
+    pub fn set_is_response_queried_node_id_strictly_checked(
+        &mut self,
+        is_response_queried_node_id_strictly_checked: bool,
+    ) {
+        self.is_response_queried_node_id_strictly_checked =
+            is_response_queried_node_id_strictly_checked;
+    }
+
     /// Returns the supported address types.
     pub fn supported_addr(&self) -> SupportedAddr {
         self.supported_addr
@@ -195,6 +211,7 @@ pub struct Node {
 }
 
 impl Node {
+    /// Instantiates a new node.
     pub fn new<'a, A, B>(
         config: Config,
         addr_ids: A,
@@ -264,21 +281,26 @@ impl Node {
                 match kind {
                     Kind::Response => {
                         let queried_node_id = RespMsg::queried_node_id(&value);
-                        // TODO: Process result but don't add to routing table if queried_node_id
-                        // is equal to self.config.local_id
-                        if queried_node_id.is_some()
-                            && queried_node_id != Some(node::Id::from(self.config.local_id))
-                            && tx.is_node_id_match(queried_node_id)
+                        let is_response_queried_id_valid = tx
+                            .addr_opt_id
+                            .id()
+                            .map(|expected_node_id| queried_node_id == Some(expected_node_id))
+                            .unwrap_or(true);
+                        if is_response_queried_id_valid
+                            || (!self.config.is_response_queried_node_id_strictly_checked
+                                && queried_node_id == Some(node::Id::from(self.config.local_id)))
                         {
-                            if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
-                                self.routing_table.on_msg_received(
-                                    AddrId::new(addr, node_id),
-                                    &kind,
-                                    &self.config,
-                                    &mut self.tx_manager,
-                                    &mut self.msg_buffer,
-                                    now,
-                                )?;
+                            if is_response_queried_id_valid {
+                                if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
+                                    self.routing_table.on_msg_received(
+                                        AddrId::new(addr, node_id),
+                                        &kind,
+                                        &self.config,
+                                        &mut self.tx_manager,
+                                        &mut self.msg_buffer,
+                                        now,
+                                    )?;
+                                }
                             }
                             debug!("Received response for tx_id={:?}", tx.tx_id);
                             for op in &mut self.find_node_ops {
