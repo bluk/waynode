@@ -26,7 +26,7 @@ pub struct ErrorValues {
 
 impl ErrorValues {
     /// Instantiates a standard error value with a code and description.
-    pub fn with_code_and_desc(code: ErrorCode, description: String) -> Self {
+    pub fn new(code: ErrorCode, description: String) -> Self {
         Self { code, description }
     }
 }

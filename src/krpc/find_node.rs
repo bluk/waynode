@@ -34,7 +34,7 @@ pub struct FindNodeQueryArgs {
 
 impl FindNodeQueryArgs {
     /// Instantiates a new query message with the local querying node Id and the target Id.
-    pub fn with_local_and_target(id: LocalId, target: Id) -> Self {
+    pub fn new(id: LocalId, target: Id) -> Self {
         Self {
             id: id.into(),
             target,
@@ -214,13 +214,13 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
 
                         let mut id: [u8; 20] = [0; 20];
                         id.copy_from_slice(&nodes[offset..offset + 20]);
-                        let id = Id::with_bytes(id);
+                        let id = Id::new(id);
 
                         let mut compact_addr: [u8; 6] = [0; 6];
                         compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
                         let addr = SocketAddrV4::from_compact_address(compact_addr);
 
-                        addr_ids.push(AddrId::with_addr_and_id(addr, id));
+                        addr_ids.push(AddrId::new(addr, id));
 
                         c += 1;
                     }
@@ -238,13 +238,13 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
 
                         let mut id: [u8; 20] = [0; 20];
                         id.copy_from_slice(&nodes6[offset..offset + 20]);
-                        let id = Id::with_bytes(id);
+                        let id = Id::new(id);
 
                         let mut compact_addr: [u8; 18] = [0; 18];
                         compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);
                         let addr = SocketAddrV6::from_compact_address(compact_addr);
 
-                        addr_ids.push(AddrId::with_addr_and_id(addr, id));
+                        addr_ids.push(AddrId::new(addr, id));
 
                         c += 1;
                     }

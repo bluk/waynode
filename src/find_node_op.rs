@@ -48,10 +48,7 @@ pub(crate) struct FindNodeOp {
 }
 
 impl FindNodeOp {
-    pub(crate) fn with_target_id_and_neighbors<A, T>(
-        target_id: node::Id,
-        potential_addr_opt_ids: T,
-    ) -> Self
+    pub(crate) fn new<A, T>(target_id: node::Id, potential_addr_opt_ids: T) -> Self
     where
         T: IntoIterator<Item = AddrOptId<A>>,
         A: Addr + Into<SocketAddr>,
@@ -102,9 +99,10 @@ impl FindNodeOp {
             }
 
             let tx_id = msg_buffer.write_query(
-                &FindNodeQueryArgs::with_local_and_target(config.local_id, self.target_id),
+                &FindNodeQueryArgs::new(config.local_id, self.target_id),
                 potential_node.addr_opt_id,
                 config.default_query_timeout,
+                config.client_version.as_ref(),
                 tx_manager,
             )?;
             self.tx_ids.insert(tx_id);
@@ -216,9 +214,10 @@ impl FindNodeOp {
                 }
 
                 let tx_id = msg_buffer.write_query(
-                    &FindNodeQueryArgs::with_local_and_target(config.local_id, self.target_id),
+                    &FindNodeQueryArgs::new(config.local_id, self.target_id),
                     potential_node.addr_opt_id,
                     config.default_query_timeout,
+                    config.client_version.as_ref(),
                     tx_manager,
                 )?;
                 self.tx_ids.insert(tx_id);

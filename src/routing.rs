@@ -222,12 +222,13 @@ where
                 })
                 .expect("questionable non-pinged node to exist");
             msg_buffer.write_query(
-                &PingQueryArgs::with_id(config.local_id),
+                &PingQueryArgs::new(config.local_id),
                 AddrOptId::with_addr_and_id(
                     node_to_ping.addr_id.addr().into(),
                     Some(node_to_ping.addr_id.id()),
                 ),
                 config.default_query_timeout,
+                config.client_version.as_ref(),
                 tx_manager,
             )?;
             node_to_ping.on_ping(now);
@@ -453,7 +454,7 @@ where
             .map(|a| AddrOptId::with_addr_and_id(a.addr(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr))
             .map(|n| n);
-        let mut find_node_op = FindNodeOp::with_target_id_and_neighbors(target_id, neighbors);
+        let mut find_node_op = FindNodeOp::new(target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         find_node_ops.push(find_node_op);
         Ok(())
@@ -663,7 +664,7 @@ impl RoutingTable {
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                        routing_table.try_insert(AddrId::with_addr_and_id(addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(addr, addr_id.id()), now)
                     }
                     RoutingTable::Ipv6(_) => {}
                 },
@@ -671,7 +672,7 @@ impl RoutingTable {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                        routing_table.try_insert(AddrId::with_addr_and_id(addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(addr, addr_id.id()), now)
                     }
                 },
             }
@@ -759,7 +760,7 @@ impl RoutingTable {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_msg_received(
-                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        AddrId::new(addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -773,7 +774,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_msg_received(
-                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        AddrId::new(addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -798,7 +799,7 @@ impl RoutingTable {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_resp_timeout(
-                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        AddrId::new(addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
@@ -811,7 +812,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_resp_timeout(
-                        AddrId::with_addr_and_id(addr, addr_id.id()),
+                        AddrId::new(addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
@@ -890,14 +891,14 @@ mod tests {
         assert_eq!(
             first_bucket.range,
             Id::min()
-                ..=Id::with_bytes([
+                ..=Id::new([
                     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe
                 ])
         );
         assert_eq!(
             second_bucket.range,
-            Id::with_bytes([
+            Id::new([
                 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
             ])..=Id::max()

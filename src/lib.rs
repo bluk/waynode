@@ -217,7 +217,6 @@ impl Dht {
     {
         let max_node_count_per_bucket = 8;
         let local_id = node::Id::from(config.local_id);
-        let client_version = config.client_version.clone();
         let now = Instant::now();
 
         let mut routing_table = match config.supported_addr {
@@ -242,7 +241,7 @@ impl Dht {
             config,
             routing_table,
             tx_manager: transaction::Manager::new(),
-            msg_buffer: msg_buffer::Buffer::with_client_version(client_version),
+            msg_buffer: msg_buffer::Buffer::new(),
             find_node_ops: Vec::new(),
         };
         dht.routing_table.find_node(
@@ -293,7 +292,7 @@ impl Dht {
                         {
                             if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
                                 self.routing_table.on_msg_received(
-                                    AddrId::with_addr_and_id(addr, node_id),
+                                    AddrId::new(addr, node_id),
                                     &kind,
                                     &self.config,
                                     &mut self.tx_manager,
@@ -336,7 +335,7 @@ impl Dht {
                     Kind::Error => {
                         if let Some(node_id) = tx.addr_opt_id.id() {
                             self.routing_table.on_msg_received(
-                                AddrId::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
+                                AddrId::new(tx.addr_opt_id.addr(), node_id),
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,
@@ -385,7 +384,7 @@ impl Dht {
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::with_addr_and_id(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
-                            self.routing_table.on_msg_received(AddrId::with_addr_and_id(addr, node_id), &kind, &self.config, &mut
+                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
                         }
 
@@ -434,6 +433,7 @@ impl Dht {
             args,
             addr_opt_id,
             timeout.unwrap_or(self.config.default_query_timeout),
+            self.config.client_version.as_ref(),
             &mut self.tx_manager,
         )
     }
@@ -449,8 +449,12 @@ impl Dht {
         A: Into<AddrOptId<SocketAddr>>,
         B: Into<&'a ByteBuf>,
     {
-        self.msg_buffer
-            .write_resp(transaction_id.into(), resp, addr_opt_id)
+        self.msg_buffer.write_resp(
+            transaction_id.into(),
+            resp,
+            addr_opt_id,
+            self.config.client_version.as_ref(),
+        )
     }
 
     pub fn write_err<'a, A, B, T>(
@@ -464,8 +468,12 @@ impl Dht {
         A: Into<AddrOptId<SocketAddr>>,
         B: Into<&'a ByteBuf>,
     {
-        self.msg_buffer
-            .write_err(transaction_id.into(), details, addr_opt_id)
+        self.msg_buffer.write_err(
+            transaction_id.into(),
+            details,
+            addr_opt_id,
+            self.config.client_version.as_ref(),
+        )
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
@@ -512,7 +520,7 @@ impl Dht {
                 debug!("tx timed out: {:?}", tx);
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
-                        AddrId::with_addr_and_id(tx.addr_opt_id.addr(), node_id),
+                        AddrId::new(tx.addr_opt_id.addr(), node_id),
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
@@ -603,7 +611,7 @@ mod tests {
         let remote_addr = remote_addr();
         let addr_opt_id = AddrOptId::with_addr_and_id(remote_addr, Some(id));
 
-        let args = PingQueryArgs::with_id(local_id);
+        let args = PingQueryArgs::new(local_id);
 
         let mut dht: Dht = Dht::new(new_config()?, std::iter::empty(), std::iter::empty())?;
         let tx_id = dht.write_query(&args, addr_opt_id, None).unwrap();

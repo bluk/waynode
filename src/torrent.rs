@@ -18,7 +18,7 @@ pub struct InfoHash(pub(crate) [u8; 20]);
 
 impl InfoHash {
     /// Instantiates an InfoHash with bytes representing the 160-bit value.
-    pub fn with_bytes(bytes: [u8; 20]) -> Self {
+    pub fn new(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
 }

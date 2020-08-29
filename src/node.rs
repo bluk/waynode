@@ -25,7 +25,7 @@ pub struct Id(pub(crate) [u8; 20]);
 
 impl Id {
     /// Instantiates an Id with bytes representing the 160-bit value.
-    pub fn with_bytes(bytes: [u8; 20]) -> Self {
+    pub fn new(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
 
@@ -47,23 +47,23 @@ impl Id {
     /// # fn main() -> Result<(), std::io::Error> {
     /// use sloppy::node::Id;
     ///
-    /// let id1 = Id::with_bytes([
+    /// let id1 = Id::new([
     ///     0xff, 0x00, 0xff, 0x00, 0xff,
     ///     0xff, 0xff, 0xff, 0x00, 0xf0,
     ///     0x0f, 0x00, 0x0f, 0xf0, 0x00,
     ///     0xff, 0x01, 0x10, 0xaa, 0xab
     /// ]);
     ///
-    /// assert_eq!(id1.distance(id1), Id::with_bytes([0x00; 20]));
+    /// assert_eq!(id1.distance(id1), Id::new([0x00; 20]));
     ///
-    /// let id2 = Id::with_bytes([
+    /// let id2 = Id::new([
     ///     0x01, 0x02, 0x03, 0x04, 0x05,
     ///     0x06, 0x07, 0x08, 0x09, 0x0a,
     ///     0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     ///     0x10, 0x11, 0x12, 0x13, 0x14
     /// ]);
     ///
-    /// assert_eq!(id1.distance(id2), Id::with_bytes([
+    /// assert_eq!(id1.distance(id2), Id::new([
     ///     0xfe, 0x02, 0xfc, 0x04, 0xfa,
     ///     0xf9, 0xf8, 0xf7, 0x09, 0xfa,
     ///     0x04, 0x0c, 0x02, 0xfe, 0x0f,
@@ -384,13 +384,13 @@ where
     ///
     /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
     /// let node_id = Id::rand().unwrap();
-    /// let addr_id = AddrId::with_addr_and_id(socket_addr, node_id);
+    /// let addr_id = AddrId::new(socket_addr, node_id);
     /// assert_eq!(addr_id .addr(), socket_addr);
     /// assert_eq!(addr_id.id(), node_id);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_addr_and_id(addr: A, id: Id) -> Self {
+    pub fn new(addr: A, id: Id) -> Self {
         Self { addr, id }
     }
 
@@ -407,25 +407,25 @@ where
 
 impl From<AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
     fn from(addr_id: AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
-        AddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V4(addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
     fn from(addr_id: AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
-        AddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V6(addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
     fn from(addr_id: &AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
-        AddrId::with_addr_and_id(SocketAddr::V4(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V4(addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
     fn from(addr_id: &AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
-        AddrId::with_addr_and_id(SocketAddr::V6(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V6(addr_id.addr()), addr_id.id())
     }
 }
 
@@ -959,7 +959,7 @@ mod test {
     #[test]
     fn test_ipv4_valid_node_id_1() {
         let ip = "124.31.75.21".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::new([
             0x5f, 0xbf, 0xbf, 0xf1, 0x0c, 0x5d, 0x6a, 0x4e, 0xc8, 0xa8, 0x8e, 0x4c, 0x6a, 0xb4,
             0xc2, 0x8b, 0x95, 0xee, 0xe4, 0x01
         ])));
@@ -975,7 +975,7 @@ mod test {
     #[test]
     fn test_ipv4_valid_node_id_2() {
         let ip = "21.75.31.124".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::new([
             0x5a, 0x3c, 0xe9, 0xc1, 0x4e, 0x7a, 0x08, 0x64, 0x56, 0x77, 0xbb, 0xd1, 0xcf, 0xe7,
             0xd8, 0xf9, 0x56, 0xd5, 0x32, 0x56
         ])));
@@ -991,7 +991,7 @@ mod test {
     #[test]
     fn test_ipv4_valid_node_id_3() {
         let ip = "65.23.51.170".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::new([
             0xa5, 0xd4, 0x32, 0x20, 0xbc, 0x8f, 0x11, 0x2a, 0x3d, 0x42, 0x6c, 0x84, 0x76, 0x4f,
             0x8c, 0x2a, 0x11, 0x50, 0xe6, 0x16
         ])));
@@ -1007,7 +1007,7 @@ mod test {
     #[test]
     fn test_ipv4_valid_node_id_4() {
         let ip = "84.124.73.14".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::new([
             0x1b, 0x03, 0x21, 0xdd, 0x1b, 0xb1, 0xfe, 0x51, 0x81, 0x01, 0xce, 0xef, 0x99, 0x46,
             0x2b, 0x94, 0x7a, 0x01, 0xff, 0x41
         ])));
@@ -1023,7 +1023,7 @@ mod test {
     #[test]
     fn test_ipv4_valid_node_id_5() {
         let ip = "43.213.53.83".parse::<Ipv4Addr>().unwrap();
-        assert!(ip.is_valid_node_id(Id::with_bytes([
+        assert!(ip.is_valid_node_id(Id::new([
             0xe5, 0x6f, 0x6c, 0xbf, 0x5b, 0x7c, 0x4b, 0xe0, 0x23, 0x79, 0x86, 0xd5, 0x24, 0x3b,
             0x87, 0xaa, 0x6d, 0x51, 0x30, 0x5a
         ])));

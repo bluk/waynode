@@ -29,7 +29,7 @@ pub struct PingQueryArgs {
 
 impl PingQueryArgs {
     /// Instantiates a new query message.
-    pub fn with_id(id: LocalId) -> Self {
+    pub fn new(id: LocalId) -> Self {
         Self { id: Id::from(id) }
     }
 
@@ -113,7 +113,7 @@ pub struct PingRespValues {
 
 impl PingRespValues {
     /// Instantiates a new instance.
-    pub fn with_id(id: LocalId) -> Self {
+    pub fn new(id: LocalId) -> Self {
         Self { id: Id::from(id) }
     }
 

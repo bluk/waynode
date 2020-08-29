@@ -142,8 +142,7 @@ fn main() -> io::Result<()> {
                     match inbound_msg.msg() {
                         sloppy::MsgEvent::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
-                                let ping_resp =
-                                    ping::PingRespValues::with_id(dht.config().local_id());
+                                let ping_resp = ping::PingRespValues::new(dht.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
                                     match dht.write_resp(
                                         tx_id,
@@ -157,11 +156,10 @@ fn main() -> io::Result<()> {
                             }
                             Some(method_name @ _) => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error =
-                                        sloppy::krpc::error::ErrorValues::with_code_and_desc(
-                                            ErrorCode::MethodUnknown,
-                                            method_name.to_string(),
-                                        );
+                                    let error = sloppy::krpc::error::ErrorValues::new(
+                                        ErrorCode::MethodUnknown,
+                                        method_name.to_string(),
+                                    );
                                     match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
@@ -170,11 +168,10 @@ fn main() -> io::Result<()> {
                             }
                             None => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error =
-                                        sloppy::krpc::error::ErrorValues::with_code_and_desc(
-                                            ErrorCode::ProtocolError,
-                                            String::from("method name not listed"),
-                                        );
+                                    let error = sloppy::krpc::error::ErrorValues::new(
+                                        ErrorCode::ProtocolError,
+                                        String::from("method name not listed"),
+                                    );
                                     match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
