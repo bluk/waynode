@@ -204,7 +204,7 @@ where
             }) {
                 msg_buffer.write_query(
                     &PingQueryArgs::new(config.local_id),
-                    AddrOptId::with_addr_and_id(
+                    AddrOptId::new(
                         node_to_ping.addr_id.addr().into(),
                         Some(node_to_ping.addr_id.id()),
                     ),
@@ -472,7 +472,7 @@ where
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .map(|a| AddrOptId::with_addr_and_id(a.addr(), Some(a.id())))
+            .map(|a| AddrOptId::new(a.addr(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr))
             .map(|n| n);
         let mut find_node_op = FindNodeOp::new(target_id, neighbors);

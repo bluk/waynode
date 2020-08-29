@@ -57,10 +57,7 @@ impl FindNodeOp {
             .into_iter()
             .map(|addr_opt_id| PotentialAddrOptId {
                 distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
-                addr_opt_id: AddrOptId::with_addr_and_id(
-                    addr_opt_id.addr().into(),
-                    addr_opt_id.id(),
-                ),
+                addr_opt_id: AddrOptId::new(addr_opt_id.addr().into(), addr_opt_id.id()),
             })
             .collect();
         Self {

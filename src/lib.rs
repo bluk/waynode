@@ -362,7 +362,7 @@ impl Node {
                     Kind::Query => {
                         debug!("Recieved query. addr={}", addr);
                         let querying_node_id = QueryMsg::querying_node_id(&value);
-                        let addr_opt_id = AddrOptId::with_addr_and_id(addr, querying_node_id);
+                        let addr_opt_id = AddrOptId::new(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
                             self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, &self.config, &mut
                             self.tx_manager, &mut self.msg_buffer, now)?;
@@ -589,7 +589,7 @@ mod tests {
         let local_id = node::LocalId(node_id());
         let id = node_id();
         let remote_addr = remote_addr();
-        let addr_opt_id = AddrOptId::with_addr_and_id(remote_addr, Some(id));
+        let addr_opt_id = AddrOptId::new(remote_addr, Some(id));
 
         let args = PingQueryArgs::new(local_id);
 

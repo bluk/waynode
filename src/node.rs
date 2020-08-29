@@ -481,6 +481,27 @@ impl<A> AddrOptId<A>
 where
     A: Addr,
 {
+    /// Instantiate with a network address and an optional Id.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), std::io::Error> {
+    /// use std::net::ToSocketAddrs;
+    /// use sloppy::node::{AddrOptId, Id};
+    ///
+    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
+    /// let node_id = Id::rand().unwrap();
+    /// let addr_opt_id = AddrOptId::new(socket_addr, Some(node_id));
+    /// assert_eq!(addr_opt_id.addr(), socket_addr);
+    /// assert_eq!(addr_opt_id.id(), Some(node_id));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new(addr: A, id: Option<Id>) -> Self {
+        Self { addr, id }
+    }
+
     /// Instantiate with only a network address.
     ///
     /// Useful when a new node needs to be bootstrapped and may only have the network address of another node.
@@ -501,29 +522,6 @@ where
     /// ```
     pub fn with_addr(addr: A) -> Self {
         Self { addr, id: None }
-    }
-
-    // TODO: Rename to new
-
-    /// Instantiate with a network address and an optional Id.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), std::io::Error> {
-    /// use std::net::ToSocketAddrs;
-    /// use sloppy::node::{AddrOptId, Id};
-    ///
-    /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
-    /// let node_id = Id::rand().unwrap();
-    /// let addr_opt_id = AddrOptId::with_addr_and_id(socket_addr, Some(node_id));
-    /// assert_eq!(addr_opt_id.addr(), socket_addr);
-    /// assert_eq!(addr_opt_id.id(), Some(node_id));
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_addr_and_id(addr: A, id: Option<Id>) -> Self {
-        Self { addr, id }
     }
 
     /// Returns the network address.
@@ -557,13 +555,13 @@ impl From<SocketAddr> for AddrOptId<SocketAddr> {
 
 impl From<AddrOptId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<AddrOptId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
@@ -587,73 +585,73 @@ impl From<&SocketAddr> for AddrOptId<SocketAddr> {
 
 impl From<&AddrOptId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrOptId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<&AddrOptId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrOptId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
     fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
     fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddr>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
     fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
     fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::with_addr_and_id(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddr>) -> Self {
-        AddrOptId::with_addr_and_id(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
