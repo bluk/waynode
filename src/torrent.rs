@@ -62,6 +62,8 @@ impl fmt::Debug for InfoHash {
     }
 }
 
+// TODO: Implement std::fmt::UpperHex, std::fmt::LowerHex, std::fmt::Octal and std::fmt::Binary for InfoHash?
+
 impl TryFrom<&[u8]> for InfoHash {
     type Error = Error;
 

@@ -21,15 +21,6 @@
 // http://bittorrent.org/beps/bep_0046.html
 // http://bittorrent.org/beps/bep_0051.html
 
-/*
-TODO: For Id and InfoHash:
-Binary number types provide Hex, Octal, Binary formatting (C-NUM-FMT)
-
-std::fmt::UpperHex
-std::fmt::LowerHex
-std::fmt::Octal
-std::fmt::Binary
-*/
 #[macro_use]
 extern crate log;
 

@@ -224,6 +224,8 @@ impl fmt::Debug for Id {
     }
 }
 
+// TODO: Implement std::fmt::UpperHex, std::fmt::LowerHex, std::fmt::Octal and std::fmt::Binary for Id?
+
 impl TryFrom<&[u8]> for Id {
     type Error = Error;
 
