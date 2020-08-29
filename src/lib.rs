@@ -204,24 +204,15 @@ impl Node {
         A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
     {
-        let max_node_count_per_bucket = 8;
         let local_id = node::Id::from(config.local_id);
         let now = Instant::now();
 
         let mut routing_table = match config.supported_addr {
-            SupportedAddr::Ipv4 => routing::RoutingTable::Ipv4(routing::Table::new(
-                local_id,
-                max_node_count_per_bucket,
-                now,
-            )),
-            SupportedAddr::Ipv6 => routing::RoutingTable::Ipv6(routing::Table::new(
-                local_id,
-                max_node_count_per_bucket,
-                now,
-            )),
+            SupportedAddr::Ipv4 => routing::RoutingTable::Ipv4(routing::Table::new(local_id, now)),
+            SupportedAddr::Ipv6 => routing::RoutingTable::Ipv6(routing::Table::new(local_id, now)),
             SupportedAddr::Ipv4AndIpv6 => routing::RoutingTable::Ipv4AndIpv6(
-                routing::Table::new(local_id, max_node_count_per_bucket, now),
-                routing::Table::new(local_id, max_node_count_per_bucket, now),
+                routing::Table::new(local_id, now),
+                routing::Table::new(local_id, now),
             ),
         };
         routing_table.try_insert_addr_ids(addr_ids, now);

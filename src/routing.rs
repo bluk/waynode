@@ -28,7 +28,7 @@ enum NodeState {
     Bad,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Node<A>
 where
     A: Addr + Into<SocketAddr>,
@@ -130,6 +130,7 @@ where
 }
 
 const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const BUCKET_SIZE: usize = 8;
 
 #[derive(Debug)]
 struct Bucket<A>
@@ -137,9 +138,8 @@ where
     A: Addr + Into<SocketAddr>,
 {
     range: RangeInclusive<Id>,
-    // TODO: Consider using an array.
-    nodes: Vec<Node<A>>,
-    replacement_nodes: Vec<Node<A>>,
+    nodes: [Option<Node<A>>; BUCKET_SIZE],
+    replacement_nodes: [Option<Node<A>>; BUCKET_SIZE],
     expected_change_deadline: Instant,
 }
 
@@ -147,13 +147,17 @@ impl<A> Bucket<A>
 where
     A: Addr + Into<SocketAddr>,
 {
-    fn new(range: RangeInclusive<Id>, max_nodes_per_bucket: usize) -> Self {
+    fn new(range: RangeInclusive<Id>) -> Self {
         Bucket {
             range,
-            nodes: Vec::with_capacity(max_nodes_per_bucket),
-            replacement_nodes: Vec::with_capacity(max_nodes_per_bucket),
+            nodes: [None; BUCKET_SIZE],
+            replacement_nodes: [None; BUCKET_SIZE],
             expected_change_deadline: Instant::now() + Duration::from_secs(5 * 60),
         }
+    }
+
+    fn is_full(&self) -> bool {
+        self.nodes.iter().all(|n| n.is_some())
     }
 
     #[inline]
@@ -161,44 +165,20 @@ where
         self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
     }
 
-    fn try_insert(&mut self, max_nodes_per_bucket: usize, addr_id: AddrId<A>, now: Instant) {
-        if self.nodes.len() < max_nodes_per_bucket {
-            let node = Node::with_addr_id(addr_id);
-            self.nodes.push(node);
-            self.sort_node_ids(now);
-            self.update_expected_change_deadline();
-        } else if let Some(pos) = self
-            .nodes
-            .iter()
-            .rev()
-            .position(|n| n.state_with_now(now) == NodeState::Bad)
-        {
-            let node = Node::with_addr_id(addr_id);
-            self.nodes[pos] = node;
-            self.sort_node_ids(now);
-            self.update_expected_change_deadline();
-        } else {
-            self.sort_node_ids(now);
-            if let Some(pos) = self
-                .nodes
-                .iter()
-                .rev()
-                .position(|n| n.state_with_now(now) == NodeState::Questionable)
-            {
-                let node = Node::with_addr_id(addr_id);
-                self.nodes[pos] = node;
-                self.update_expected_change_deadline();
-            }
-        }
+    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
+        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id));
+        self.sort_node_ids(now);
+        self.update_expected_change_deadline();
     }
 
-    #[inline]
-    fn max_replacement_nodes(&self, now: Instant) -> usize {
-        self.nodes
-            .iter()
-            .filter(|n| n.state_with_now(now) == NodeState::Questionable)
-            .count()
-    }
+    // #[inline]
+    // fn max_replacement_nodes(&self, now: Instant) -> usize {
+    //     self.nodes
+    //         .iter()
+    //         .flat_map(|n| n)
+    //         .filter(|n| n.state_with_now(now) == NodeState::Questionable)
+    //         .count()
+    // }
 
     fn ping_least_recently_seen_questionable_node(
         &mut self,
@@ -210,35 +190,36 @@ where
         let pinged_nodes_count = self
             .nodes
             .iter()
+            .flat_map(|n| n)
             .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
             .count();
-        if pinged_nodes_count < self.replacement_nodes.len() {
-            let node_to_ping = self
-                .nodes
-                .iter_mut()
-                .rev()
-                .find(|n| {
-                    n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
-                })
-                .expect("questionable non-pinged node to exist");
-            msg_buffer.write_query(
-                &PingQueryArgs::new(config.local_id),
-                AddrOptId::with_addr_and_id(
-                    node_to_ping.addr_id.addr().into(),
-                    Some(node_to_ping.addr_id.id()),
-                ),
-                config.default_query_timeout,
-                config.client_version.as_ref(),
-                tx_manager,
-            )?;
-            node_to_ping.on_ping(now);
+        let replacement_nodes_count = self
+            .replacement_nodes
+            .iter()
+            .filter(|n| n.is_some())
+            .count();
+        if pinged_nodes_count < replacement_nodes_count {
+            if let Some(node_to_ping) = self.nodes.iter_mut().rev().flat_map(|n| n).find(|n| {
+                n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
+            }) {
+                msg_buffer.write_query(
+                    &PingQueryArgs::new(config.local_id),
+                    AddrOptId::with_addr_and_id(
+                        node_to_ping.addr_id.addr().into(),
+                        Some(node_to_ping.addr_id.id()),
+                    ),
+                    config.default_query_timeout,
+                    config.client_version.as_ref(),
+                    tx_manager,
+                )?;
+                node_to_ping.on_ping(now);
+            }
         }
         Ok(())
     }
 
     fn on_msg_received<'a>(
         &mut self,
-        max_nodes_per_bucket: usize,
         addr_id: AddrId<A>,
         kind: &Kind<'a>,
         config: &crate::Config,
@@ -246,14 +227,25 @@ where
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
+        if let Some(node) = self
+            .nodes
+            .iter_mut()
+            .flat_map(|n| n)
+            .find(|n| n.addr_id == addr_id)
+        {
             node.on_msg_received(kind, now);
             match kind {
                 Kind::Response | Kind::Query => {
-                    let max_replacement_nodes = self.max_replacement_nodes(now);
-                    if self.replacement_nodes.len() > max_replacement_nodes {
-                        self.replacement_nodes.drain(max_replacement_nodes..);
-                    }
+                    // let max_replacement_nodes = self.max_replacement_nodes(now);
+                    // let mut replacement_node_count = 0;
+                    // for replacement_node in self.replacement_nodes.iter_mut() {
+                    //     if replacement_node.is_some() {
+                    //         if replacement_node_count > max_replacement_nodes {
+                    //             *replacement_node = None;
+                    //         }
+                    //         replacement_node_count += 1;
+                    //     }
+                    // }
                     self.sort_node_ids(now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, now,
@@ -271,9 +263,13 @@ where
                         )?;
                     }
                     NodeState::Bad => {
-                        if let Some(mut replacement_node) = self.replacement_nodes.pop() {
-                            std::mem::swap(node, &mut replacement_node);
-                            self.update_expected_change_deadline();
+                        if let Some(replacement_node) =
+                            self.replacement_nodes.iter_mut().find(|n| n.is_some())
+                        {
+                            if let Some(replacement_node) = replacement_node.take() {
+                                *node = replacement_node;
+                                self.update_expected_change_deadline();
+                            }
                         }
                         self.sort_node_ids(now);
                     }
@@ -285,27 +281,24 @@ where
                 Kind::Unknown(_) => return Ok(()),
             }
 
-            if self.nodes.len() < max_nodes_per_bucket {
+            if let Some(pos) = self.nodes.iter().rev().position(|n| {
+                n.map(|n| n.state_with_now(now) == NodeState::Bad)
+                    .unwrap_or(false)
+            }) {
                 let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
-                self.nodes.push(node);
+                self.nodes[pos] = Some(node);
                 self.sort_node_ids(now);
                 self.update_expected_change_deadline();
             } else if let Some(pos) = self
-                .nodes
-                .iter()
+                .replacement_nodes
+                .iter_mut()
                 .rev()
-                .position(|n| n.state_with_now(now) == NodeState::Bad)
+                .position(|n| n.is_none())
             {
                 let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
-                self.nodes[pos] = node;
-                self.sort_node_ids(now);
-                self.update_expected_change_deadline();
-            } else if self.replacement_nodes.len() < self.max_replacement_nodes(now) {
-                let mut node = Node::with_addr_id(addr_id);
-                node.on_msg_received(kind, now);
-                self.replacement_nodes.push(node);
+                self.replacement_nodes[pos] = Some(node);
                 self.sort_node_ids(now);
                 self.ping_least_recently_seen_questionable_node(
                     config, tx_manager, msg_buffer, now,
@@ -323,7 +316,12 @@ where
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
     ) -> Result<(), Error> {
-        if let Some(node) = self.nodes.iter_mut().find(|n| n.addr_id == addr_id) {
+        if let Some(node) = self
+            .nodes
+            .iter_mut()
+            .flat_map(|n| n)
+            .find(|n| n.addr_id == addr_id)
+        {
             node.on_resp_timeout();
             match node.state_with_now(now) {
                 NodeState::Good => {
@@ -336,9 +334,13 @@ where
                     )?;
                 }
                 NodeState::Bad => {
-                    if let Some(mut replacement_node) = self.replacement_nodes.pop() {
-                        std::mem::swap(node, &mut replacement_node);
-                        self.update_expected_change_deadline();
+                    if let Some(replacement_node) =
+                        self.replacement_nodes.iter_mut().find(|n| n.is_some())
+                    {
+                        if let Some(replacement_node) = replacement_node.take() {
+                            *node = replacement_node;
+                            self.update_expected_change_deadline();
+                        }
                     }
                     self.sort_node_ids(now);
                 }
@@ -347,28 +349,43 @@ where
         Ok(())
     }
 
-    fn split(self, max_nodes_per_bucket: usize) -> (Bucket<A>, Bucket<A>) {
+    fn split_insert(&mut self, node: Node<A>) {
+        if let Some(pos) = self.nodes.iter().position(|n| n.is_none()) {
+            self.nodes[pos] = Some(node);
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn split_replacement_insert(&mut self, node: Node<A>) {
+        if let Some(pos) = self.replacement_nodes.iter().position(|n| n.is_none()) {
+            self.replacement_nodes[pos] = Some(node);
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn split(self) -> (Bucket<A>, Bucket<A>) {
         let middle = self.range.end().middle(*self.range.start());
 
-        let mut lower_bucket =
-            Bucket::new(*self.range.start()..=middle.prev(), max_nodes_per_bucket);
-        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), max_nodes_per_bucket);
+        let mut lower_bucket = Bucket::new(*self.range.start()..=middle.prev());
+        let mut upper_bucket = Bucket::new(middle..=*self.range.end());
 
-        for node in self.nodes.into_iter() {
+        for node in self.nodes.iter().flat_map(|n| n) {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
-                lower_bucket.nodes.push(node);
+                lower_bucket.split_insert(*node);
             } else {
-                upper_bucket.nodes.push(node);
+                upper_bucket.split_insert(*node);
             }
         }
 
-        for node in self.replacement_nodes.into_iter() {
+        for node in self.replacement_nodes.iter().flat_map(|n| n) {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
-                lower_bucket.replacement_nodes.push(node);
+                lower_bucket.split_replacement_insert(*node);
             } else {
-                upper_bucket.replacement_nodes.push(node);
+                upper_bucket.split_replacement_insert(*node);
             }
         }
 
@@ -378,6 +395,7 @@ where
     fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &AddrId<A>> {
         self.nodes
             .iter()
+            .flat_map(|n| n)
             .filter(move |n| {
                 n.state_with_now(now) == NodeState::Questionable
                     || n.state_with_now(now) == NodeState::Good
@@ -386,25 +404,30 @@ where
     }
 
     fn sort_node_ids(&mut self, now: Instant) {
-        self.nodes.sort_unstable_by(|a, b| {
-            match (a.state_with_now(now), b.state_with_now(now)) {
-                (NodeState::Good, NodeState::Questionable)
-                | (NodeState::Good, NodeState::Bad)
-                | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
-                (NodeState::Questionable, NodeState::Good)
-                | (NodeState::Bad, NodeState::Questionable)
-                | (NodeState::Bad, NodeState::Good) => return Ordering::Greater,
-                (NodeState::Good, NodeState::Good)
-                | (NodeState::Questionable, NodeState::Questionable)
-                | (NodeState::Bad, NodeState::Bad) => {}
-            }
+        self.nodes.sort_unstable_by(|a, b| match (a, b) {
+            (Some(a), Some(b)) => {
+                match (a.state_with_now(now), b.state_with_now(now)) {
+                    (NodeState::Good, NodeState::Questionable)
+                    | (NodeState::Good, NodeState::Bad)
+                    | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
+                    (NodeState::Questionable, NodeState::Good)
+                    | (NodeState::Bad, NodeState::Questionable)
+                    | (NodeState::Bad, NodeState::Good) => return Ordering::Greater,
+                    (NodeState::Good, NodeState::Good)
+                    | (NodeState::Questionable, NodeState::Questionable)
+                    | (NodeState::Bad, NodeState::Bad) => {}
+                }
 
-            match (a.next_msg_deadline(), b.next_msg_deadline()) {
-                (None, None) => Ordering::Equal,
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (Some(first), Some(second)) => second.cmp(&first),
+                match (a.next_msg_deadline(), b.next_msg_deadline()) {
+                    (None, None) => Ordering::Equal,
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (Some(first), Some(second)) => second.cmp(&first),
+                }
             }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
         });
     }
 }
@@ -418,7 +441,6 @@ where
 {
     pivot: Id,
     buckets: Vec<Bucket<A>>,
-    max_nodes_per_bucket: usize,
     find_pivot_id_deadline: Instant,
 }
 
@@ -426,11 +448,10 @@ impl<A> Table<A>
 where
     A: Addr + Into<SocketAddr>,
 {
-    pub(crate) fn new(pivot: Id, max_nodes_per_bucket: usize, now: Instant) -> Self {
+    pub(crate) fn new(pivot: Id, now: Instant) -> Self {
         Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max(), max_nodes_per_bucket)],
-            max_nodes_per_bucket,
+            buckets: vec![Bucket::new(Id::min()..=Id::max())],
             find_pivot_id_deadline: now + FIND_LOCAL_ID_INTERVAL,
         }
     }
@@ -471,13 +492,13 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        if bucket.range.contains(&self.pivot) && bucket.nodes.len() >= self.max_nodes_per_bucket {
+        if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(self.max_nodes_per_bucket);
+            let (mut first_bucket, mut second_bucket) = bucket.split();
             if first_bucket.range.contains(&node_id) {
-                first_bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
+                first_bucket.try_insert(addr_id, now);
             } else {
-                second_bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
+                second_bucket.try_insert(addr_id, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -488,7 +509,7 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.try_insert(self.max_nodes_per_bucket, addr_id, now);
+            bucket.try_insert(addr_id, now);
         }
     }
 
@@ -521,29 +542,14 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        if bucket.range.contains(&self.pivot) && bucket.nodes.len() >= self.max_nodes_per_bucket {
+        if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(self.max_nodes_per_bucket);
+            let (mut first_bucket, mut second_bucket) = bucket.split();
             if first_bucket.range.contains(&node_id) {
-                first_bucket.on_msg_received(
-                    self.max_nodes_per_bucket,
-                    addr_id,
-                    kind,
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    now,
-                )?;
+                first_bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
             } else {
-                second_bucket.on_msg_received(
-                    self.max_nodes_per_bucket,
-                    addr_id,
-                    kind,
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    now,
-                )?;
+                second_bucket
+                    .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -554,15 +560,7 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.on_msg_received(
-                self.max_nodes_per_bucket,
-                addr_id,
-                kind,
-                config,
-                tx_manager,
-                msg_buffer,
-                now,
-            )?;
+            bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
         }
         Ok(())
     }
@@ -886,8 +884,8 @@ mod tests {
 
     #[test]
     fn test_split_bucket() {
-        let bucket: Bucket<SocketAddrV4> = Bucket::new(Id::min()..=Id::max(), 8);
-        let (first_bucket, second_bucket) = bucket.split(8);
+        let bucket: Bucket<SocketAddrV4> = Bucket::new(Id::min()..=Id::max());
+        let (first_bucket, second_bucket) = bucket.split();
         assert_eq!(
             first_bucket.range,
             Id::min()

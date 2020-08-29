@@ -503,6 +503,8 @@ where
         Self { addr, id: None }
     }
 
+    // TODO: Rename to new
+
     /// Instantiate with a network address and an optional Id.
     ///
     /// # Example
