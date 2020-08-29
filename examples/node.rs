@@ -74,19 +74,15 @@ fn main() -> io::Result<()> {
     .map(|v| v.into_iter().flatten().collect::<Vec<_>>())
     .expect("addresses to resolve");
 
-    let mut dht: Dht = Dht::new(
-        sloppy::Config {
-            local_id: sloppy::node::LocalId::new(sloppy::node::Id::rand().unwrap()),
-            client_version: Some(serde_bytes::ByteBuf::from("ab12")),
-            default_query_timeout: Duration::from_secs(30),
-            is_read_only_node: true,
-            max_node_count_per_bucket: 10,
-            supported_addr: sloppy::SupportedAddr::Ipv4AndIpv6,
-        },
-        &[],
-        bootstrap_addrs,
-    )
-    .expect("dht to bootstrap successfully");
+    let mut config = sloppy::Config::new(sloppy::node::LocalId::new(
+        sloppy::node::Id::rand().unwrap(),
+    ));
+    config.set_client_version(serde_bytes::ByteBuf::from("ab12"));
+    config.set_is_read_only_node(true);
+    config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
+
+    let mut dht: Dht =
+        Dht::new(config, &[], bootstrap_addrs).expect("dht to bootstrap successfully");
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -147,7 +143,7 @@ fn main() -> io::Result<()> {
                         sloppy::MsgEvent::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
                                 let ping_resp =
-                                    ping::PingRespValues::with_id(dht.config().local_id);
+                                    ping::PingRespValues::with_id(dht.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
                                     match dht.write_resp(
                                         tx_id,

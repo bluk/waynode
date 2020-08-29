@@ -97,7 +97,7 @@ pub struct SendInfo {
     pub addr: SocketAddr,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// The types of addresses supported.
 pub enum SupportedAddr {
     Ipv4,
@@ -109,18 +109,90 @@ pub enum SupportedAddr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Local node id
-    pub local_id: node::LocalId,
+    local_id: node::LocalId,
     /// Client version identifier
-    pub client_version: Option<ByteBuf>,
+    client_version: Option<ByteBuf>,
     /// The default amount of time before a query without a response is considered timed out
-    pub default_query_timeout: Duration,
+    default_query_timeout: Duration,
     /// If the node is read only
-    pub is_read_only_node: bool,
-    /// The max amount of nodes in a routing table bucket
-    pub max_node_count_per_bucket: usize,
+    is_read_only_node: bool,
     /// The types of socket addresses supported.
-    pub supported_addr: SupportedAddr,
+    supported_addr: SupportedAddr,
 }
+
+impl Config {
+    /// Instantiate a new config with a node's local Id.
+    pub fn new<I>(id: I) -> Self
+    where
+        I: Into<node::LocalId>,
+    {
+        Self {
+            local_id: id.into(),
+            client_version: None,
+            default_query_timeout: Duration::from_secs(60),
+            is_read_only_node: false,
+            supported_addr: SupportedAddr::Ipv4AndIpv6,
+        }
+    }
+
+    /// Returns the node's local Id.
+    pub fn local_id(&self) -> node::LocalId {
+        self.local_id
+    }
+
+    /// Sets the node's local Id.
+    pub fn set_local_id<I>(&mut self, id: I)
+    where
+        I: Into<node::LocalId>,
+    {
+        self.local_id = id.into();
+    }
+
+    /// Returns the client version.
+    pub fn client_version(&self) -> Option<&ByteBuf> {
+        self.client_version.as_ref()
+    }
+
+    /// Sets the client version.
+    pub fn set_client_version<I>(&mut self, client_version: I)
+    where
+        I: Into<Option<ByteBuf>>,
+    {
+        self.client_version = client_version.into()
+    }
+
+    /// Returns the default query timeout.
+    pub fn default_query_timeout(&self) -> Duration {
+        self.default_query_timeout
+    }
+
+    /// Sets the default query timeout.
+    pub fn set_default_query_timeout(&mut self, default_query_timeout: Duration) {
+        self.default_query_timeout = default_query_timeout
+    }
+
+    /// Returns true if the node is read only, false otherwise.
+    pub fn is_read_only_node(&self) -> bool {
+        self.is_read_only_node
+    }
+
+    /// Set to true if the node is read only, false otherwise.
+    pub fn set_is_read_only_node(&mut self, is_read_only_node: bool) {
+        self.is_read_only_node = is_read_only_node;
+    }
+
+    /// Returns the supported address types.
+    pub fn supported_addr(&self) -> SupportedAddr {
+        self.supported_addr
+    }
+
+    /// Sets the supported address types.
+    pub fn set_supported_addr(&mut self, supported_addr: SupportedAddr) {
+        self.supported_addr = supported_addr;
+    }
+}
+
+// TODO: Rename Dht to Node
 
 /// The distributed hash table.
 #[derive(Debug)]
@@ -143,7 +215,7 @@ impl Dht {
         A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
     {
-        let max_node_count_per_bucket = config.max_node_count_per_bucket;
+        let max_node_count_per_bucket = 8;
         let local_id = node::Id::from(config.local_id);
         let client_version = config.client_version.clone();
         let now = Instant::now();
@@ -366,32 +438,34 @@ impl Dht {
         )
     }
 
-    pub fn write_resp<A, T>(
+    pub fn write_resp<'a, A, B, T>(
         &mut self,
-        transaction_id: &ByteBuf,
+        transaction_id: B,
         resp: Option<T>,
         addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: RespVal,
         A: Into<AddrOptId<SocketAddr>>,
+        B: Into<&'a ByteBuf>,
     {
         self.msg_buffer
-            .write_resp(transaction_id, resp, addr_opt_id)
+            .write_resp(transaction_id.into(), resp, addr_opt_id)
     }
 
-    pub fn write_err<A, T>(
+    pub fn write_err<'a, A, B, T>(
         &mut self,
-        transaction_id: &ByteBuf,
+        transaction_id: B,
         details: T,
         addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: ErrorVal,
         A: Into<AddrOptId<SocketAddr>>,
+        B: Into<&'a ByteBuf>,
     {
         self.msg_buffer
-            .write_err(transaction_id, details, addr_opt_id)
+            .write_err(transaction_id.into(), details, addr_opt_id)
     }
 
     pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
@@ -505,7 +579,6 @@ mod tests {
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
-            max_node_count_per_bucket: 10,
             supported_addr: SupportedAddr::Ipv4AndIpv6,
         })
     }
@@ -545,7 +618,7 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
-                assert_eq!(msg_sent.tx_id(), Some(&tx_id.to_bytebuf()));
+                assert_eq!(msg_sent.tx_id(), Some(&ByteBuf::from(tx_id)));
 
                 Ok(())
             }

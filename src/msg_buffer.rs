@@ -84,7 +84,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
-                t: &tx_id.to_bytebuf(),
+                t: &ByteBuf::from(tx_id),
                 v: self.client_version.as_ref(),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,

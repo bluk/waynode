@@ -31,10 +31,6 @@ impl Id {
         let (next_id, _) = self.0.overflowing_add(1);
         Id(next_id)
     }
-
-    pub(crate) fn to_bytebuf(&self) -> ByteBuf {
-        ByteBuf::from(self.0.to_be_bytes())
-    }
 }
 
 impl TryFrom<&ByteBuf> for Id {
@@ -49,6 +45,18 @@ impl TryFrom<&ByteBuf> for Id {
             .try_into()
             .map_err(|_| Error::InvalidLocalTransactionId)?;
         Ok(Id(u16::from_be_bytes(int_bytes)))
+    }
+}
+
+impl From<Id> for ByteBuf {
+    fn from(id: Id) -> ByteBuf {
+        ByteBuf::from(id.0.to_be_bytes())
+    }
+}
+
+impl From<Id> for Vec<u8> {
+    fn from(id: Id) -> Vec<u8> {
+        Vec::from(id.0.to_be_bytes())
     }
 }
 
