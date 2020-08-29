@@ -192,11 +192,9 @@ impl Config {
     }
 }
 
-// TODO: Rename Dht to Node
-
 /// The distributed hash table.
 #[derive(Debug)]
-pub struct Dht {
+pub struct Node {
     config: Config,
     routing_table: routing::RoutingTable,
     tx_manager: transaction::Manager,
@@ -205,7 +203,7 @@ pub struct Dht {
     find_node_ops: Vec<FindNodeOp>,
 }
 
-impl Dht {
+impl Node {
     pub fn new<'a, A, B>(
         config: Config,
         addr_ids: A,
@@ -613,11 +611,11 @@ mod tests {
 
         let args = PingQueryArgs::new(local_id);
 
-        let mut dht: Dht = Dht::new(new_config()?, std::iter::empty(), std::iter::empty())?;
-        let tx_id = dht.write_query(&args, addr_opt_id, None).unwrap();
+        let mut node: Node = Node::new(new_config()?, std::iter::empty(), std::iter::empty())?;
+        let tx_id = node.write_query(&args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
-        match dht.send_to(&mut out)? {
+        match node.send_to(&mut out)? {
             Some(send_info) => {
                 assert_eq!(send_info.addr, remote_addr);
 
@@ -637,10 +635,10 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut dht: Dht = Dht::new(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
+        let mut node: Node = Node::new(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
 
         let mut out: [u8; 65535] = [0; 65535];
-        match dht.send_to(&mut out)? {
+        match node.send_to(&mut out)? {
             Some(send_info) => {
                 assert_eq!(send_info.addr, bootstrap_remote_addr);
 
@@ -653,11 +651,11 @@ mod tests {
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
                 assert_eq!(
                     find_node_query_args.target(),
-                    node::Id::from(dht.config.local_id)
+                    node::Id::from(node.config.local_id)
                 );
                 assert_eq!(
                     find_node_query_args.id(),
-                    node::Id::from(dht.config.local_id)
+                    node::Id::from(node.config.local_id)
                 );
 
                 Ok(())

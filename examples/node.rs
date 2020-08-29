@@ -24,7 +24,7 @@ use mio::{Events, Interest, Poll, Token};
 
 use sloppy::{
     krpc::{ping, ErrorCode, Msg, QueryMsg},
-    Dht,
+    Node,
 };
 
 fn main() -> io::Result<()> {
@@ -81,8 +81,8 @@ fn main() -> io::Result<()> {
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
 
-    let mut dht: Dht =
-        Dht::new(config, &[], bootstrap_addrs).expect("dht to bootstrap successfully");
+    let mut node: Node =
+        Node::new(config, &[], bootstrap_addrs).expect("dht to bootstrap successfully");
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -101,14 +101,14 @@ fn main() -> io::Result<()> {
     // let mut buf_writer = BufWriter::new(stdout.lock());
 
     'event: loop {
-        let timeout: Option<Duration> = dht.timeout();
+        let timeout: Option<Duration> = node.timeout();
 
         poll.poll(&mut events, timeout)?;
 
         'recv: loop {
             if events.is_empty() {
                 debug!("Timed out");
-                match dht.on_timeout() {
+                match node.on_timeout() {
                     Ok(()) => {}
                     Err(e) => error!("on_timeout error: {:?}", e),
                 };
@@ -129,7 +129,7 @@ fn main() -> io::Result<()> {
 
             let filled_buf = &buf[..bytes_read];
 
-            match dht.on_recv(filled_buf, src_addr) {
+            match node.on_recv(filled_buf, src_addr) {
                 Ok(()) => {}
                 Err(e) => {
                     error!("on_recv error: {:?}", e);
@@ -137,14 +137,14 @@ fn main() -> io::Result<()> {
             }
 
             'read: loop {
-                if let Some(inbound_msg) = dht.read() {
+                if let Some(inbound_msg) = node.read() {
                     // debug!("Read message: {:?}", inbound_msg);
                     match inbound_msg.msg() {
                         sloppy::MsgEvent::Query(msg) => match msg.method_name_str() {
                             Some(ping::METHOD_PING) => {
-                                let ping_resp = ping::PingRespValues::new(dht.config().local_id());
+                                let ping_resp = ping::PingRespValues::new(node.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
-                                    match dht.write_resp(
+                                    match node.write_resp(
                                         tx_id,
                                         Some(ping_resp),
                                         inbound_msg.addr_opt_id(),
@@ -160,7 +160,7 @@ fn main() -> io::Result<()> {
                                         ErrorCode::MethodUnknown,
                                         method_name.to_string(),
                                     );
-                                    match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
+                                    match node.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
@@ -172,7 +172,7 @@ fn main() -> io::Result<()> {
                                         ErrorCode::ProtocolError,
                                         String::from("method name not listed"),
                                     );
-                                    match dht.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
+                                    match node.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
@@ -190,7 +190,7 @@ fn main() -> io::Result<()> {
 
             debug!("Sending after read");
 
-            match send_packets(&mut dht, &socket, &mut out) {
+            match send_packets(&mut node, &socket, &mut out) {
                 Ok(break_event) => {
                     if break_event {
                         break 'event;
@@ -205,7 +205,7 @@ fn main() -> io::Result<()> {
 
         debug!("Sending after recv");
 
-        match send_packets(&mut dht, &socket, &mut out) {
+        match send_packets(&mut node, &socket, &mut out) {
             Ok(break_event) => {
                 if break_event {
                     break 'event;
@@ -221,9 +221,9 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn send_packets(dht: &mut Dht, socket: &mio::net::UdpSocket, out: &mut [u8]) -> io::Result<bool> {
+fn send_packets(node: &mut Node, socket: &mio::net::UdpSocket, out: &mut [u8]) -> io::Result<bool> {
     loop {
-        match dht.send_to(out) {
+        match node.send_to(out) {
             Ok(v) => {
                 if let Some(send_info) = v {
                     if send_info.len == 0 {
