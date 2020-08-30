@@ -14,6 +14,8 @@
 
 // TODO: Configuration for whether node IDs are valid for IP
 // http://bittorrent.org/beps/bep_0005.html
+// http://bittorrent.org/beps/bep_0032.html
+// http://bittorrent.org/beps/bep_0033.html
 // http://bittorrent.org/beps/bep_0043.html
 // http://bittorrent.org/beps/bep_0044.html
 // http://bittorrent.org/beps/bep_0045.html
@@ -589,6 +591,7 @@ mod tests {
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
+            is_response_queried_node_id_strictly_checked: true,
             supported_addr: SupportedAddr::Ipv4AndIpv6,
         })
     }

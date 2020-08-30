@@ -171,15 +171,6 @@ where
         self.update_expected_change_deadline();
     }
 
-    // #[inline]
-    // fn max_replacement_nodes(&self, now: Instant) -> usize {
-    //     self.nodes
-    //         .iter()
-    //         .flat_map(|n| n)
-    //         .filter(|n| n.state_with_now(now) == NodeState::Questionable)
-    //         .count()
-    // }
-
     fn ping_least_recently_seen_questionable_node(
         &mut self,
         config: &crate::Config,
@@ -236,16 +227,6 @@ where
             node.on_msg_received(kind, now);
             match kind {
                 Kind::Response | Kind::Query => {
-                    // let max_replacement_nodes = self.max_replacement_nodes(now);
-                    // let mut replacement_node_count = 0;
-                    // for replacement_node in self.replacement_nodes.iter_mut() {
-                    //     if replacement_node.is_some() {
-                    //         if replacement_node_count > max_replacement_nodes {
-                    //             *replacement_node = None;
-                    //         }
-                    //         replacement_node_count += 1;
-                    //     }
-                    // }
                     self.sort_node_ids(now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, now,
@@ -473,7 +454,7 @@ where
             .take(8)
             .map(|a| AddrOptId::new(a.addr(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
-        let mut find_node_op = FindNodeOp::new(target_id, neighbors);
+        let mut find_node_op = FindNodeOp::new(config, target_id, neighbors);
         find_node_op.start(&config, tx_manager, msg_buffer)?;
         Ok(find_node_op)
     }

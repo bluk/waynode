@@ -13,15 +13,51 @@ use crate::{
         transaction, RespMsg,
     },
     msg_buffer,
-    node::{self, Addr, AddrOptId},
+    node::{self, Addr, AddrId, AddrOptId, Id},
+    SupportedAddr,
 };
 use bt_bencode::Value;
-use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};
+use std::{
+    collections::BTreeSet,
+    convert::TryFrom,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+};
 
 #[derive(Debug)]
-struct PotentialAddrOptId {
+struct PotentialAddrOptId<A>
+where
+    A: Addr + Into<SocketAddr>,
+{
     distance: Option<node::Id>,
-    addr_opt_id: AddrOptId<SocketAddr>,
+    addr_opt_id: AddrOptId<A>,
+}
+
+impl From<PotentialAddrOptId<SocketAddrV4>> for PotentialAddrOptId<SocketAddr> {
+    fn from(
+        potential_addr_info: PotentialAddrOptId<SocketAddrV4>,
+    ) -> PotentialAddrOptId<SocketAddr> {
+        PotentialAddrOptId {
+            distance: potential_addr_info.distance,
+            addr_opt_id: AddrOptId::new(
+                potential_addr_info.addr_opt_id.addr().into(),
+                potential_addr_info.addr_opt_id.id(),
+            ),
+        }
+    }
+}
+
+impl From<PotentialAddrOptId<SocketAddrV6>> for PotentialAddrOptId<SocketAddr> {
+    fn from(
+        potential_addr_info: PotentialAddrOptId<SocketAddrV6>,
+    ) -> PotentialAddrOptId<SocketAddr> {
+        PotentialAddrOptId {
+            distance: potential_addr_info.distance,
+            addr_opt_id: AddrOptId::new(
+                potential_addr_info.addr_opt_id.addr().into(),
+                potential_addr_info.addr_opt_id.id(),
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -34,43 +70,208 @@ pub(crate) enum Response<'a> {
 const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
-// TODO: Deal with IPv4 vs IPv6 and maintain two lists of closest_distances for each
+#[derive(Debug)]
+struct AddrInfo<A>
+where
+    A: Addr + Into<SocketAddr>,
+{
+    closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
+    potential_addr_opt_ids: Vec<PotentialAddrOptId<A>>,
+    queried_addrs: BTreeSet<A>,
+}
+
+impl<A> AddrInfo<A>
+where
+    A: Addr + Into<SocketAddr>,
+{
+    fn new<I>(potential_addr_opt_ids: I) -> Self
+    where
+        I: IntoIterator<Item = PotentialAddrOptId<A>>,
+    {
+        Self {
+            closest_distances: [node::Id::max(); CLOSEST_DISTANCES_LEN],
+            potential_addr_opt_ids: potential_addr_opt_ids.into_iter().collect(),
+            queried_addrs: BTreeSet::new(),
+        }
+    }
+
+    fn max_distance(&self) -> node::Id {
+        self.closest_distances[CLOSEST_DISTANCES_LEN - 1]
+    }
+
+    fn is_done(&self) -> bool {
+        self.potential_addr_opt_ids.is_empty()
+    }
+
+    fn replace_closest_queried_nodes(&mut self, target_id: node::Id, new_node_id: node::Id) {
+        let new_distance = new_node_id.distance(target_id);
+        let max_distance = self.max_distance();
+        if new_distance < max_distance {
+            self.closest_distances[CLOSEST_DISTANCES_LEN - 1] = new_distance;
+            self.closest_distances.sort_unstable();
+            self.potential_addr_opt_ids.retain(|potential_addr_opt_id| {
+                potential_addr_opt_id
+                    .distance
+                    .map(|potential_dist| potential_dist < max_distance)
+                    .unwrap_or(true)
+            });
+        }
+    }
+
+    fn extend_potential_addrs<'a, I>(&'a mut self, target_id: Id, potential_addr_opt_ids: I)
+    where
+        I: IntoIterator<Item = &'a AddrId<A>>,
+    {
+        let max_distance = self.max_distance();
+
+        let potential_addr_opt_ids = potential_addr_opt_ids
+            .into_iter()
+            .filter(|n| !self.queried_addrs.contains(&n.addr()))
+            .map(|n| PotentialAddrOptId {
+                distance: Some(n.id().distance(target_id)),
+                addr_opt_id: AddrOptId::new(n.addr(), Some(n.id())),
+            })
+            .filter(|potential_addr| {
+                potential_addr
+                    .distance
+                    .map(|potential_dist| potential_dist < max_distance)
+                    .unwrap_or(true)
+            })
+            .collect::<Vec<_>>();
+        self.potential_addr_opt_ids.extend(potential_addr_opt_ids);
+    }
+
+    fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<A>> {
+        let max_distance = self.max_distance();
+        while let Some(potential_addr_opt_id) = self.potential_addr_opt_ids.pop() {
+            if self
+                .queried_addrs
+                .contains(&potential_addr_opt_id.addr_opt_id.addr())
+            {
+                continue;
+            }
+
+            if potential_addr_opt_id
+                .distance
+                .map(|node_dist| node_dist < max_distance)
+                .unwrap_or(true)
+            {
+                self.queried_addrs
+                    .insert(potential_addr_opt_id.addr_opt_id.addr());
+
+                return Some(potential_addr_opt_id);
+            }
+        }
+
+        None
+    }
+}
+
+#[derive(Debug)]
+enum AddrSpace {
+    V4(AddrInfo<SocketAddrV4>),
+    V6(AddrInfo<SocketAddrV6>),
+    V4AndV6(AddrInfo<SocketAddrV4>, AddrInfo<SocketAddrV6>),
+}
+
+impl AddrSpace {
+    fn is_done(&self) -> bool {
+        match self {
+            AddrSpace::V4(info) => info.is_done(),
+            AddrSpace::V6(info) => info.is_done(),
+            AddrSpace::V4AndV6(info_v4, info_v6) => info_v4.is_done() && info_v6.is_done(),
+        }
+    }
+
+    #[inline]
+    fn replace_closest_queried_nodes<A>(
+        &mut self,
+        addr: A,
+        target_id: node::Id,
+        new_node_id: node::Id,
+    ) where
+        A: Into<SocketAddr>,
+    {
+        match addr.into() {
+            SocketAddr::V4(_) => match self {
+                AddrSpace::V4(addr_info) | AddrSpace::V4AndV6(addr_info, _) => {
+                    addr_info.replace_closest_queried_nodes(target_id, new_node_id);
+                }
+                AddrSpace::V6(_) => {}
+            },
+            SocketAddr::V6(_) => match self {
+                AddrSpace::V6(addr_info) | AddrSpace::V4AndV6(_, addr_info) => {
+                    addr_info.replace_closest_queried_nodes(target_id, new_node_id);
+                }
+                AddrSpace::V4(_) => {}
+            },
+        }
+    }
+
+    fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<SocketAddr>> {
+        match self {
+            AddrSpace::V4(addr_info) => addr_info.pop_potential_addr().map(|a| a.into()),
+            AddrSpace::V6(addr_info) => addr_info.pop_potential_addr().map(|a| a.into()),
+            AddrSpace::V4AndV6(addr_info_v4, addr_info_v6) => addr_info_v4
+                .pop_potential_addr()
+                .map(|a| a.into())
+                .or_else(|| addr_info_v6.pop_potential_addr().map(|a| a.into())),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct FindNodeOp {
     target_id: node::Id,
-    closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
+    addr_space: AddrSpace,
 
-    queried_addrs: BTreeSet<SocketAddr>,
     tx_ids: BTreeSet<transaction::Id>,
-    potential_addr_opt_ids: Vec<PotentialAddrOptId>,
 }
 
 impl FindNodeOp {
-    pub(crate) fn new<A, T>(target_id: node::Id, potential_addr_opt_ids: T) -> Self
+    pub(crate) fn new<A, T>(
+        config: &crate::Config,
+        target_id: node::Id,
+        potential_addr_opt_ids: T,
+    ) -> Self
     where
         T: IntoIterator<Item = AddrOptId<A>>,
         A: Addr + Into<SocketAddr>,
     {
-        let potential_addr_opt_ids = potential_addr_opt_ids
-            .into_iter()
-            .map(|addr_opt_id| PotentialAddrOptId {
-                distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
-                addr_opt_id: AddrOptId::new(addr_opt_id.addr().into(), addr_opt_id.id()),
-            })
-            .collect();
+        let mut potential_addr_opt_ids_v4 = Vec::new();
+        let mut potential_addr_opt_ids_v6 = Vec::new();
+
+        for addr_opt_id in potential_addr_opt_ids.into_iter() {
+            match addr_opt_id.addr().into() {
+                SocketAddr::V4(addr) => potential_addr_opt_ids_v4.push(PotentialAddrOptId {
+                    distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
+                    addr_opt_id: AddrOptId::new(addr, addr_opt_id.id()),
+                }),
+                SocketAddr::V6(addr) => potential_addr_opt_ids_v6.push(PotentialAddrOptId {
+                    distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
+                    addr_opt_id: AddrOptId::new(addr, addr_opt_id.id()),
+                }),
+            }
+        }
+
+        let addr_space = match config.supported_addr {
+            SupportedAddr::Ipv4 => AddrSpace::V4(AddrInfo::new(potential_addr_opt_ids_v4)),
+            SupportedAddr::Ipv6 => AddrSpace::V6(AddrInfo::new(potential_addr_opt_ids_v6)),
+            SupportedAddr::Ipv4AndIpv6 => AddrSpace::V4AndV6(
+                AddrInfo::new(potential_addr_opt_ids_v4),
+                AddrInfo::new(potential_addr_opt_ids_v6),
+            ),
+        };
+
         Self {
             target_id,
-            closest_distances: [node::Id::max(); CLOSEST_DISTANCES_LEN],
-            queried_addrs: BTreeSet::new(),
+            addr_space,
             tx_ids: BTreeSet::new(),
-            potential_addr_opt_ids,
         }
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        let ret = self.tx_ids.is_empty()
-            && (!self.queried_addrs.is_empty() || self.potential_addr_opt_ids.is_empty());
+        let ret = self.tx_ids.is_empty() && self.addr_space.is_done();
         if ret {
             debug!("find_node is done. find_node_op={:?}", self);
         }
@@ -83,51 +284,24 @@ impl FindNodeOp {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
     ) -> Result<(), Error> {
-        for potential_node in self
-            .potential_addr_opt_ids
-            .drain(0..std::cmp::min(MAX_CONCURRENT_REQUESTS, self.potential_addr_opt_ids.len()))
-        {
-            if self
-                .queried_addrs
-                .contains(&potential_node.addr_opt_id.addr())
-            {
-                continue;
-            }
-
+        let mut count = 0;
+        while let Some(potential_addr_opt_id) = self.addr_space.pop_potential_addr() {
             let tx_id = msg_buffer.write_query(
                 &FindNodeQueryArgs::new(config.local_id, self.target_id),
-                potential_node.addr_opt_id,
+                potential_addr_opt_id.addr_opt_id,
                 config.default_query_timeout,
                 config.client_version.as_ref(),
                 tx_manager,
             )?;
             self.tx_ids.insert(tx_id);
-            self.queried_addrs.insert(potential_node.addr_opt_id.addr());
+
+            count += 1;
+            if count >= MAX_CONCURRENT_REQUESTS {
+                break;
+            }
         }
+
         Ok(())
-    }
-
-    #[inline]
-    fn max_distance(&self) -> node::Id {
-        self.closest_distances[CLOSEST_DISTANCES_LEN - 1]
-    }
-
-    #[inline]
-    fn replace_closest_queried_nodes(&mut self, new_node_id: node::Id) -> node::Id {
-        let new_distance = new_node_id.distance(self.target_id);
-        let mut max_distance = self.max_distance();
-        if new_distance < max_distance {
-            self.closest_distances[CLOSEST_DISTANCES_LEN - 1] = new_distance;
-            self.closest_distances.sort_unstable();
-            max_distance = self.max_distance();
-            self.potential_addr_opt_ids.retain(|potential_addr_opt_id| {
-                potential_addr_opt_id
-                    .distance
-                    .map(|potential_dist| potential_dist < max_distance)
-                    .unwrap_or(true)
-            });
-        }
-        max_distance
     }
 
     pub(crate) fn handle<'a>(
@@ -139,7 +313,6 @@ impl FindNodeOp {
         msg_buffer: &mut msg_buffer::Buffer,
     ) -> Result<(), Error> {
         if !self.tx_ids.contains(&tx.tx_id) {
-            error!("tried handling wrong tx={:?}", tx);
             return Ok(());
         }
         self.tx_ids.remove(&tx.tx_id);
@@ -148,67 +321,46 @@ impl FindNodeOp {
             self.target_id, tx, resp
         );
 
-        let max_distance = match resp {
+        match resp {
             Response::Resp(resp) => {
-                let max_distance = if let Some(node_id) = tx.addr_opt_id.id() {
-                    self.replace_closest_queried_nodes(node_id)
-                } else {
-                    self.max_distance()
-                };
+                if let Some(node_id) = tx.addr_opt_id.id() {
+                    self.addr_space.replace_closest_queried_nodes(
+                        tx.addr_opt_id.addr(),
+                        self.target_id,
+                        node_id,
+                    );
+                }
 
-                if let Some(nodes) = resp
+                if let Some(find_node_resp) = resp
                     .values()
                     .and_then(|values| FindNodeRespValues::try_from(values).ok())
-                    .and_then(|find_node_resp| {
-                        find_node_resp.nodes().map(|nodes| {
-                            nodes
-                                .iter()
-                                .map(|cn| PotentialAddrOptId {
-                                    distance: Some(cn.id().distance(self.target_id)),
-                                    addr_opt_id: cn.into(),
-                                })
-                                .filter(|potential_addr| {
-                                    potential_addr
-                                        .distance
-                                        .map(|potential_dist| potential_dist < max_distance)
-                                        .unwrap_or(true)
-                                        && !self
-                                            .queried_addrs
-                                            .contains(&potential_addr.addr_opt_id.addr())
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                    })
                 {
-                    if !nodes.is_empty() {
-                        debug!("new potential nodes={:?}", nodes);
-                        self.potential_addr_opt_ids.extend(nodes);
+                    if let Some(nodes) = find_node_resp.nodes() {
+                        match &mut self.addr_space {
+                            AddrSpace::V4(addr_info) | AddrSpace::V4AndV6(addr_info, _) => {
+                                addr_info.extend_potential_addrs(self.target_id, nodes);
+                            }
+                            AddrSpace::V6(_) => {}
+                        }
+                    }
+
+                    if let Some(nodes6) = find_node_resp.nodes6() {
+                        match &mut self.addr_space {
+                            AddrSpace::V6(addr_info) | AddrSpace::V4AndV6(_, addr_info) => {
+                                addr_info.extend_potential_addrs(self.target_id, nodes6);
+                            }
+                            AddrSpace::V4(_) => {}
+                        }
                     }
                 }
-                max_distance
             }
-            Response::Error(_) | Response::Timeout => self.max_distance(),
+            Response::Error(_) | Response::Timeout => {}
         };
 
         let outstanding_queries = self.tx_ids.len();
         if outstanding_queries < MAX_CONCURRENT_REQUESTS {
             let mut queries_to_write = MAX_CONCURRENT_REQUESTS - outstanding_queries;
-            while let Some(potential_node) = self.potential_addr_opt_ids.pop() {
-                if self
-                    .queried_addrs
-                    .contains(&potential_node.addr_opt_id.addr())
-                {
-                    continue;
-                }
-
-                if potential_node
-                    .distance
-                    .map(|node_dist| node_dist >= max_distance)
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-
+            while let Some(potential_node) = self.addr_space.pop_potential_addr() {
                 let tx_id = msg_buffer.write_query(
                     &FindNodeQueryArgs::new(config.local_id, self.target_id),
                     potential_node.addr_opt_id,
@@ -217,7 +369,6 @@ impl FindNodeOp {
                     tx_manager,
                 )?;
                 self.tx_ids.insert(tx_id);
-                self.queried_addrs.insert(potential_node.addr_opt_id.addr());
 
                 queries_to_write -= 1;
                 if queries_to_write == 0 {
@@ -226,14 +377,14 @@ impl FindNodeOp {
             }
         }
 
-        debug!(
-            "target_id={:?} outstanding tx_ids.len={} potential_addr_opt_ids.len={} queried_addr.len={} closest_distances={:?} ",
-            self.target_id,
-            self.tx_ids.len(),
-            self.potential_addr_opt_ids.len(),
-            self.queried_addrs.len(),
-            self.closest_distances
-        );
+        // debug!(
+        //     "target_id={:?} outstanding tx_ids.len={} potential_addr_opt_ids.len={} queried_addr.len={} closest_distances={:?} ",
+        //     self.target_id,
+        //     self.tx_ids.len(),
+        //     self.potential_addr_opt_ids.len(),
+        //     self.queried_addrs.len(),
+        //     self.closest_distances
+        // );
 
         Ok(())
     }

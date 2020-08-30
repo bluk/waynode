@@ -74,19 +74,6 @@ impl std::hash::Hash for Transaction {
     }
 }
 
-impl Transaction {
-    pub(crate) fn is_node_id_match(&self, other_node_id: Option<crate::node::Id>) -> bool {
-        self.addr_opt_id
-            .id()
-            .map(|tx_node_id| {
-                other_node_id
-                    .map(|other_node_id| other_node_id == tx_node_id)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(true)
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct Manager {
     transactions: Vec<Transaction>,
