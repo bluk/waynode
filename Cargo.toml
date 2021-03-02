@@ -26,5 +26,5 @@ log = "0.4"
 
 [dev-dependencies]
 mio = {version = "0.7", features = ["os-poll", "udp"] }
-env_logger = "0.7"
+env_logger = "0.8"
 clap = "2"
