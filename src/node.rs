@@ -325,11 +325,11 @@ impl IdBytes for [u8; 20] {
         loop {
             for idx in 0..data.len() {
                 data[idx] = if lower_than_max {
-                    u8::try_from(rng.gen_range(0, u16::from(u8::MAX) + 1))
+                    u8::try_from(rng.gen_range(0..u16::from(u8::MAX) + 1))
                         .map_err(|_| Error::RngError)?
                 } else {
                     let idx_val = end[idx];
-                    let val = u8::try_from(rng.gen_range(0, u16::from(idx_val) + 1))
+                    let val = u8::try_from(rng.gen_range(0..u16::from(idx_val) + 1))
                         .map_err(|_| Error::RngError)?;
                     if val < idx_val {
                         lower_than_max = true;
@@ -769,12 +769,12 @@ pub(crate) trait NodeIdGenerator {
 
 impl NodeIdGenerator for Ipv4Addr {
     fn make_node_id(&self, rand: Option<u8>) -> Result<Id, Error> {
-        let rand = rand.unwrap_or_else(|| rand::thread_rng().gen_range(0, 8));
+        let rand = rand.unwrap_or_else(|| rand::thread_rng().gen_range(0..8));
         let crc32_val = self.make_crc32c(rand);
         let mut id = Id::rand()?;
         id.0[0] = u8::try_from(crc32_val >> 24 & 0xFF).unwrap();
         id.0[1] = u8::try_from(crc32_val >> 16 & 0xFF).unwrap();
-        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rand::thread_rng().gen_range(0, 8)).unwrap();
+        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rand::thread_rng().gen_range(0..8)).unwrap();
         id.0[19] = rand;
         Ok(id)
     }
@@ -820,12 +820,12 @@ impl NodeIdGenerator for Ipv4Addr {
 
 impl NodeIdGenerator for Ipv6Addr {
     fn make_node_id(&self, rand: Option<u8>) -> Result<Id, Error> {
-        let rand = rand.unwrap_or_else(|| rand::thread_rng().gen_range(0, 8));
+        let rand = rand.unwrap_or_else(|| rand::thread_rng().gen_range(0..8));
         let crc32_val = self.make_crc32c(rand);
         let mut id = Id::rand()?;
         id.0[0] = u8::try_from(crc32_val >> 24 & 0xFF).unwrap();
         id.0[1] = u8::try_from(crc32_val >> 16 & 0xFF).unwrap();
-        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rand::thread_rng().gen_range(0, 8)).unwrap();
+        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rand::thread_rng().gen_range(0..8)).unwrap();
         id.0[19] = rand;
         Ok(id)
     }
