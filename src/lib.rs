@@ -9,18 +9,30 @@
 //! Sloppy is a library which can help build an application using the [BitTorrent][bittorrent]
 //! [Distributed Hash Table][bep_0005].
 //!
+//! # Features
+//!
+//! | BEP                  | Status |
+//! | ---------------------|--------|
+//! | [BEP 0005][bep_0005] | WIP    |
+//! | [BEP 0032][bep_0032] | -      |
+//! | [BEP 0033][bep_0033] | -      |
+//! | [BEP 0043][bep_0043] | -      |
+//! | [BEP 0044][bep_0044] | -      |
+//! | [BEP 0045][bep_0045] | -      |
+//! | [BEP 0046][bep_0046] | -      |
+//! | [BEP 0051][bep_0051] | -      |
+//!
 //! [bittorrent]: http://bittorrent.org/
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
+//! [bep_0032]: http://bittorrent.org/beps/bep_0032.html
+//! [bep_0033]: http://bittorrent.org/beps/bep_0033.html
+//! [bep_0043]: http://bittorrent.org/beps/bep_0043.html
+//! [bep_0044]: http://bittorrent.org/beps/bep_0044.html
+//! [bep_0045]: http://bittorrent.org/beps/bep_0045.html
+//! [bep_0046]: http://bittorrent.org/beps/bep_0046.html
+//! [bep_0051]: http://bittorrent.org/beps/bep_0051.html
 
 // TODO: Configuration for whether node IDs are valid for IP
-// http://bittorrent.org/beps/bep_0005.html
-// http://bittorrent.org/beps/bep_0032.html
-// http://bittorrent.org/beps/bep_0033.html
-// http://bittorrent.org/beps/bep_0043.html
-// http://bittorrent.org/beps/bep_0044.html
-// http://bittorrent.org/beps/bep_0045.html
-// http://bittorrent.org/beps/bep_0046.html
-// http://bittorrent.org/beps/bep_0051.html
 
 #[macro_use]
 extern crate log;
