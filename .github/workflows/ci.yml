@@ -51,7 +51,6 @@ jobs:
       matrix:
         rust:
           - stable
-          - 1.45.2
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
