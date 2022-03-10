@@ -8,12 +8,8 @@
 
 //! Transactions correlate a KRPC query with its response.
 
-use crate::{error::Error, node::AddrOptId};
-use std::{
-    convert::{TryFrom, TryInto},
-    net::SocketAddr,
-    time::Instant,
-};
+use crate::node::AddrOptId;
+use std::{convert::TryFrom, net::SocketAddr, time::Instant};
 
 /// An opaque identifer which correlates a KRPC query with a response or error.
 ///
@@ -38,16 +34,10 @@ impl Id {
 }
 
 impl TryFrom<&[u8]> for Id {
-    type Error = Error;
+    type Error = core::array::TryFromSliceError;
 
-    fn try_from(other: &[u8]) -> Result<Self, Self::Error> {
-        if other.len() != std::mem::size_of::<u16>() {
-            return Err(Error::InvalidLocalTransactionId);
-        }
-        let int_bytes = other
-            .try_into()
-            .map_err(|_| Error::InvalidLocalTransactionId)?;
-        Ok(Id(int_bytes))
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        <[u8; core::mem::size_of::<u16>()]>::try_from(value).map(Id)
     }
 }
 

@@ -227,16 +227,10 @@ impl fmt::Debug for Id {
 // TODO: Implement std::fmt::UpperHex, std::fmt::LowerHex, std::fmt::Octal and std::fmt::Binary for Id?
 
 impl TryFrom<&[u8]> for Id {
-    type Error = Error;
+    type Error = core::array::TryFromSliceError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() != 20 {
-            return Err(Error::InvalidNodeId);
-        }
-
-        let mut data: [u8; 20] = [0; 20];
-        data.copy_from_slice(value);
-        Ok(Id(data))
+        <[u8; 20]>::try_from(value).map(Id)
     }
 }
 

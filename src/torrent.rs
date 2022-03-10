@@ -8,9 +8,8 @@
 
 //! A torrent is a peer to peer network exchanging data.
 
-use crate::error::Error;
+use core::{convert::TryFrom, fmt};
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, fmt};
 
 /// A 160-bit value which is used to identify a torrent.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -35,14 +34,14 @@ impl From<&[u8; 20]> for InfoHash {
     }
 }
 
-impl From<&InfoHash> for Vec<u8> {
-    fn from(info_hash: &InfoHash) -> Self {
+impl From<InfoHash> for Vec<u8> {
+    fn from(info_hash: InfoHash) -> Self {
         Vec::from(info_hash.0)
     }
 }
 
-impl From<InfoHash> for Vec<u8> {
-    fn from(info_hash: InfoHash) -> Self {
+impl From<&InfoHash> for Vec<u8> {
+    fn from(info_hash: &InfoHash) -> Self {
         Vec::from(info_hash.0)
     }
 }
@@ -53,27 +52,122 @@ impl From<InfoHash> for [u8; 20] {
     }
 }
 
+impl From<&InfoHash> for [u8; 20] {
+    fn from(info_hash: &InfoHash) -> Self {
+        info_hash.0
+    }
+}
+
 impl fmt::Debug for InfoHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for b in self.0.iter() {
-            write!(f, "{:02x}", b)?;
+        struct InfoHashDebugFmt<'a>(&'a InfoHash);
+
+        impl<'a> fmt::Debug for InfoHashDebugFmt<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for b in (self.0).0 {
+                    write!(f, "{:02x}", b)?;
+                }
+                Ok(())
+            }
+        }
+
+        f.debug_tuple("InfoHash")
+            .field(&InfoHashDebugFmt(self))
+            .finish()
+    }
+}
+
+impl fmt::Display for InfoHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in self.0 {
+            write!(f, "{:02X}", b)?;
         }
         Ok(())
     }
 }
 
-// TODO: Implement std::fmt::UpperHex, std::fmt::LowerHex, std::fmt::Octal and std::fmt::Binary for InfoHash?
-
 impl TryFrom<&[u8]> for InfoHash {
-    type Error = Error;
+    type Error = core::array::TryFromSliceError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() != 20 {
-            return Err(Error::InvalidInfoHash);
+        <[u8; 20]>::try_from(value).map(InfoHash)
+    }
+}
+
+impl fmt::UpperHex for InfoHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "0x")?;
         }
 
-        let mut data: [u8; 20] = [0; 20];
-        data.copy_from_slice(value);
-        Ok(InfoHash(data))
+        for b in self.0 {
+            write!(f, "{:02X}", b)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::LowerHex for InfoHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "0x")?;
+        }
+
+        for b in self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Binary for InfoHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "0b")?;
+        }
+
+        for b in self.0 {
+            write!(f, "{:b}", b)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_formats() {
+        let info_hash = InfoHash(hex_literal::hex!(
+            "8EFA979AD7627693BA91D48E941F025BAE78CB77"
+        ));
+        assert_eq!(
+            format!("{:X}", info_hash),
+            "8EFA979AD7627693BA91D48E941F025BAE78CB77"
+        );
+        assert_eq!(
+            format!("{:#X}", info_hash),
+            "0x8EFA979AD7627693BA91D48E941F025BAE78CB77"
+        );
+        assert_eq!(
+            format!("{:x}", info_hash),
+            "8efa979ad7627693ba91d48e941f025bae78cb77"
+        );
+        assert_eq!(
+            format!("{:#x}", info_hash),
+            "0x8efa979ad7627693ba91d48e941f025bae78cb77"
+        );
+        assert_eq!(
+            format!("{:b}", info_hash),
+            "10001110111110101001011110011010110101111100010111011010010011101110101001000111010100100011101001010011111101011011101011101111000110010111110111"
+        );
+        assert_eq!(
+            format!("{:#b}", info_hash),
+            "0b10001110111110101001011110011010110101111100010111011010010011101110101001000111010100100011101001010011111101011011101011101111000110010111110111"
+        );
     }
 }

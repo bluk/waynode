@@ -48,7 +48,7 @@ impl super::ErrorVal for ErrorValues {
         self.code
     }
 
-    fn description(&self) -> &String {
+    fn description(&self) -> &str {
         &self.description
     }
 

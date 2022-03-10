@@ -53,35 +53,32 @@ pub trait Msg {
     fn client_version(&self) -> Option<&[u8]>;
 
     /// The client version as a string.
-    fn client_version_str(&self) -> Option<&str>;
+    fn client_version_str(&self) -> Option<&str> {
+        self.client_version()
+            .and_then(|v| std::str::from_utf8(v).ok())
+    }
 }
 
 impl Msg for Value {
     fn tx_id(&self) -> Option<&[u8]> {
         self.get("t")
-            .and_then(|t| t.as_byte_str().map(|v| v.as_slice()))
+            .and_then(|t| t.as_byte_str())
+            .map(|t| t.as_slice())
     }
 
     fn kind(&self) -> Option<Kind> {
-        self.get("y")
-            .and_then(|y| y.as_str())
-            .and_then(|y| match y {
-                "q" => Some(Kind::Query),
-                "r" => Some(Kind::Response),
-                "e" => Some(Kind::Error),
-                _ => None,
-            })
+        self.get("y").and_then(|y| y.as_str()).map(|y| match y {
+            "q" => Kind::Query,
+            "r" => Kind::Response,
+            "e" => Kind::Error,
+            y => Kind::Unknown(y),
+        })
     }
 
     fn client_version(&self) -> Option<&[u8]> {
         self.get("v")
             .and_then(|v| v.as_byte_str())
             .map(|v| v.as_slice())
-    }
-
-    fn client_version_str(&self) -> Option<&str> {
-        self.client_version()
-            .and_then(|v| std::str::from_utf8(v).ok())
     }
 }
 
@@ -91,13 +88,21 @@ pub trait QueryMsg: Msg {
     fn method_name(&self) -> Option<&[u8]>;
 
     /// The method name of the query as a string.
-    fn method_name_str(&self) -> Option<&str>;
+    fn method_name_str(&self) -> Option<&str> {
+        self.method_name()
+            .and_then(|v| core::str::from_utf8(v).ok())
+    }
 
     /// The arguments for the query.
     fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>>;
 
     /// The querying node ID.
-    fn querying_node_id(&self) -> Option<Id>;
+    fn querying_node_id(&self) -> Option<Id> {
+        self.args()
+            .and_then(|a| a.get(Bytes::new(b"id")))
+            .and_then(|id| id.as_byte_str())
+            .and_then(|id| Id::try_from(id.as_slice()).ok())
+    }
 }
 
 impl QueryMsg for Value {
@@ -107,21 +112,10 @@ impl QueryMsg for Value {
             .map(|v| v.as_slice())
     }
 
-    fn method_name_str(&self) -> Option<&str> {
-        self.method_name().and_then(|v| std::str::from_utf8(v).ok())
-    }
-
     fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
         self.as_dict()
             .and_then(|dict| dict.get(Bytes::new(b"a")))
             .and_then(|a| a.as_dict())
-    }
-
-    fn querying_node_id(&self) -> Option<Id> {
-        self.args()
-            .and_then(|a| a.get(Bytes::new(b"id")))
-            .and_then(|id| id.as_byte_str())
-            .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
 }
 
@@ -175,12 +169,12 @@ pub trait RespVal {
 /// A KRPC error message.
 pub trait ErrorMsg: Msg {
     /// The error value.
-    fn error(&self) -> Option<&Vec<Value>>;
+    fn error(&self) -> Option<&[Value]>;
 }
 
 impl ErrorMsg for Value {
-    fn error(&self) -> Option<&Vec<Value>> {
-        self.get("e").and_then(|e| e.as_array())
+    fn error(&self) -> Option<&[Value]> {
+        self.get("e").and_then(|e| e.as_array()).map(|v| v.as_ref())
     }
 }
 
@@ -212,7 +206,7 @@ pub trait ErrorVal {
     fn code(&self) -> ErrorCode;
 
     /// The error description.
-    fn description(&self) -> &String;
+    fn description(&self) -> &str;
 
     /// Represents the arguments as a Bencoded Value.
     fn to_value(&self) -> Value;
@@ -252,7 +246,12 @@ impl CompactAddrV4Info for SocketAddrV4 {
     }
 }
 
-fn decode_addr_ipv4_list(nodes: &ByteBuf) -> Result<Vec<AddrId<SocketAddrV4>>, Error> {
+fn decode_addr_ipv4_list<B>(nodes: B) -> Result<Vec<AddrId<SocketAddrV4>>, Error>
+where
+    B: AsRef<[u8]>,
+{
+    let nodes = nodes.as_ref();
+
     if nodes.len() % 26 != 0 {
         return Err(Error::CannotDeserializeKrpcMessage);
     }
@@ -273,7 +272,12 @@ fn decode_addr_ipv4_list(nodes: &ByteBuf) -> Result<Vec<AddrId<SocketAddrV4>>, E
         .collect::<Vec<_>>())
 }
 
-fn decode_addr_ipv6_list(nodes6: &ByteBuf) -> Result<Vec<AddrId<SocketAddrV6>>, Error> {
+fn decode_addr_ipv6_list<B>(nodes6: B) -> Result<Vec<AddrId<SocketAddrV6>>, Error>
+where
+    B: AsRef<[u8]>,
+{
+    let nodes6 = nodes6.as_ref();
+
     if nodes6.len() % 38 != 0 {
         return Err(Error::CannotDeserializeKrpcMessage);
     }
