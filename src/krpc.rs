@@ -88,7 +88,7 @@ impl Msg for Value {
 /// A KPRC query message.
 pub trait QueryMsg: Msg {
     /// The method name of the query.
-    fn method_name(&self) -> Option<&ByteBuf>;
+    fn method_name(&self) -> Option<&[u8]>;
 
     /// The method name of the query as a string.
     fn method_name_str(&self) -> Option<&str>;
@@ -101,10 +101,10 @@ pub trait QueryMsg: Msg {
 }
 
 impl QueryMsg for Value {
-    fn method_name(&self) -> Option<&ByteBuf> {
-        self.as_dict()
-            .and_then(|v| v.get(&ByteBuf::from(String::from("q"))))
+    fn method_name(&self) -> Option<&[u8]> {
+        self.get("q")
             .and_then(|q| q.as_byte_str())
+            .map(|v| v.as_slice())
     }
 
     fn method_name_str(&self) -> Option<&str> {

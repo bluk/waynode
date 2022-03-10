@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Query));
         assert_eq!(
             msg_value.method_name(),
-            Some(&ByteBuf::from(METHOD_ANNOUNCE_PEER.as_bytes()))
+            Some(METHOD_ANNOUNCE_PEER.as_bytes())
         );
         assert_eq!(msg_value.method_name_str(), Some(METHOD_ANNOUNCE_PEER));
         assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));

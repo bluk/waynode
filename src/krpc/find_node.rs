@@ -278,10 +278,7 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&find_node_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
-        assert_eq!(
-            msg_value.method_name(),
-            Some(&ByteBuf::from(METHOD_FIND_NODE.as_bytes()))
-        );
+        assert_eq!(msg_value.method_name(), Some(METHOD_FIND_NODE.as_bytes()));
         assert_eq!(msg_value.method_name_str(), Some(METHOD_FIND_NODE));
         assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
         if let Some(args) = msg_value

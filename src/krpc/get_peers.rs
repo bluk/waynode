@@ -371,10 +371,7 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&get_peers_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
-        assert_eq!(
-            msg_value.method_name(),
-            Some(&ByteBuf::from(METHOD_GET_PEERS.as_bytes()))
-        );
+        assert_eq!(msg_value.method_name(), Some(METHOD_GET_PEERS.as_bytes()));
         assert_eq!(msg_value.method_name_str(), Some(METHOD_GET_PEERS));
         assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
         if let Some(args) = msg_value
