@@ -16,15 +16,14 @@ include = [
 ]
 
 [dependencies]
-bt_bencode = "0.2"
+bt_bencode = "0.5"
 serde = { version = "1", features=["derive"] }
 serde_bytes = "0.11"
-itoa = "0.4"
 rand = "0.8"
 crc32c = "0.6"
 log = "0.4"
 
 [dev-dependencies]
-mio = {version = "0.7", features = ["os-poll", "udp"] }
-env_logger = "0.8"
-clap = "2"
+mio = {version = "0.8", features = ["os-poll", "net"] }
+env_logger = "0.9"
+clap = "3.1.6"

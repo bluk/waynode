@@ -18,7 +18,8 @@ use std::io;
 use std::net;
 use std::time::Duration;
 
-use clap::{App, Arg};
+use clap::Arg;
+use clap::Command;
 
 use mio::{Events, Interest, Poll, Token};
 
@@ -30,22 +31,22 @@ use sloppy::{
 fn main() -> io::Result<()> {
     env_logger::init();
 
-    let matches = App::new("Example node program")
+    let matches = Command::new("Example node program")
         .version("1.0")
         .about("Demonstrates running a DHT node.")
         .arg(
-            Arg::with_name("ip")
+            Arg::new("ip")
                 .long("ip-address")
-                .short("a")
+                .short('a')
                 .value_name("IP")
                 .help("The IP address to bind to")
                 .required(false)
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("port")
+            Arg::new("port")
                 .long("port")
-                .short("p")
+                .short('p')
                 .value_name("PORT")
                 .help("The port to bind to")
                 .required(false)
