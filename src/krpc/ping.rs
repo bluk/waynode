@@ -200,7 +200,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_query_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, ping_query.to_vec());
+            assert_eq!(ser_msg, ping_query);
             Ok(())
         } else {
             panic!()
@@ -231,7 +231,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, ping_resp.to_vec());
+            assert_eq!(ser_msg, ping_resp);
             Ok(())
         } else {
             panic!()

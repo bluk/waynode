@@ -29,7 +29,7 @@ pub const METHOD_ANNOUNCE_PEER: &[u8] = b"announce_peer";
 pub struct AnnouncePeerQueryArgs {
     id: Id,
     info_hash: InfoHash,
-    token: ByteBuf,
+    token: Vec<u8>,
     port: Option<u16>,
     implied_port: Option<bool>,
 }
@@ -39,7 +39,7 @@ impl AnnouncePeerQueryArgs {
     pub fn new(
         id: LocalId,
         info_hash: InfoHash,
-        token: ByteBuf,
+        token: Vec<u8>,
         port: Option<u16>,
         implied_port: Option<bool>,
     ) -> Self {
@@ -71,12 +71,12 @@ impl AnnouncePeerQueryArgs {
     }
 
     /// Returns the token which is used by the queried node for verification.
-    pub fn token(&self) -> &ByteBuf {
+    pub fn token(&self) -> &[u8] {
         &self.token
     }
 
     /// Sets the token which is used by the queried node for verification.
-    pub fn set_token(&mut self, token: ByteBuf) {
+    pub fn set_token(&mut self, token: Vec<u8>) {
         self.token = token;
     }
 
@@ -159,7 +159,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for AnnouncePeerQueryArgs {
                 Ok(AnnouncePeerQueryArgs {
                     id,
                     info_hash,
-                    token: token.clone(),
+                    token: token.to_vec(),
                     port,
                     implied_port,
                 })
@@ -206,7 +206,7 @@ impl From<&AnnouncePeerQueryArgs> for Value {
         );
         d.insert(
             ByteBuf::from(String::from("token")),
-            Value::ByteStr(args.token.clone()),
+            Value::ByteStr(ByteBuf::from(args.token.clone())),
         );
         Value::Dict(d)
     }
@@ -285,9 +285,9 @@ mod tests {
 
     #[test]
     fn test_serde_announce_peer_query() -> Result<(), Error> {
-        let announce_peeer_query = b"d1:ad2:id20:abcdefghij01234567899:info_hash20:mnopqrstuvwxyz1234564:porti6331e5:token8:abcd1234e1:q13:announce_peer1:t2:aa1:y1:qe";
+        let announce_peer_query = b"d1:ad2:id20:abcdefghij01234567899:info_hash20:mnopqrstuvwxyz1234564:porti6331e5:token8:abcd1234e1:q13:announce_peer1:t2:aa1:y1:qe";
 
-        let msg_value: Value = bt_bencode::from_reader(&announce_peeer_query[..])?;
+        let msg_value: Value = bt_bencode::from_reader(&announce_peer_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
         assert_eq!(msg_value.method_name(), Some(METHOD_ANNOUNCE_PEER));
         assert_eq!(
@@ -301,7 +301,7 @@ mod tests {
         {
             assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
             assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
-            assert_eq!(args.token(), Bytes::new(b"abcd1234"));
+            assert_eq!(args.token(), b"abcd1234");
             assert_eq!(args.port(), Some(6331));
             assert!(args.implied_port().is_none());
 
@@ -314,7 +314,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_query_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, announce_peeer_query.to_vec());
+            assert_eq!(ser_msg, announce_peer_query);
             Ok(())
         } else {
             panic!()
@@ -345,7 +345,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, announce_peer_resp.to_vec());
+            assert_eq!(ser_msg, announce_peer_resp);
             Ok(())
         } else {
             panic!()

@@ -140,7 +140,7 @@ impl From<&GetPeersQueryArgs> for Value {
 /// The value for the get peers response.
 pub struct GetPeersRespValues {
     id: Id,
-    token: ByteBuf,
+    token: Vec<u8>,
     values: Option<Vec<SocketAddr>>,
     nodes: Option<Vec<AddrId<SocketAddrV4>>>,
     nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
@@ -150,7 +150,7 @@ impl GetPeersRespValues {
     /// Instantiates a new instance.
     pub fn new(
         id: LocalId,
-        token: ByteBuf,
+        token: Vec<u8>,
         values: Option<Vec<SocketAddr>>,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
         nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
@@ -173,12 +173,12 @@ impl GetPeersRespValues {
     }
 
     /// Returns an opaque token which can be used in an announce peer message.
-    pub fn token(&self) -> &ByteBuf {
+    pub fn token(&self) -> &[u8] {
         &self.token
     }
 
     /// Sets an opaque token which can be used in an announce peer message.
-    pub fn set_token(&mut self, token: ByteBuf) {
+    pub fn set_token(&mut self, token: Vec<u8>) {
         self.token = token
     }
 
@@ -282,7 +282,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
 
                 Ok(GetPeersRespValues {
                     id,
-                    token,
+                    token: token.into_vec(),
                     values,
                     nodes,
                     nodes6,
@@ -333,7 +333,7 @@ impl From<&GetPeersRespValues> for Value {
 
         args.insert(
             ByteBuf::from(String::from("token")),
-            Value::ByteStr(values.token.clone()),
+            Value::ByteStr(ByteBuf::from(values.token.clone())),
         );
 
         if let Some(values) = &values.values {
@@ -393,7 +393,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_query_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, get_peers_query.to_vec());
+            assert_eq!(ser_msg, get_peers_query);
             Ok(())
         } else {
             panic!()
@@ -434,7 +434,7 @@ mod tests {
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)
                 .map_err(|_| Error::CannotDeserializeKrpcMessage)?;
-            assert_eq!(ser_msg, get_peers_resp.to_vec());
+            assert_eq!(ser_msg, get_peers_resp);
             Ok(())
         } else {
             panic!()
