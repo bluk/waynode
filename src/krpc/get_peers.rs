@@ -387,7 +387,7 @@ mod tests {
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
-                q: &ByteBuf::from(METHOD_GET_PEERS),
+                q: Bytes::new(METHOD_GET_PEERS.as_bytes()),
                 t: &ByteBuf::from("aa"),
                 v: None,
             };

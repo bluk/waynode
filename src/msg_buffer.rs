@@ -82,7 +82,7 @@ impl Buffer {
             addr_opt_id,
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
-                q: &ByteBuf::from(T::method_name()),
+                q: Bytes::new(T::method_name()),
                 t: &ByteBuf::from(tx_id),
                 v: client_version.map(Bytes::new),
             })

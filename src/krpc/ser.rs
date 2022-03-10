@@ -15,7 +15,7 @@ pub(crate) struct QueryMsg<'a> {
     /// query arguments
     pub(crate) a: Option<&'a Value>,
     /// method name of query
-    pub(crate) q: &'a ByteBuf,
+    pub(crate) q: &'a Bytes,
     /// transaction id
     pub(crate) t: &'a ByteBuf,
     /// client version
