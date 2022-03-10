@@ -205,11 +205,11 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
             values
                 .get(&ByteBuf::from(String::from("nodes")))
                 .and_then(|nodes| nodes.as_byte_str())
-                .map(|nodes| super::decode_addr_ipv4_list(nodes)),
+                .map(super::decode_addr_ipv4_list),
             values
                 .get(&ByteBuf::from(String::from("nodes6")))
                 .and_then(|nodes6| nodes6.as_byte_str())
-                .map(|nodes6| super::decode_addr_ipv6_list(nodes6)),
+                .map(super::decode_addr_ipv6_list),
         ) {
             (Some(id), nodes, nodes6) => {
                 let nodes = nodes.transpose()?;

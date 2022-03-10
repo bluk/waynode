@@ -455,7 +455,7 @@ where
             .map(|a| AddrOptId::new(a.addr(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
         let mut find_node_op = FindNodeOp::new(config, target_id, neighbors);
-        find_node_op.start(&config, tx_manager, msg_buffer)?;
+        find_node_op.start(config, tx_manager, msg_buffer)?;
         Ok(find_node_op)
     }
 
@@ -681,7 +681,7 @@ impl RoutingTable {
         match self {
             RoutingTable::Ipv4(routing_table) => find_node_ops.push(routing_table.find_node(
                 target_id,
-                &config,
+                config,
                 tx_manager,
                 msg_buffer,
                 ipv4_socket_addrs,
@@ -689,7 +689,7 @@ impl RoutingTable {
             )?),
             RoutingTable::Ipv6(routing_table) => find_node_ops.push(routing_table.find_node(
                 target_id,
-                &config,
+                config,
                 tx_manager,
                 msg_buffer,
                 ipv6_socket_addrs,
@@ -698,7 +698,7 @@ impl RoutingTable {
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
                 find_node_ops.push(routing_table_v4.find_node(
                     target_id,
-                    &config,
+                    config,
                     tx_manager,
                     msg_buffer,
                     ipv4_socket_addrs,
@@ -706,7 +706,7 @@ impl RoutingTable {
                 )?);
                 find_node_ops.push(routing_table_v6.find_node(
                     target_id,
-                    &config,
+                    config,
                     tx_manager,
                     msg_buffer,
                     ipv6_socket_addrs,

@@ -155,7 +155,7 @@ fn main() -> io::Result<()> {
                                     };
                                 }
                             }
-                            Some(method_name @ _) => {
+                            Some(method_name) => {
                                 if let Some(tx_id) = msg.tx_id() {
                                     let error = sloppy::krpc::error::ErrorValues::new(
                                         ErrorCode::MethodUnknown,

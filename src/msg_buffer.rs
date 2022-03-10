@@ -108,7 +108,7 @@ impl Buffer {
             addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
-                t: &transaction_id,
+                t: transaction_id,
                 v: client_version,
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
@@ -133,7 +133,7 @@ impl Buffer {
             addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: Some(&details.to_value()),
-                t: &transaction_id,
+                t: transaction_id,
                 v: client_version,
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,

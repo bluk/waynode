@@ -940,7 +940,7 @@ mod test {
             Id([0xff; 20]),
         ];
         let pivot_id = Id([0xef; 20]).middle(Id([0x00; 20]));
-        node_ids.sort_by(|a, b| a.distance(pivot_id).cmp(&b.distance(pivot_id)));
+        node_ids.sort_by_key(|a| a.distance(pivot_id));
         assert_eq!(
             node_ids,
             vec![

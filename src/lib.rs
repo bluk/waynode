@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut node: Node = Node::new(new_config()?, &[], vec![bootstrap_remote_addr.into()])?;
+        let mut node: Node = Node::new(new_config()?, &[], vec![bootstrap_remote_addr])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match node.send_to(&mut out)? {
