@@ -12,7 +12,7 @@ use crate::{
     node::AddrOptId,
     transaction, ReadEvent,
 };
-use serde_bytes::{ByteBuf, Bytes};
+use serde_bytes::Bytes;
 use std::{
     collections::VecDeque,
     net::SocketAddr,
@@ -83,7 +83,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::QueryMsg {
                 a: Some(&args.to_value()),
                 q: Bytes::new(T::method_name()),
-                t: &ByteBuf::from(tx_id),
+                t: Bytes::new(tx_id.as_ref()),
                 v: client_version.map(Bytes::new),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,

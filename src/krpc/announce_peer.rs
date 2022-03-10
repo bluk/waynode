@@ -312,7 +312,7 @@ mod tests {
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
                 q: Bytes::new(METHOD_ANNOUNCE_PEER.as_bytes()),
-                t: &ByteBuf::from("aa"),
+                t: Bytes::new(b"aa"),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_query_msg)

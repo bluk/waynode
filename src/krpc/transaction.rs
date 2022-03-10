@@ -9,7 +9,6 @@
 //! Transactions correlate a KRPC query with its response.
 
 use crate::{error::Error, node::AddrOptId};
-use serde_bytes::ByteBuf;
 use std::{
     convert::{TryFrom, TryInto},
     net::SocketAddr,
@@ -24,12 +23,17 @@ use std::{
 /// `Id`. If they are the same, then the read message is in response to the
 /// original query.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct Id(u16);
+pub struct Id([u8; 2]);
 
 impl Id {
+    fn new(id: u16) -> Self {
+        Self(id.to_be_bytes())
+    }
+
     fn next(&self) -> Self {
-        let (next_id, _) = self.0.overflowing_add(1);
-        Id(next_id)
+        let cur_id = u16::from_be_bytes(self.0);
+        let (next_id, _) = cur_id.overflowing_add(1);
+        Id(next_id.to_be_bytes())
     }
 }
 
@@ -43,19 +47,13 @@ impl TryFrom<&[u8]> for Id {
         let int_bytes = other
             .try_into()
             .map_err(|_| Error::InvalidLocalTransactionId)?;
-        Ok(Id(u16::from_be_bytes(int_bytes)))
+        Ok(Id(int_bytes))
     }
 }
 
-impl From<Id> for ByteBuf {
-    fn from(id: Id) -> ByteBuf {
-        ByteBuf::from(id.0.to_be_bytes())
-    }
-}
-
-impl From<Id> for Vec<u8> {
-    fn from(id: Id) -> Vec<u8> {
-        Vec::from(id.0.to_be_bytes())
+impl AsRef<[u8]> for Id {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -83,7 +81,7 @@ impl Manager {
     pub(crate) fn new() -> Self {
         Self {
             transactions: Vec::new(),
-            next_transaction_id: Id(0),
+            next_transaction_id: Id::new(0),
         }
     }
 

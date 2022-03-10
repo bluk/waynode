@@ -8,7 +8,7 @@
 
 use bt_bencode::Value;
 use serde::{ser::SerializeMap, Serialize, Serializer};
-use serde_bytes::{ByteBuf, Bytes};
+use serde_bytes::Bytes;
 
 #[derive(Debug)]
 pub(crate) struct QueryMsg<'a> {
@@ -17,7 +17,7 @@ pub(crate) struct QueryMsg<'a> {
     /// method name of query
     pub(crate) q: &'a Bytes,
     /// transaction id
-    pub(crate) t: &'a ByteBuf,
+    pub(crate) t: &'a Bytes,
     /// client version
     pub(crate) v: Option<&'a Bytes>,
 }
