@@ -78,7 +78,7 @@ fn main() -> io::Result<()> {
     let mut config = sloppy::Config::new(sloppy::node::LocalId::new(
         sloppy::node::Id::rand().unwrap(),
     ));
-    config.set_client_version(serde_bytes::ByteBuf::from("ab12"));
+    config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
 

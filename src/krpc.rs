@@ -50,7 +50,7 @@ pub trait Msg {
     fn kind(&self) -> Option<Kind>;
 
     /// The client version as a byte buffer.
-    fn client_version(&self) -> Option<&ByteBuf>;
+    fn client_version(&self) -> Option<&[u8]>;
 
     /// The client version as a string.
     fn client_version_str(&self) -> Option<&str>;
@@ -73,8 +73,10 @@ impl Msg for Value {
             })
     }
 
-    fn client_version(&self) -> Option<&ByteBuf> {
-        self.get("v").and_then(|v| v.as_byte_str())
+    fn client_version(&self) -> Option<&[u8]> {
+        self.get("v")
+            .and_then(|v| v.as_byte_str())
+            .map(|v| v.as_slice())
     }
 
     fn client_version_str(&self) -> Option<&str> {

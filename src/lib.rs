@@ -51,7 +51,6 @@ use crate::{
     node::{AddrId, AddrOptId},
 };
 use bt_bencode::Value;
-use serde_bytes::ByteBuf;
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
@@ -115,7 +114,7 @@ pub struct Config {
     /// Local node id
     local_id: node::LocalId,
     /// Client version identifier
-    client_version: Option<ByteBuf>,
+    client_version: Option<Vec<u8>>,
     /// The default amount of time before a query without a response is considered timed out
     default_query_timeout: Duration,
     /// If the node is read only
@@ -156,14 +155,14 @@ impl Config {
     }
 
     /// Returns the client version.
-    pub fn client_version(&self) -> Option<&ByteBuf> {
-        self.client_version.as_ref()
+    pub fn client_version(&self) -> Option<&[u8]> {
+        self.client_version.as_deref()
     }
 
     /// Sets the client version.
     pub fn set_client_version<I>(&mut self, client_version: I)
     where
-        I: Into<Option<ByteBuf>>,
+        I: Into<Option<Vec<u8>>>,
     {
         self.client_version = client_version.into()
     }
@@ -449,7 +448,7 @@ impl Node {
             args,
             addr_opt_id,
             timeout.unwrap_or(self.config.default_query_timeout),
-            self.config.client_version.as_ref(),
+            self.config.client_version(),
             &mut self.tx_manager,
         )
     }
@@ -468,7 +467,7 @@ impl Node {
             transaction_id,
             resp,
             addr_opt_id,
-            self.config.client_version.as_ref(),
+            self.config.client_version(),
         )
     }
 
@@ -486,7 +485,7 @@ impl Node {
             transaction_id,
             details,
             addr_opt_id,
-            self.config.client_version.as_ref(),
+            self.config.client_version(),
         )
     }
 

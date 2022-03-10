@@ -290,7 +290,7 @@ impl FindNodeOp {
                 &FindNodeQueryArgs::new(config.local_id, self.target_id),
                 potential_addr_opt_id.addr_opt_id,
                 config.default_query_timeout,
-                config.client_version.as_ref(),
+                config.client_version(),
                 tx_manager,
             )?;
             self.tx_ids.insert(tx_id);
@@ -365,7 +365,7 @@ impl FindNodeOp {
                     &FindNodeQueryArgs::new(config.local_id, self.target_id),
                     potential_node.addr_opt_id,
                     config.default_query_timeout,
-                    config.client_version.as_ref(),
+                    config.client_version(),
                     tx_manager,
                 )?;
                 self.tx_ids.insert(tx_id);

@@ -200,7 +200,7 @@ where
                         Some(node_to_ping.addr_id.id()),
                     ),
                     config.default_query_timeout,
-                    config.client_version.as_ref(),
+                    config.client_version(),
                     tx_manager,
                 )?;
                 node_to_ping.on_ping(now);

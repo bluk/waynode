@@ -19,7 +19,7 @@ pub(crate) struct QueryMsg<'a> {
     /// transaction id
     pub(crate) t: &'a ByteBuf,
     /// client version
-    pub(crate) v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a Bytes>,
 }
 
 impl<'a> Serialize for QueryMsg<'a> {
@@ -48,7 +48,7 @@ pub(crate) struct RespMsg<'a> {
     /// transaction id
     pub(crate) t: &'a Bytes,
     /// client version
-    pub(crate) v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a Bytes>,
 }
 
 impl<'a> Serialize for RespMsg<'a> {
@@ -76,7 +76,7 @@ pub(crate) struct ErrMsg<'a> {
     /// transaction id
     pub(crate) t: &'a Bytes,
     /// client version
-    pub(crate) v: Option<&'a ByteBuf>,
+    pub(crate) v: Option<&'a Bytes>,
 }
 
 impl<'a> Serialize for ErrMsg<'a> {

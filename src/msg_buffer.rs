@@ -66,7 +66,7 @@ impl Buffer {
         args: &T,
         addr_opt_id: A,
         timeout: Duration,
-        client_version: Option<&ByteBuf>,
+        client_version: Option<&[u8]>,
         tx_manager: &mut transaction::Manager,
     ) -> Result<transaction::Id, Error>
     where
@@ -84,7 +84,7 @@ impl Buffer {
                 a: Some(&args.to_value()),
                 q: &ByteBuf::from(T::method_name()),
                 t: &ByteBuf::from(tx_id),
-                v: client_version,
+                v: client_version.map(Bytes::new),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
             timeout,
@@ -97,7 +97,7 @@ impl Buffer {
         transaction_id: &[u8],
         resp: Option<T>,
         addr_opt_id: A,
-        client_version: Option<&ByteBuf>,
+        client_version: Option<&[u8]>,
     ) -> Result<(), Error>
     where
         T: RespVal,
@@ -109,7 +109,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
                 t: Bytes::new(transaction_id),
-                v: client_version,
+                v: client_version.map(Bytes::new),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
             timeout: Duration::new(0, 0),
@@ -122,7 +122,7 @@ impl Buffer {
         transaction_id: &[u8],
         details: T,
         addr_opt_id: A,
-        client_version: Option<&ByteBuf>,
+        client_version: Option<&[u8]>,
     ) -> Result<(), Error>
     where
         T: ErrorVal,
@@ -134,7 +134,7 @@ impl Buffer {
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: Some(&details.to_value()),
                 t: Bytes::new(transaction_id),
-                v: client_version,
+                v: client_version.map(Bytes::new),
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
             timeout: Duration::new(0, 0),
