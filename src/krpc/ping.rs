@@ -14,7 +14,7 @@
 
 use crate::node::{Id, LocalId};
 use bt_bencode::Value;
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
@@ -80,7 +80,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingQueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
-        args.get(&ByteBuf::from(String::from("id")))
+        args.get(Bytes::new("id".as_bytes()))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
             .map(|id| PingQueryArgs { id })
@@ -184,7 +184,7 @@ mod tests {
             Some(&ByteBuf::from(METHOD_PING.as_bytes()))
         );
         assert_eq!(msg_value.method_name_str(), Some(METHOD_PING));
-        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| PingQueryArgs::try_from(a).ok())
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
 
         if let Some(values) = msg_value
             .values()
@@ -229,7 +229,7 @@ mod tests {
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: &ByteBuf::from("aa"),
+                t: Bytes::new("aa".as_bytes()),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)

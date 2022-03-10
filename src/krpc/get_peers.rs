@@ -359,6 +359,8 @@ impl From<&GetPeersRespValues> for Value {
 
 #[cfg(test)]
 mod tests {
+    use serde_bytes::Bytes;
+
     use super::*;
 
     use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
@@ -374,7 +376,7 @@ mod tests {
             Some(&ByteBuf::from(METHOD_GET_PEERS.as_bytes()))
         );
         assert_eq!(msg_value.method_name_str(), Some(METHOD_GET_PEERS));
-        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| GetPeersQueryArgs::try_from(a).ok())
@@ -419,7 +421,7 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some(&ByteBuf::from("aa")));
+        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
 
         if let Some(values) = msg_value
             .values()
@@ -433,7 +435,7 @@ mod tests {
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: &ByteBuf::from("aa"),
+                t: Bytes::new("aa".as_bytes()),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)

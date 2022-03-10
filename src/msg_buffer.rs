@@ -12,7 +12,7 @@ use crate::{
     node::AddrOptId,
     transaction, ReadEvent,
 };
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::{
     collections::VecDeque,
     net::SocketAddr,
@@ -94,7 +94,7 @@ impl Buffer {
 
     pub(crate) fn write_resp<A, T>(
         &mut self,
-        transaction_id: &ByteBuf,
+        transaction_id: &[u8],
         resp: Option<T>,
         addr_opt_id: A,
         client_version: Option<&ByteBuf>,
@@ -108,7 +108,7 @@ impl Buffer {
             addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::RespMsg {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
-                t: transaction_id,
+                t: Bytes::new(transaction_id),
                 v: client_version,
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,
@@ -119,7 +119,7 @@ impl Buffer {
 
     pub fn write_err<A, T>(
         &mut self,
-        transaction_id: &ByteBuf,
+        transaction_id: &[u8],
         details: T,
         addr_opt_id: A,
         client_version: Option<&ByteBuf>,
@@ -133,7 +133,7 @@ impl Buffer {
             addr_opt_id: addr_opt_id.into(),
             msg_data: bt_bencode::to_vec(&krpc::ser::ErrMsg {
                 e: Some(&details.to_value()),
-                t: transaction_id,
+                t: Bytes::new(transaction_id),
                 v: client_version,
             })
             .map_err(|_| Error::CannotSerializeKrpcMessage)?,

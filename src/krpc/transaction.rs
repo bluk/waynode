@@ -33,15 +33,14 @@ impl Id {
     }
 }
 
-impl TryFrom<&ByteBuf> for Id {
+impl TryFrom<&[u8]> for Id {
     type Error = Error;
 
-    fn try_from(other: &ByteBuf) -> Result<Self, Self::Error> {
+    fn try_from(other: &[u8]) -> Result<Self, Self::Error> {
         if other.len() != std::mem::size_of::<u16>() {
             return Err(Error::InvalidLocalTransactionId);
         }
         let int_bytes = other
-            .as_slice()
             .try_into()
             .map_err(|_| Error::InvalidLocalTransactionId)?;
         Ok(Id(u16::from_be_bytes(int_bytes)))
@@ -103,7 +102,7 @@ impl Manager {
         self.transactions.iter().map(|t| t.deadline).min()
     }
 
-    pub(crate) fn remove(&mut self, tx_id: &ByteBuf, addr: SocketAddr) -> Option<Transaction> {
+    pub(crate) fn remove(&mut self, tx_id: &[u8], addr: SocketAddr) -> Option<Transaction> {
         Id::try_from(tx_id)
             .ok()
             .and_then(|tx_local_id| {

@@ -44,7 +44,7 @@ impl<'a> Kind<'a> {
 /// A KRPC message.
 pub trait Msg {
     /// The transaction id for the message.
-    fn tx_id(&self) -> Option<&ByteBuf>;
+    fn tx_id(&self) -> Option<&[u8]>;
 
     /// The type of message.
     fn kind(&self) -> Option<Kind>;
@@ -57,28 +57,24 @@ pub trait Msg {
 }
 
 impl Msg for Value {
-    fn tx_id(&self) -> Option<&ByteBuf> {
-        self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("t"))))
-            .and_then(|t| t.as_byte_str())
+    fn tx_id(&self) -> Option<&[u8]> {
+        self.get("t")
+            .and_then(|t| t.as_byte_str().map(|v| v.as_slice()))
     }
 
     fn kind(&self) -> Option<Kind> {
-        self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("y"))))
-            .and_then(|y| y.as_byte_str())
-            .and_then(|y| match y.as_slice() {
-                b"q" => Some(Kind::Query),
-                b"r" => Some(Kind::Response),
-                b"e" => Some(Kind::Error),
+        self.get("y")
+            .and_then(|y| y.as_str())
+            .and_then(|y| match y {
+                "q" => Some(Kind::Query),
+                "r" => Some(Kind::Response),
+                "e" => Some(Kind::Error),
                 _ => None,
             })
     }
 
     fn client_version(&self) -> Option<&ByteBuf> {
-        self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("v"))))
-            .and_then(|v| v.as_byte_str())
+        self.get("v").and_then(|v| v.as_byte_str())
     }
 
     fn client_version_str(&self) -> Option<&str> {

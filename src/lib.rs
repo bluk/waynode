@@ -454,38 +454,36 @@ impl Node {
         )
     }
 
-    pub fn write_resp<'a, A, B, T>(
+    pub fn write_resp<A, T>(
         &mut self,
-        transaction_id: B,
+        transaction_id: &[u8],
         resp: Option<T>,
         addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: RespVal,
         A: Into<AddrOptId<SocketAddr>>,
-        B: Into<&'a ByteBuf>,
     {
         self.msg_buffer.write_resp(
-            transaction_id.into(),
+            transaction_id,
             resp,
             addr_opt_id,
             self.config.client_version.as_ref(),
         )
     }
 
-    pub fn write_err<'a, A, B, T>(
+    pub fn write_err<A, T>(
         &mut self,
-        transaction_id: B,
+        transaction_id: &[u8],
         details: T,
         addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
         T: ErrorVal,
         A: Into<AddrOptId<SocketAddr>>,
-        B: Into<&'a ByteBuf>,
     {
         self.msg_buffer.write_err(
-            transaction_id.into(),
+            transaction_id,
             details,
             addr_opt_id,
             self.config.client_version.as_ref(),
@@ -588,7 +586,7 @@ impl Node {
 mod tests {
     use super::*;
     use krpc::find_node::FindNodeQueryArgs;
-    use std::convert::TryFrom;
+    use std::convert::{TryFrom, TryInto};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::krpc::{
@@ -643,7 +641,10 @@ mod tests {
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
                 assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
-                assert_eq!(msg_sent.tx_id(), Some(&ByteBuf::from(tx_id)));
+                assert_eq!(
+                    msg_sent.tx_id().and_then(|v| v.try_into().ok()),
+                    Some(tx_id)
+                );
 
                 Ok(())
             }
