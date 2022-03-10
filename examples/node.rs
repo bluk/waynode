@@ -141,7 +141,7 @@ fn main() -> io::Result<()> {
                 if let Some(inbound_msg) = node.read() {
                     // debug!("Read message: {:?}", inbound_msg);
                     match inbound_msg.msg() {
-                        sloppy::MsgEvent::Query(msg) => match msg.method_name_str() {
+                        sloppy::MsgEvent::Query(msg) => match msg.method_name() {
                             Some(ping::METHOD_PING) => {
                                 let ping_resp = ping::PingRespValues::new(node.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
@@ -159,7 +159,7 @@ fn main() -> io::Result<()> {
                                 if let Some(tx_id) = msg.tx_id() {
                                     let error = sloppy::krpc::error::ErrorValues::new(
                                         ErrorCode::MethodUnknown,
-                                        method_name.to_string(),
+                                        core::str::from_utf8(method_name).unwrap_or("").to_string(),
                                     );
                                     match node.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}

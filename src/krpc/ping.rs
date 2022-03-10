@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
 /// The "ping" query method name.
-pub const METHOD_PING: &str = "ping";
+pub const METHOD_PING: &[u8] = b"ping";
 
 /// The arguments for the ping query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +44,7 @@ impl PingQueryArgs {
 
 impl super::QueryArgs for PingQueryArgs {
     fn method_name() -> &'static [u8] {
-        METHOD_PING.as_bytes()
+        METHOD_PING
     }
 
     fn id(&self) -> Id {
@@ -80,7 +80,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingQueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
-        args.get(Bytes::new("id".as_bytes()))
+        args.get(Bytes::new(b"id"))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
             .map(|id| PingQueryArgs { id })
@@ -141,7 +141,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingRespValues {
 
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         values
-            .get(&ByteBuf::from(String::from("id")))
+            .get(Bytes::new(b"id"))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
             .map(|id| PingRespValues { id })
@@ -179,19 +179,22 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&ping_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
-        assert_eq!(msg_value.method_name(), Some(METHOD_PING.as_bytes()));
-        assert_eq!(msg_value.method_name_str(), Some(METHOD_PING));
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.method_name(), Some(METHOD_PING));
+        assert_eq!(
+            msg_value.method_name_str(),
+            Some(core::str::from_utf8(METHOD_PING).unwrap())
+        );
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| PingQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
+            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
-                q: Bytes::new(METHOD_PING.as_bytes()),
+                q: Bytes::new(METHOD_PING),
                 t: Bytes::new(b"aa"),
                 v: None,
             };
@@ -212,21 +215,18 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
 
         if let Some(values) = msg_value
             .values()
             .and_then(|a| PingRespValues::try_from(a).ok())
         {
-            assert_eq!(
-                values.id(),
-                Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
-            );
+            assert_eq!(values.id(), Id::new(*b"mnopqrstuvwxyz123456"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: Bytes::new("aa".as_bytes()),
+                t: Bytes::new(b"aa"),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)

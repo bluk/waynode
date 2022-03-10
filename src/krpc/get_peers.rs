@@ -19,7 +19,7 @@ use crate::{
     torrent::InfoHash,
 };
 use bt_bencode::Value;
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
@@ -27,7 +27,7 @@ use std::{
 };
 
 /// The "get_peers" query method name.
-pub const METHOD_GET_PEERS: &str = "get_peers";
+pub const METHOD_GET_PEERS: &[u8] = b"get_peers";
 
 /// The arguments for the get peers query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +66,7 @@ impl GetPeersQueryArgs {
 
 impl super::QueryArgs for GetPeersQueryArgs {
     fn method_name() -> &'static [u8] {
-        METHOD_GET_PEERS.as_bytes()
+        METHOD_GET_PEERS
     }
 
     fn id(&self) -> Id {
@@ -103,10 +103,10 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersQueryArgs {
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
-            args.get(&ByteBuf::from(String::from("id")))
+            args.get(Bytes::new(b"id"))
                 .and_then(|id| id.as_byte_str())
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
-            args.get(&ByteBuf::from(String::from("info_hash")))
+            args.get(Bytes::new("info_hash".as_bytes()))
                 .and_then(|t| t.as_byte_str())
                 .and_then(|t| InfoHash::try_from(t.as_slice()).ok()),
         ) {
@@ -229,14 +229,14 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             values
-                .get(&ByteBuf::from(String::from("id")))
+                .get(Bytes::new(b"id"))
                 .and_then(|id| id.as_byte_str())
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             values
-                .get(&ByteBuf::from(String::from("token")))
+                .get(Bytes::new(b"token"))
                 .and_then(|id| id.as_byte_str().cloned()),
             values
-                .get(&ByteBuf::from(String::from("values")))
+                .get(Bytes::new(b"values"))
                 .and_then(|values| values.as_array())
                 .map(|values| {
                     values
@@ -267,11 +267,11 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                         .collect::<Result<Vec<SocketAddr>, Error>>()
                 }),
             values
-                .get(&ByteBuf::from(String::from("nodes")))
+                .get(Bytes::new(b"nodes"))
                 .and_then(|nodes| nodes.as_byte_str())
                 .map(super::decode_addr_ipv4_list),
             values
-                .get(&ByteBuf::from(String::from("nodes6")))
+                .get(Bytes::new(b"nodes6"))
                 .and_then(|nodes6| nodes6.as_byte_str())
                 .map(super::decode_addr_ipv6_list),
         ) {
@@ -371,23 +371,23 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&get_peers_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
-        assert_eq!(msg_value.method_name(), Some(METHOD_GET_PEERS.as_bytes()));
-        assert_eq!(msg_value.method_name_str(), Some(METHOD_GET_PEERS));
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.method_name(), Some(METHOD_GET_PEERS));
+        assert_eq!(
+            msg_value.method_name_str(),
+            Some(core::str::from_utf8(METHOD_GET_PEERS).unwrap())
+        );
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| GetPeersQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
-            assert_eq!(
-                args.info_hash(),
-                InfoHash::try_from("mnopqrstuvwxyz123456".as_bytes())?
-            );
+            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
+            assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
-                q: Bytes::new(METHOD_GET_PEERS.as_bytes()),
+                q: Bytes::new(METHOD_GET_PEERS),
                 t: Bytes::new(b"aa"),
                 v: None,
             };
@@ -418,21 +418,18 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
 
         if let Some(values) = msg_value
             .values()
             .and_then(|a| GetPeersRespValues::try_from(a).ok())
         {
-            assert_eq!(
-                values.id(),
-                Id::try_from("0123456789abcdefghij".as_bytes())?
-            );
+            assert_eq!(values.id(), Id::new(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: Bytes::new("aa".as_bytes()),
+                t: Bytes::new(b"aa"),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)

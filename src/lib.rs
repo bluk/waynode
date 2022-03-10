@@ -639,7 +639,10 @@ mod tests {
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
-                assert_eq!(msg_sent.method_name_str(), Some(METHOD_PING));
+                assert_eq!(
+                    msg_sent.method_name_str(),
+                    Some(core::str::from_utf8(METHOD_PING).unwrap())
+                );
                 assert_eq!(
                     msg_sent.tx_id().and_then(|v| v.try_into().ok()),
                     Some(tx_id)
@@ -665,7 +668,10 @@ mod tests {
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
                 assert_eq!(msg_sent.kind(), Some(Kind::Query));
-                assert_eq!(msg_sent.method_name_str(), Some(METHOD_FIND_NODE));
+                assert_eq!(
+                    msg_sent.method_name_str(),
+                    Some(core::str::from_utf8(METHOD_FIND_NODE).unwrap())
+                );
                 let find_node_query_args =
                     FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
                 assert_eq!(

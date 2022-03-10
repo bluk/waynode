@@ -18,11 +18,11 @@ use crate::{
     torrent::InfoHash,
 };
 use bt_bencode::{value::Number, Value};
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::{collections::BTreeMap, convert::TryFrom};
 
 /// The "announce_peer" query method name.
-pub const METHOD_ANNOUNCE_PEER: &str = "announce_peer";
+pub const METHOD_ANNOUNCE_PEER: &[u8] = b"announce_peer";
 
 /// The arguments for the announce peer query message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl AnnouncePeerQueryArgs {
 
 impl super::QueryArgs for AnnouncePeerQueryArgs {
     fn method_name() -> &'static [u8] {
-        METHOD_ANNOUNCE_PEER.as_bytes()
+        METHOD_ANNOUNCE_PEER
     }
 
     fn id(&self) -> Id {
@@ -140,18 +140,18 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for AnnouncePeerQueryArgs {
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
-            args.get(&ByteBuf::from(String::from("id")))
+            args.get(Bytes::new(b"id"))
                 .and_then(|id| id.as_byte_str())
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
-            args.get(&ByteBuf::from(String::from("info_hash")))
+            args.get(Bytes::new(b"info_hash"))
                 .and_then(|info_hash| info_hash.as_byte_str())
                 .and_then(|info_hash| InfoHash::try_from(info_hash.as_slice()).ok()),
-            args.get(&ByteBuf::from(String::from("token")))
+            args.get(Bytes::new(b"token"))
                 .and_then(|token| token.as_byte_str()),
-            args.get(&ByteBuf::from(String::from("port")))
+            args.get(Bytes::new(b"port"))
                 .and_then(|port| port.as_u64())
                 .and_then(|port| u16::try_from(port).ok()),
-            args.get(&ByteBuf::from(String::from("implied_port")))
+            args.get(Bytes::new(b"implied_port"))
                 .and_then(|implied_port| implied_port.as_u64())
                 .map(|implied_port| implied_port != 0),
         ) {
@@ -247,7 +247,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for AnnouncePeerRespValues {
 
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match values
-            .get(&ByteBuf::from(String::from("id")))
+            .get(Bytes::new(b"id"))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
         {
@@ -289,29 +289,26 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&announce_peeer_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
+        assert_eq!(msg_value.method_name(), Some(METHOD_ANNOUNCE_PEER));
         assert_eq!(
-            msg_value.method_name(),
-            Some(METHOD_ANNOUNCE_PEER.as_bytes())
+            msg_value.method_name_str(),
+            Some(core::str::from_utf8(METHOD_ANNOUNCE_PEER).unwrap())
         );
-        assert_eq!(msg_value.method_name_str(), Some(METHOD_ANNOUNCE_PEER));
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| AnnouncePeerQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
-            assert_eq!(
-                args.info_hash(),
-                InfoHash::try_from("mnopqrstuvwxyz123456".as_bytes())?
-            );
-            assert_eq!(args.token(), &ByteBuf::from("abcd1234"));
+            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
+            assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
+            assert_eq!(args.token(), Bytes::new(b"abcd1234"));
             assert_eq!(args.port(), Some(6331));
             assert!(args.implied_port().is_none());
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
-                q: Bytes::new(METHOD_ANNOUNCE_PEER.as_bytes()),
+                q: Bytes::new(METHOD_ANNOUNCE_PEER),
                 t: Bytes::new(b"aa"),
                 v: None,
             };
@@ -332,21 +329,18 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
 
         if let Some(values) = msg_value
             .values()
             .and_then(|a| AnnouncePeerRespValues::try_from(a).ok())
         {
-            assert_eq!(
-                values.id(),
-                Id::try_from("0123456789abcdefghij".as_bytes())?
-            );
+            assert_eq!(values.id(), Id::new(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: Bytes::new("aa".as_bytes()),
+                t: Bytes::new(b"aa"),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)

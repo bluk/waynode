@@ -13,7 +13,7 @@ use crate::{
     node::{AddrId, Id},
 };
 use bt_bencode::Value;
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::{
     collections::BTreeMap,
     convert::TryFrom,
@@ -113,13 +113,13 @@ impl QueryMsg for Value {
 
     fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
         self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("a"))))
+            .and_then(|dict| dict.get(Bytes::new(b"a")))
             .and_then(|a| a.as_dict())
     }
 
     fn querying_node_id(&self) -> Option<Id> {
         self.args()
-            .and_then(|a| a.get(&ByteBuf::from(String::from("id"))))
+            .and_then(|a| a.get(Bytes::new(b"id")))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
@@ -149,15 +149,15 @@ pub trait RespMsg: Msg {
 impl RespMsg for Value {
     fn values(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
         self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("r"))))
+            .and_then(|dict| dict.get(Bytes::new(b"r")))
             .and_then(|a| a.as_dict())
     }
 
     fn queried_node_id(&self) -> Option<Id> {
         self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("r"))))
+            .and_then(|dict| dict.get(Bytes::new(b"r")))
             .and_then(|a| a.as_dict())
-            .and_then(|a| a.get(&ByteBuf::from(String::from("id"))))
+            .and_then(|a| a.get(Bytes::new(b"id")))
             .and_then(|id| id.as_byte_str())
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
@@ -180,9 +180,7 @@ pub trait ErrorMsg: Msg {
 
 impl ErrorMsg for Value {
     fn error(&self) -> Option<&Vec<Value>> {
-        self.as_dict()
-            .and_then(|dict| dict.get(&ByteBuf::from(String::from("e"))))
-            .and_then(|e| e.as_array())
+        self.get("e").and_then(|e| e.as_array())
     }
 }
 

@@ -17,13 +17,13 @@ use crate::{
     node::{AddrId, Id, LocalId},
 };
 use bt_bencode::Value;
-use serde_bytes::ByteBuf;
+use serde_bytes::{ByteBuf, Bytes};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::net::{SocketAddrV4, SocketAddrV6};
 
 /// The "find_node" query method name.
-pub const METHOD_FIND_NODE: &str = "find_node";
+pub const METHOD_FIND_NODE: &[u8] = b"find_node";
 
 /// The arguments for the find node query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,7 +62,7 @@ impl FindNodeQueryArgs {
 
 impl super::QueryArgs for FindNodeQueryArgs {
     fn method_name() -> &'static [u8] {
-        METHOD_FIND_NODE.as_bytes()
+        METHOD_FIND_NODE
     }
 
     fn id(&self) -> Id {
@@ -99,10 +99,10 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeQueryArgs {
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
-            args.get(&ByteBuf::from(String::from("id")))
+            args.get(Bytes::new(b"id"))
                 .and_then(|id| id.as_byte_str())
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
-            args.get(&ByteBuf::from(String::from("target")))
+            args.get(Bytes::new(b"target"))
                 .and_then(|t| t.as_byte_str())
                 .and_then(|t| Id::try_from(t.as_slice()).ok()),
         ) {
@@ -199,15 +199,15 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             values
-                .get(&ByteBuf::from(String::from("id")))
+                .get(Bytes::new(b"id"))
                 .and_then(|id| id.as_byte_str())
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             values
-                .get(&ByteBuf::from(String::from("nodes")))
+                .get(Bytes::new(b"nodes"))
                 .and_then(|nodes| nodes.as_byte_str())
                 .map(super::decode_addr_ipv4_list),
             values
-                .get(&ByteBuf::from(String::from("nodes6")))
+                .get(Bytes::new(b"nodes6"))
                 .and_then(|nodes6| nodes6.as_byte_str())
                 .map(super::decode_addr_ipv6_list),
         ) {
@@ -278,23 +278,23 @@ mod tests {
 
         let msg_value: Value = bt_bencode::from_reader(&find_node_query[..])?;
         assert_eq!(msg_value.kind(), Some(Kind::Query));
-        assert_eq!(msg_value.method_name(), Some(METHOD_FIND_NODE.as_bytes()));
-        assert_eq!(msg_value.method_name_str(), Some(METHOD_FIND_NODE));
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.method_name(), Some(METHOD_FIND_NODE));
+        assert_eq!(
+            msg_value.method_name_str(),
+            Some(core::str::from_utf8(METHOD_FIND_NODE).unwrap())
+        );
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
             .and_then(|a| FindNodeQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::try_from("abcdefghij0123456789".as_bytes())?);
-            assert_eq!(
-                args.target(),
-                Id::try_from("mnopqrstuvwxyz123456".as_bytes())?
-            );
+            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
+            assert_eq!(args.target(), Id::new(*b"mnopqrstuvwxyz123456"));
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
                 a: Some(&args_value),
-                q: Bytes::new(METHOD_FIND_NODE.as_bytes()),
+                q: Bytes::new(METHOD_FIND_NODE),
                 t: Bytes::new(b"aa"),
                 v: None,
             };
@@ -325,21 +325,18 @@ mod tests {
         assert_eq!(msg_value.kind(), Some(Kind::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
-        assert_eq!(msg_value.tx_id(), Some("aa".as_bytes()));
+        assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
 
         if let Some(values) = msg_value
             .values()
             .and_then(|a| FindNodeRespValues::try_from(a).ok())
         {
-            assert_eq!(
-                values.id(),
-                Id::try_from("0123456789abcdefghij".as_bytes())?
-            );
+            assert_eq!(values.id(), Id::new(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {
                 r: Some(&resp_values),
-                t: Bytes::new("aa".as_bytes()),
+                t: Bytes::new(b"aa"),
                 v: None,
             };
             let ser_msg = bt_bencode::to_vec(&ser_resp_msg)
