@@ -189,7 +189,7 @@ mod tests {
             .args()
             .and_then(|a| PingQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
+            assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
@@ -221,7 +221,7 @@ mod tests {
             .values()
             .and_then(|a| PingRespValues::try_from(a).ok())
         {
-            assert_eq!(values.id(), Id::new(*b"mnopqrstuvwxyz123456"));
+            assert_eq!(values.id(), Id::from(*b"mnopqrstuvwxyz123456"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {

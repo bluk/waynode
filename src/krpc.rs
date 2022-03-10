@@ -263,7 +263,7 @@ where
 
             let mut id: [u8; 20] = [0; 20];
             id.copy_from_slice(&nodes[offset..offset + 20]);
-            let id = Id::new(id);
+            let id = Id::from(id);
 
             let mut compact_addr: [u8; 6] = [0; 6];
             compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
@@ -289,7 +289,7 @@ where
 
             let mut id: [u8; 20] = [0; 20];
             id.copy_from_slice(&nodes6[offset..offset + 20]);
-            let id = Id::new(id);
+            let id = Id::from(id);
 
             let mut compact_addr: [u8; 18] = [0; 18];
             compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);

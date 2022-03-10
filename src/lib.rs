@@ -522,11 +522,17 @@ impl Node {
             })
     }
 
-    pub fn on_timeout(&mut self) -> Result<(), error::Error> {
-        self.on_timeout_with_now(Instant::now())
+    pub fn on_timeout<R>(&mut self, rng: &mut R) -> Result<(), error::Error>
+    where
+        R: rand::Rng,
+    {
+        self.on_timeout_with_now(rng, Instant::now())
     }
 
-    fn on_timeout_with_now(&mut self, now: Instant) -> Result<(), error::Error> {
+    fn on_timeout_with_now<R>(&mut self, rng: &mut R, now: Instant) -> Result<(), error::Error>
+    where
+        R: rand::Rng,
+    {
         debug!("on_timeout_with_now now={:?}", now);
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
@@ -564,6 +570,7 @@ impl Node {
             &mut self.tx_manager,
             &mut self.msg_buffer,
             &mut self.find_node_ops,
+            rng,
             now,
         )?;
 
@@ -596,7 +603,7 @@ mod tests {
 
     fn new_config() -> Result<Config, error::Error> {
         Ok(Config {
-            local_id: node::LocalId::from(node::Id::rand()?),
+            local_id: node::LocalId::from(node::Id::rand(&mut rand::thread_rng())?),
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -610,7 +617,7 @@ mod tests {
     }
 
     fn node_id() -> node::Id {
-        node::Id::rand().unwrap()
+        node::Id::rand(&mut rand::thread_rng()).unwrap()
     }
 
     fn bootstrap_remote_addr() -> SocketAddr {

@@ -381,8 +381,8 @@ mod tests {
             .args()
             .and_then(|a| GetPeersQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
-            assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
+            assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
+            assert_eq!(args.info_hash(), InfoHash::from(*b"mnopqrstuvwxyz123456"));
 
             let args_value = args.into();
             let ser_query_msg = crate::krpc::ser::QueryMsg {
@@ -407,7 +407,7 @@ mod tests {
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234);
         let compact_addr = addr.to_compact_address();
-        let node_id = addr.ip().make_node_id(None)?;
+        let node_id = addr.ip().make_node_id(None, &mut rand::thread_rng())?;
         let mut get_peers_resp = vec![];
         get_peers_resp.extend_from_slice(b"d1:rd2:id20:0123456789abcdefghij5:nodes26:");
         get_peers_resp.extend_from_slice(&node_id.0[..]);
@@ -424,7 +424,7 @@ mod tests {
             .values()
             .and_then(|a| GetPeersRespValues::try_from(a).ok())
         {
-            assert_eq!(values.id(), Id::new(*b"0123456789abcdefghij"));
+            assert_eq!(values.id(), Id::from(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {

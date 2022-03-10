@@ -31,6 +31,8 @@ use sloppy::{
 fn main() -> io::Result<()> {
     env_logger::init();
 
+    let mut rng = rand::thread_rng();
+
     let matches = Command::new("Example node program")
         .version("1.0")
         .about("Demonstrates running a DHT node.")
@@ -76,7 +78,7 @@ fn main() -> io::Result<()> {
     .expect("addresses to resolve");
 
     let mut config = sloppy::Config::new(sloppy::node::LocalId::new(
-        sloppy::node::Id::rand().unwrap(),
+        sloppy::node::Id::rand(&mut rng).unwrap(),
     ));
     config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
@@ -109,7 +111,7 @@ fn main() -> io::Result<()> {
         'recv: loop {
             if events.is_empty() {
                 debug!("Timed out");
-                match node.on_timeout() {
+                match node.on_timeout(&mut rng) {
                     Ok(()) => {}
                     Err(e) => error!("on_timeout error: {:?}", e),
                 };

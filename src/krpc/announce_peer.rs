@@ -299,7 +299,7 @@ mod tests {
             .args()
             .and_then(|a| AnnouncePeerQueryArgs::try_from(a).ok())
         {
-            assert_eq!(args.id(), Id::new(*b"abcdefghij0123456789"));
+            assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
             assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
             assert_eq!(args.token(), b"abcd1234");
             assert_eq!(args.port(), Some(6331));
@@ -335,7 +335,7 @@ mod tests {
             .values()
             .and_then(|a| AnnouncePeerRespValues::try_from(a).ok())
         {
-            assert_eq!(values.id(), Id::new(*b"0123456789abcdefghij"));
+            assert_eq!(values.id(), Id::from(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
             let ser_resp_msg = crate::krpc::ser::RespMsg {

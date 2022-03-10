@@ -347,7 +347,7 @@ where
     }
 
     fn split(self) -> (Bucket<A>, Bucket<A>) {
-        let middle = self.range.end().middle(*self.range.start());
+        let middle = r::middle(*self.range.end(), *self.range.start());
 
         let mut lower_bucket = Bucket::new(*self.range.start()..=middle.prev());
         let mut upper_bucket = Bucket::new(middle..=*self.range.end());
@@ -410,6 +410,240 @@ where
             (None, Some(_)) => Ordering::Greater,
             (None, None) => Ordering::Equal,
         });
+    }
+}
+
+mod r {
+    use crate::{error::Error, node::Id};
+
+    pub(super) fn rand_in_inclusive_range<R>(
+        range: &std::ops::RangeInclusive<Id>,
+        rng: &mut R,
+    ) -> Result<Id, Error>
+    where
+        R: rand::Rng,
+    {
+        #[inline]
+        #[must_use]
+        fn difference(first: Id, second: Id) -> Id {
+            let mut bigger: [u8; 20];
+            let mut smaller: [u8; 20];
+            if first < second {
+                bigger = second.0;
+                smaller = first.0;
+            } else {
+                bigger = first.0;
+                smaller = second.0;
+            }
+            smaller.twos_complement();
+            let _ = bigger.overflowing_add(&smaller);
+            Id(bigger)
+        }
+
+        let data_bit_diff = difference(*range.end(), *range.start());
+
+        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true, rng)?;
+        let _ = rand_bits.overflowing_add(&range.start().0);
+        Ok(Id::from(rand_bits))
+    }
+
+    /// Finds the middle id between this node ID and the node ID argument.
+    #[inline]
+    #[must_use]
+    pub(super) fn middle(first: Id, second: Id) -> Id {
+        let mut data = first.0;
+        let overflow = data.overflowing_add(&second.0);
+        data.shift_right();
+        if overflow {
+            data[0] |= 0x80;
+        }
+        Id(data)
+    }
+
+    trait IdBytes {
+        #[must_use]
+        fn overflowing_add(&mut self, other: &Self) -> bool;
+
+        fn twos_complement(&mut self);
+
+        /// Shifts the bits right by 1.
+        fn shift_right(&mut self);
+
+        fn randomize_up_to<R>(end: Self, is_closed_range: bool, rng: &mut R) -> Result<Self, Error>
+        where
+            R: rand::Rng,
+            Self: Sized;
+    }
+
+    impl IdBytes for [u8; 20] {
+        #[must_use]
+        fn overflowing_add(&mut self, other: &Self) -> bool {
+            let mut carry_over: u8 = 0;
+
+            for idx in (0..self.len()).rev() {
+                let (partial_val, overflow) = self[idx].overflowing_add(other[idx]);
+                let (final_val, carry_over_overflow) = partial_val.overflowing_add(carry_over);
+                self[idx] = final_val;
+                carry_over = if carry_over_overflow || overflow {
+                    1
+                } else {
+                    0
+                };
+            }
+
+            carry_over == 1
+        }
+
+        fn twos_complement(&mut self) {
+            for val in self.iter_mut() {
+                *val = !(*val);
+            }
+            let one_bit = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+            let _ = self.overflowing_add(&one_bit);
+        }
+
+        fn shift_right(&mut self) {
+            let mut add_high_bit = false;
+            for val in self.iter_mut() {
+                let is_lower_bit_set = (*val & 0x01) == 1;
+                *val >>= 1;
+                if add_high_bit {
+                    *val |= 0x80;
+                }
+                add_high_bit = is_lower_bit_set;
+            }
+        }
+
+        fn randomize_up_to<R>(end: Self, is_closed_range: bool, rng: &mut R) -> Result<Self, Error>
+        where
+            R: rand::Rng,
+        {
+            use core::convert::TryFrom;
+
+            let mut data: Self = [0; 20];
+            let mut lower_than_max = false;
+
+            if !is_closed_range
+                && end == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            {
+                return Err(Error::CannotGenerateNodeId);
+            }
+
+            loop {
+                for idx in 0..data.len() {
+                    data[idx] = if lower_than_max {
+                        u8::try_from(rng.gen_range(0..u16::from(u8::MAX) + 1))
+                            .map_err(|_| Error::RngError)?
+                    } else {
+                        let idx_val = end[idx];
+                        let val = u8::try_from(rng.gen_range(0..u16::from(idx_val) + 1))
+                            .map_err(|_| Error::RngError)?;
+                        if val < idx_val {
+                            lower_than_max = true;
+                        }
+                        val
+                    };
+                }
+
+                if lower_than_max || is_closed_range {
+                    break;
+                }
+            }
+
+            Ok(data)
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn test_debug() -> Result<(), Error> {
+            let node_id = Id::max();
+            let debug_str = format!("{:?}", node_id);
+            assert_eq!(debug_str, "Id(FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)");
+            Ok(())
+        }
+
+        #[test]
+        fn test_overflowing_add() {
+            let mut bytes: [u8; 20] = [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            ];
+            let overflow = bytes.overflowing_add(&[
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            ]);
+            assert!(!overflow);
+            assert_eq!(
+                bytes,
+                [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39,]
+            );
+        }
+
+        #[test]
+        fn test_twos_complement() {
+            let mut bytes: [u8; 20] = [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            ];
+            bytes.twos_complement();
+            assert_eq!(
+                bytes,
+                [
+                    255, 254, 253, 252, 251, 250, 249, 248, 247, 246, 245, 244, 243, 242, 241, 240,
+                    239, 238, 237, 237
+                ]
+            );
+        }
+
+        #[test]
+        fn test_shift_right() {
+            let mut bytes: [u8; 20] = [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            ];
+            bytes.shift_right();
+            assert_eq!(
+                bytes,
+                [0, 0, 129, 1, 130, 2, 131, 3, 132, 4, 133, 5, 134, 6, 135, 7, 136, 8, 137, 9]
+            );
+        }
+
+        #[test]
+        fn test_id_ord() {
+            let mut node_ids = vec![
+                Id([0xff; 20]),
+                Id([0x00; 20]),
+                super::middle(Id([0xff; 20]), Id([0x00; 20])),
+            ];
+            node_ids.sort();
+            assert_eq!(
+                node_ids,
+                vec![
+                    Id([0x00; 20]),
+                    super::middle(Id([0xff; 20]), Id([0x00; 20])),
+                    Id([0xff; 20]),
+                ]
+            );
+        }
+
+        #[test]
+        fn test_id_distance_ord() {
+            let mut node_ids = vec![
+                Id([0x00; 20]),
+                super::middle(Id([0xff; 20]), Id([0x00; 20])),
+                Id([0xff; 20]),
+            ];
+            let pivot_id = super::middle(Id([0xef; 20]), Id([0x00; 20]));
+            node_ids.sort_by_key(|a| a.distance(pivot_id));
+            assert_eq!(
+                node_ids,
+                vec![
+                    super::middle(Id([0xff; 20]), Id([0x00; 20])),
+                    Id([0x00; 20]),
+                    Id([0xff; 20]),
+                ]
+            );
+        }
     }
 }
 
@@ -569,14 +803,18 @@ where
             .min()
     }
 
-    pub(crate) fn on_timeout(
+    pub(crate) fn on_timeout<R>(
         &mut self,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
+        rng: &mut R,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
         if self.find_pivot_id_deadline <= now {
             find_node_ops.push(self.find_node(
                 self.pivot,
@@ -595,7 +833,7 @@ where
             .filter(|b| b.expected_change_deadline <= now)
             .map(|b| {
                 b.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
-                Id::rand_in_inclusive_range(&b.range)
+                r::rand_in_inclusive_range(&b.range, rng)
             })
             .collect::<Result<Vec<_>, _>>()?;
         debug!("routing table on_timeout()");
@@ -807,24 +1045,42 @@ impl RoutingTable {
         }
     }
 
-    pub(crate) fn on_timeout(
+    pub(crate) fn on_timeout<R>(
         &mut self,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         find_node_ops: &mut Vec<FindNodeOp>,
+        rng: &mut R,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
         match self {
             RoutingTable::Ipv4(routing_table) => {
-                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)
+                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, rng, now)
             }
             RoutingTable::Ipv6(routing_table) => {
-                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)
+                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, rng, now)
             }
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
-                routing_table_v4.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)?;
-                routing_table_v6.on_timeout(config, tx_manager, msg_buffer, find_node_ops, now)?;
+                routing_table_v4.on_timeout(
+                    config,
+                    tx_manager,
+                    msg_buffer,
+                    find_node_ops,
+                    rng,
+                    now,
+                )?;
+                routing_table_v6.on_timeout(
+                    config,
+                    tx_manager,
+                    msg_buffer,
+                    find_node_ops,
+                    rng,
+                    now,
+                )?;
                 Ok(())
             }
         }
@@ -861,14 +1117,14 @@ mod tests {
         assert_eq!(
             first_bucket.range,
             Id::min()
-                ..=Id::new([
+                ..=Id::from([
                     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe
                 ])
         );
         assert_eq!(
             second_bucket.range,
-            Id::new([
+            Id::from([
                 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
             ])..=Id::max()
