@@ -663,16 +663,6 @@ impl NodeIdGenerator for Ipv6Addr {
     }
 }
 
-mod private {
-    use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-
-    pub trait Sealed {}
-
-    impl Sealed for SocketAddr {}
-    impl Sealed for SocketAddrV4 {}
-    impl Sealed for SocketAddrV6 {}
-}
-
 #[cfg(test)]
 impl quickcheck::Arbitrary for Id {
     fn arbitrary(g: &mut quickcheck::Gen) -> Id {
