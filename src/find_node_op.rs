@@ -13,7 +13,7 @@ use crate::{
         transaction, RespMsg,
     },
     msg_buffer,
-    node::{self, Addr, AddrId, AddrOptId, Id},
+    node::{self, AddrId, AddrOptId, Id},
     SupportedAddr,
 };
 use bt_bencode::Value;
@@ -26,7 +26,7 @@ use std::{
 #[derive(Debug)]
 struct PotentialAddrOptId<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     distance: Option<node::Id>,
     addr_opt_id: AddrOptId<A>,
@@ -73,7 +73,7 @@ const MAX_CONCURRENT_REQUESTS: usize = 8;
 #[derive(Debug)]
 struct AddrInfo<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
     potential_addr_opt_ids: Vec<PotentialAddrOptId<A>>,
@@ -82,7 +82,7 @@ where
 
 impl<A> AddrInfo<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     fn new<I>(potential_addr_opt_ids: I) -> Self
     where
@@ -121,6 +121,7 @@ where
     fn extend_potential_addrs<'a, I>(&'a mut self, target_id: Id, potential_addr_opt_ids: I)
     where
         I: IntoIterator<Item = &'a AddrId<A>>,
+        A: Ord + Copy,
     {
         let max_distance = self.max_distance();
 
@@ -141,7 +142,10 @@ where
         self.potential_addr_opt_ids.extend(potential_addr_opt_ids);
     }
 
-    fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<A>> {
+    fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<A>>
+    where
+        A: Ord + Copy,
+    {
         let max_distance = self.max_distance();
         while let Some(potential_addr_opt_id) = self.potential_addr_opt_ids.pop() {
             if self
@@ -236,7 +240,7 @@ impl FindNodeOp {
     ) -> Self
     where
         T: IntoIterator<Item = AddrOptId<A>>,
-        A: Addr + Into<SocketAddr>,
+        A: Into<SocketAddr> + Copy,
     {
         let mut potential_addr_opt_ids_v4 = Vec::new();
         let mut potential_addr_opt_ids_v6 = Vec::new();

@@ -11,7 +11,7 @@ use crate::{
     find_node_op::FindNodeOp,
     krpc::{ping::PingQueryArgs, Kind},
     msg_buffer,
-    node::{Addr, AddrId, AddrOptId, Id},
+    node::{AddrId, AddrOptId, Id},
     transaction,
 };
 use std::{
@@ -31,7 +31,7 @@ enum NodeState {
 #[derive(Debug, Clone, Copy)]
 struct Node<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     addr_id: AddrId<A>,
     missing_responses: u8,
@@ -42,7 +42,7 @@ where
 
 impl<A> Node<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
@@ -135,7 +135,7 @@ const BUCKET_SIZE: usize = 8;
 #[derive(Debug)]
 struct Bucket<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     range: RangeInclusive<Id>,
     nodes: [Option<Node<A>>; BUCKET_SIZE],
@@ -145,7 +145,7 @@ where
 
 impl<A> Bucket<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr> + Copy,
 {
     fn new(range: RangeInclusive<Id>) -> Self {
         Bucket {
@@ -177,7 +177,10 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        A: Copy,
+    {
         let pinged_nodes_count = self
             .nodes
             .iter()
@@ -217,7 +220,10 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        A: PartialEq + Copy,
+    {
         if let Some(node) = self
             .nodes
             .iter_mut()
@@ -296,7 +302,10 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        A: PartialEq + Copy,
+    {
         if let Some(node) = self
             .nodes
             .iter_mut()
@@ -669,7 +678,7 @@ const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
 #[derive(Debug)]
 pub(crate) struct Table<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
     pivot: Id,
     buckets: Vec<Bucket<A>>,
@@ -678,9 +687,12 @@ where
 
 impl<A> Table<A>
 where
-    A: Addr + Into<SocketAddr>,
+    A: Into<SocketAddr>,
 {
-    pub(crate) fn new(pivot: Id, now: Instant) -> Self {
+    pub(crate) fn new(pivot: Id, now: Instant) -> Self
+    where
+        A: Copy,
+    {
         Self {
             pivot,
             buckets: vec![Bucket::new(Id::min()..=Id::max())],
@@ -699,6 +711,7 @@ where
     ) -> Result<FindNodeOp, Error>
     where
         I: IntoIterator<Item = A>,
+        A: Copy,
     {
         let neighbors = self
             .find_neighbors(target_id, now)
@@ -710,7 +723,10 @@ where
         Ok(find_node_op)
     }
 
-    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
+    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant)
+    where
+        A: Copy,
+    {
         let node_id = addr_id.id();
         if node_id == self.pivot {
             return;
@@ -742,7 +758,10 @@ where
         }
     }
 
-    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>> {
+    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>>
+    where
+        A: Copy,
+    {
         let mut nodes = self
             .buckets
             .iter()
@@ -760,7 +779,10 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), crate::error::Error>
+    where
+        A: PartialEq + Copy,
+    {
         let node_id = addr_id.id();
         if node_id == self.pivot {
             return Ok(());
@@ -801,7 +823,10 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), crate::error::Error>
+    where
+        A: PartialEq + Copy,
+    {
         let node_id = addr_id.id();
         let bucket = self
             .buckets
@@ -831,6 +856,7 @@ where
     ) -> Result<(), Error>
     where
         R: rand::Rng,
+        A: Copy,
     {
         if self.find_pivot_id_deadline <= now {
             find_node_ops.push(self.find_node(
@@ -854,9 +880,6 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         debug!("routing table on_timeout()");
-        for b in self.buckets.iter() {
-            debug!("bucket: {:?}", b);
-        }
         for target_id in target_ids {
             find_node_ops.push(self.find_node(
                 target_id,

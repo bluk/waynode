@@ -158,34 +158,14 @@ impl From<Id> for LocalId {
     }
 }
 
-/// A network address.
-///
-/// This trait is sealed and cannot be implemented for types outside this crate.
-pub trait Addr:
-    fmt::Debug + Clone + Copy + Eq + std::hash::Hash + Ord + PartialEq + PartialOrd + private::Sealed
-{
-}
-
-impl Addr for SocketAddr {}
-
-impl Addr for SocketAddrV4 {}
-
-impl Addr for SocketAddrV6 {}
-
 /// A node's network address and Id.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AddrId<A>
-where
-    A: Addr,
-{
+pub struct AddrId<A> {
     addr: A,
     id: Id,
 }
 
-impl<A> AddrId<A>
-where
-    A: Addr,
-{
+impl<A> AddrId<A> {
     /// Instantiate with a network address and an Id.
     ///
     /// # Example
@@ -208,7 +188,10 @@ where
     }
 
     /// Returns the network address.
-    pub fn addr(&self) -> A {
+    pub fn addr(&self) -> A
+    where
+        A: Copy,
+    {
         self.addr
     }
 
@@ -285,10 +268,7 @@ pub struct AddrOptId<A> {
     id: Option<Id>,
 }
 
-impl<A> AddrOptId<A>
-where
-    A: Addr,
-{
+impl<A> AddrOptId<A> {
     /// Instantiate with a network address and an optional Id.
     ///
     /// # Example
@@ -333,7 +313,10 @@ where
     }
 
     /// Returns the network address.
-    pub fn addr(&self) -> A {
+    pub fn addr(&self) -> A
+    where
+        A: Copy,
+    {
         self.addr
     }
 
