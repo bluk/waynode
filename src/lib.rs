@@ -37,6 +37,80 @@
 #[macro_use]
 extern crate log;
 
+macro_rules! fmt_byte_array {
+    ($id:ident) => {
+        impl fmt::Debug for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                struct DebugFmt<'a>(&'a $id);
+
+                impl<'a> fmt::Debug for DebugFmt<'a> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        for b in (self.0).0 {
+                            write!(f, "{:02X}", b)?;
+                        }
+                        Ok(())
+                    }
+                }
+
+                f.debug_tuple(stringify!($id))
+                    .field(&DebugFmt(self))
+                    .finish()
+            }
+        }
+
+        impl fmt::Display for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for b in self.0 {
+                    write!(f, "{:02X}", b)?;
+                }
+                Ok(())
+            }
+        }
+
+        impl core::fmt::UpperHex for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                if f.alternate() {
+                    write!(f, "0x")?;
+                }
+
+                for b in self.0 {
+                    write!(f, "{:02X}", b)?;
+                }
+
+                Ok(())
+            }
+        }
+
+        impl fmt::LowerHex for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                if f.alternate() {
+                    write!(f, "0x")?;
+                }
+
+                for b in self.0 {
+                    write!(f, "{:02x}", b)?;
+                }
+
+                Ok(())
+            }
+        }
+
+        impl fmt::Binary for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                if f.alternate() {
+                    write!(f, "0b")?;
+                }
+
+                for b in self.0 {
+                    write!(f, "{:b}", b)?;
+                }
+
+                Ok(())
+            }
+        }
+    };
+}
+
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
@@ -601,7 +675,7 @@ mod tests {
         Kind, Msg, QueryMsg,
     };
 
-    fn new_config() -> Result<Config, error::Error> {
+    fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {
             local_id: node::LocalId::from(node::Id::rand(&mut rand::thread_rng())?),
             client_version: None,
@@ -634,7 +708,11 @@ mod tests {
 
         let args = PingQueryArgs::new(local_id);
 
-        let mut node: Node = Node::new(new_config()?, std::iter::empty(), std::iter::empty())?;
+        let mut node: Node = Node::new(
+            new_config().unwrap(),
+            std::iter::empty(),
+            std::iter::empty(),
+        )?;
         let tx_id = node.write_query(&args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
@@ -664,7 +742,7 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), error::Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut node: Node = Node::new(new_config()?, &[], vec![bootstrap_remote_addr])?;
+        let mut node: Node = Node::new(new_config().unwrap(), &[], vec![bootstrap_remote_addr])?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match node.send_to(&mut out)? {

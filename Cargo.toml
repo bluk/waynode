@@ -28,3 +28,5 @@ mio = {version = "0.8", features = ["os-poll", "net"] }
 env_logger = "0.9"
 clap = "3.1.6"
 hex-literal = "0.3.4"
+quickcheck = "1"
+quickcheck_macros = "1"

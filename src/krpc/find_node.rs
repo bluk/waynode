@@ -314,7 +314,10 @@ mod tests {
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234);
         let compact_addr = addr.to_compact_address();
-        let node_id = addr.ip().make_node_id(None, &mut rand::thread_rng())?;
+        let node_id = addr
+            .ip()
+            .make_node_id(None, &mut rand::thread_rng())
+            .unwrap();
         let mut find_node_resp = vec![];
         find_node_resp.extend_from_slice(b"d1:rd2:id20:0123456789abcdefghij5:nodes26:");
         find_node_resp.extend_from_slice(&node_id.0[..]);

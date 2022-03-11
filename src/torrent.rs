@@ -28,20 +28,8 @@ impl From<[u8; 20]> for InfoHash {
     }
 }
 
-impl From<&[u8; 20]> for InfoHash {
-    fn from(bytes: &[u8; 20]) -> Self {
-        Self(*bytes)
-    }
-}
-
 impl From<InfoHash> for Vec<u8> {
     fn from(info_hash: InfoHash) -> Self {
-        Vec::from(info_hash.0)
-    }
-}
-
-impl From<&InfoHash> for Vec<u8> {
-    fn from(info_hash: &InfoHash) -> Self {
         Vec::from(info_hash.0)
     }
 }
@@ -49,40 +37,6 @@ impl From<&InfoHash> for Vec<u8> {
 impl From<InfoHash> for [u8; 20] {
     fn from(info_hash: InfoHash) -> Self {
         info_hash.0
-    }
-}
-
-impl From<&InfoHash> for [u8; 20] {
-    fn from(info_hash: &InfoHash) -> Self {
-        info_hash.0
-    }
-}
-
-impl fmt::Debug for InfoHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct InfoHashDebugFmt<'a>(&'a InfoHash);
-
-        impl<'a> fmt::Debug for InfoHashDebugFmt<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for b in (self.0).0 {
-                    write!(f, "{:02x}", b)?;
-                }
-                Ok(())
-            }
-        }
-
-        f.debug_tuple("InfoHash")
-            .field(&InfoHashDebugFmt(self))
-            .finish()
-    }
-}
-
-impl fmt::Display for InfoHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for b in self.0 {
-            write!(f, "{:02X}", b)?;
-        }
-        Ok(())
     }
 }
 
@@ -94,47 +48,7 @@ impl TryFrom<&[u8]> for InfoHash {
     }
 }
 
-impl fmt::UpperHex for InfoHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "0x")?;
-        }
-
-        for b in self.0 {
-            write!(f, "{:02X}", b)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl fmt::LowerHex for InfoHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "0x")?;
-        }
-
-        for b in self.0 {
-            write!(f, "{:02x}", b)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl fmt::Binary for InfoHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "0b")?;
-        }
-
-        for b in self.0 {
-            write!(f, "{:b}", b)?;
-        }
-
-        Ok(())
-    }
-}
+fmt_byte_array!(InfoHash);
 
 #[cfg(test)]
 mod tests {

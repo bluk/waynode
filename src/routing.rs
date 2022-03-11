@@ -349,7 +349,7 @@ where
     fn split(self) -> (Bucket<A>, Bucket<A>) {
         let middle = r::middle(*self.range.end(), *self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=middle.prev());
+        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle));
         let mut upper_bucket = Bucket::new(middle..=*self.range.end());
 
         for node in self.nodes.iter().flatten() {
@@ -460,6 +460,27 @@ mod r {
         Id(data)
     }
 
+    #[inline]
+    #[must_use]
+    pub(super) fn prev(id: Id) -> Id {
+        let mut data: [u8; 20] = [0; 20];
+        let offset_from_end = id.0.iter().rposition(|v| *v != 0).unwrap_or(0);
+        for (val, self_val) in data.iter_mut().zip(id.0.iter()).take(offset_from_end) {
+            *val = *self_val;
+        }
+
+        data[offset_from_end] = if id.0[offset_from_end] == 0 {
+            0xff
+        } else {
+            id.0[offset_from_end] - 1
+        };
+
+        for val in data.iter_mut().take(id.0.len()).skip(offset_from_end + 1) {
+            *val = 0xff;
+        }
+
+        Id(data)
+    }
     trait IdBytes {
         #[must_use]
         fn overflowing_add(&mut self, other: &Self) -> bool;
@@ -518,8 +539,6 @@ mod r {
         where
             R: rand::Rng,
         {
-            use core::convert::TryFrom;
-
             let mut data: Self = [0; 20];
             let mut lower_than_max = false;
 
@@ -532,12 +551,10 @@ mod r {
             loop {
                 for idx in 0..data.len() {
                     data[idx] = if lower_than_max {
-                        u8::try_from(rng.gen_range(0..u16::from(u8::MAX) + 1))
-                            .map_err(|_| Error::RngError)?
+                        rng.gen()
                     } else {
                         let idx_val = end[idx];
-                        let val = u8::try_from(rng.gen_range(0..u16::from(idx_val) + 1))
-                            .map_err(|_| Error::RngError)?;
+                        let val = rng.gen_range(0..=idx_val);
                         if val < idx_val {
                             lower_than_max = true;
                         }

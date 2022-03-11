@@ -8,7 +8,6 @@
 
 //! A node is a client/server which implements the DHT protocol.
 
-use crate::error::Error;
 use core::{
     cmp::Ordering,
     cmp::{Ord, PartialOrd},
@@ -79,35 +78,13 @@ impl Id {
     ///
     /// It may be useful to generate a random `Id` when initializing a DHT node
     /// for the first time.
-    pub fn rand<R>(rng: &mut R) -> Result<Id, Error>
+    pub fn rand<R>(rng: &mut R) -> Result<Id, rand::Error>
     where
         R: rand::Rng,
     {
         let mut arr: [u8; 20] = [0; 20];
-        rng.try_fill(&mut arr[..]).map_err(|_| Error::RngError)?;
+        rng.try_fill(&mut arr[..])?;
         Ok(Id(arr))
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn prev(&self) -> Id {
-        let mut data: [u8; 20] = [0; 20];
-        let offset_from_end = self.0.iter().rposition(|v| *v != 0).unwrap_or(0);
-        for (val, self_val) in data.iter_mut().zip(self.0.iter()).take(offset_from_end) {
-            *val = *self_val;
-        }
-
-        data[offset_from_end] = if self.0[offset_from_end] == 0 {
-            0xff
-        } else {
-            self.0[offset_from_end] - 1
-        };
-
-        for val in data.iter_mut().take(self.0.len()).skip(offset_from_end + 1) {
-            *val = 0xff;
-        }
-
-        Id(data)
     }
 }
 
@@ -153,25 +130,6 @@ impl PartialOrd for Id {
     }
 }
 
-impl fmt::Debug for Id {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct IdDebug<'a>(&'a Id);
-
-        impl<'a> fmt::Debug for IdDebug<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for b in (self.0).0 {
-                    write!(f, "{:02X}", b)?;
-                }
-                Ok(())
-            }
-        }
-
-        f.debug_tuple("Id").field(&IdDebug(self)).finish()
-    }
-}
-
-// TODO: Implement std::fmt::UpperHex, std::fmt::LowerHex, std::fmt::Octal and std::fmt::Binary for Id?
-
 impl TryFrom<&[u8]> for Id {
     type Error = core::array::TryFromSliceError;
 
@@ -179,6 +137,8 @@ impl TryFrom<&[u8]> for Id {
         <[u8; 20]>::try_from(value).map(Id)
     }
 }
+
+fmt_byte_array!(Id);
 
 /// An `Id` that identifies the local node.
 ///
@@ -610,7 +570,7 @@ impl Crc32cMaker for Ipv6Addr {
 }
 
 pub(crate) trait NodeIdGenerator {
-    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, Error>
+    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, rand::Error>
     where
         R: rand::Rng;
 
@@ -618,17 +578,18 @@ pub(crate) trait NodeIdGenerator {
 }
 
 impl NodeIdGenerator for Ipv4Addr {
-    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, Error>
+    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, rand::Error>
     where
         R: rand::Rng,
     {
         let rand = rand.unwrap_or_else(|| rng.gen_range(0..8));
-        let crc32_val = self.make_crc32c(rand);
+        let crc32_val = self.make_crc32c(rand).to_be_bytes();
         let mut id = Id::rand(rng)?;
-        id.0[0] = u8::try_from(crc32_val >> 24 & 0xFF).unwrap();
-        id.0[1] = u8::try_from(crc32_val >> 16 & 0xFF).unwrap();
-        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rng.gen_range(0..8)).unwrap();
+        id.0[0] = crc32_val[0];
+        id.0[1] = crc32_val[1];
+        id.0[2] = crc32_val[2] & 0xF8 | rng.gen_range(0..8);
         id.0[19] = rand;
+
         Ok(id)
     }
 
@@ -653,17 +614,17 @@ impl NodeIdGenerator for Ipv4Addr {
         }
 
         let rand = id.0[19];
-        let crc32c_val = self.make_crc32c(rand);
+        let crc32c_val = self.make_crc32c(rand).to_be_bytes();
 
-        if id.0[0] != u8::try_from((crc32c_val >> 24) & 0xFF).unwrap() {
+        if id.0[0] != crc32c_val[0] {
             return false;
         }
 
-        if id.0[1] != u8::try_from((crc32c_val >> 16) & 0xFF).unwrap() {
+        if id.0[1] != crc32c_val[1] {
             return false;
         }
 
-        if (id.0[2] & 0xF8) != u8::try_from((crc32c_val >> 8) & 0xF8).unwrap() {
+        if (id.0[2] & 0xF8) != (crc32c_val[2] & 0xF8) {
             return false;
         }
 
@@ -672,33 +633,33 @@ impl NodeIdGenerator for Ipv4Addr {
 }
 
 impl NodeIdGenerator for Ipv6Addr {
-    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, Error>
+    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, rand::Error>
     where
         R: rand::Rng,
     {
         let rand = rand.unwrap_or_else(|| rng.gen_range(0..8));
-        let crc32_val = self.make_crc32c(rand);
+        let crc32_val = self.make_crc32c(rand).to_be_bytes();
         let mut id = Id::rand(rng)?;
-        id.0[0] = u8::try_from(crc32_val >> 24 & 0xFF).unwrap();
-        id.0[1] = u8::try_from(crc32_val >> 16 & 0xFF).unwrap();
-        id.0[2] = u8::try_from(crc32_val >> 8 & 0xF8 | rng.gen_range(0..8)).unwrap();
+        id.0[0] = crc32_val[0];
+        id.0[1] = crc32_val[1];
+        id.0[2] = crc32_val[2] & 0xF8 | rng.gen_range(0..8);
         id.0[19] = rand;
         Ok(id)
     }
 
     fn is_valid_node_id(&self, id: Id) -> bool {
         let rand = id.0[19];
-        let crc32c_val = self.make_crc32c(rand);
+        let crc32c_val = self.make_crc32c(rand).to_be_bytes();
 
-        if id.0[0] != u8::try_from((crc32c_val >> 24) & 0xFF).unwrap() {
+        if id.0[0] != crc32c_val[0] {
             return false;
         }
 
-        if id.0[1] != u8::try_from((crc32c_val >> 16) & 0xFF).unwrap() {
+        if id.0[1] != crc32c_val[1] {
             return false;
         }
 
-        if (id.0[2] & 0xF8) != u8::try_from((crc32c_val >> 8) & 0xF8).unwrap() {
+        if (id.0[2] & 0xF8) != (crc32c_val[2] & 0xF8) {
             return false;
         }
 
@@ -717,8 +678,38 @@ mod private {
 }
 
 #[cfg(test)]
+impl quickcheck::Arbitrary for Id {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Id {
+        Id::from([
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+            u8::arbitrary(g),
+        ])
+    }
+}
+
+#[cfg(test)]
 mod test {
     use super::*;
+    use crate::error::Error;
+    use quickcheck_macros::quickcheck;
 
     #[test]
     fn test_debug() -> Result<(), Error> {
@@ -726,6 +717,39 @@ mod test {
         let debug_str = format!("{:?}", node_id);
         assert_eq!(debug_str, "Id(FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)");
         Ok(())
+    }
+
+    #[quickcheck]
+    fn id_distance_commutative(id1: Id, id2: Id) -> bool {
+        id1.distance(id2) == id2.distance(id1)
+    }
+
+    #[quickcheck]
+    fn make_only_valid_node_ids_for_ipv4(ip: Ipv4Addr, rand: Option<u8>) -> bool {
+        ip.is_valid_node_id(ip.make_node_id(rand, &mut rand::thread_rng()).unwrap())
+    }
+
+    #[quickcheck]
+    fn make_only_valid_node_ids_for_ipv6(ip: Ipv6Addr, rand: Option<u8>) -> bool {
+        ip.is_valid_node_id(ip.make_node_id(rand, &mut rand::thread_rng()).unwrap())
+    }
+
+    #[quickcheck]
+    fn id_try_from_slice(values: Vec<u8>) -> bool {
+        if values.len() == 20 {
+            Id::try_from(values.as_slice()).is_ok()
+        } else {
+            Id::try_from(values.as_slice()).is_err()
+        }
+    }
+
+    #[quickcheck]
+    fn id_cmp(id1: Id, id2: Id) -> bool {
+        match id1.cmp(&id2) {
+            Ordering::Equal => id2.cmp(&id1) == Ordering::Equal,
+            Ordering::Less => id2.cmp(&id1) == Ordering::Greater,
+            Ordering::Greater => id2.cmp(&id1) == Ordering::Less,
+        }
     }
 
     #[test]
