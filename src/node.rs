@@ -15,7 +15,7 @@ use core::{
     fmt,
 };
 use serde::{Deserialize, Serialize};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 /// A 160-bit value which is used to identify a node's position within the distributed hash table.
@@ -552,6 +552,25 @@ pub(crate) trait NodeIdGenerator {
         R: rand::Rng;
 
     fn is_valid_node_id(&self, id: Id) -> bool;
+}
+
+impl NodeIdGenerator for IpAddr {
+    fn make_node_id<R>(&self, rand: Option<u8>, rng: &mut R) -> Result<Id, rand::Error>
+    where
+        R: rand::Rng,
+    {
+        match self {
+            IpAddr::V4(addr) => addr.make_node_id(rand, rng),
+            IpAddr::V6(addr) => addr.make_node_id(rand, rng),
+        }
+    }
+
+    fn is_valid_node_id(&self, id: Id) -> bool {
+        match self {
+            IpAddr::V4(addr) => addr.is_valid_node_id(id),
+            IpAddr::V6(addr) => addr.is_valid_node_id(id),
+        }
+    }
 }
 
 impl NodeIdGenerator for Ipv4Addr {
