@@ -96,7 +96,7 @@ impl Manager {
             .and_then(|tx_local_id| {
                 self.transactions
                     .iter()
-                    .position(|t| t.tx_id == tx_local_id && t.addr_opt_id.addr() == addr)
+                    .position(|t| t.tx_id == tx_local_id && *t.addr_opt_id.addr() == addr)
             })
             .map(|idx| self.transactions.remove(idx))
     }

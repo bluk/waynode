@@ -424,7 +424,7 @@ impl Node {
                     Kind::Error => {
                         if let Some(node_id) = tx.addr_opt_id.id() {
                             self.routing_table.on_msg_received(
-                                AddrId::new(tx.addr_opt_id.addr(), node_id),
+                                AddrId::new(*tx.addr_opt_id.addr(), node_id),
                                 &kind,
                                 &self.config,
                                 &mut self.tx_manager,
@@ -570,7 +570,7 @@ impl Node {
                 .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
             let result = Some(SendInfo {
                 len: out_msg.msg_data.len(),
-                addr: out_msg.addr_opt_id.addr(),
+                addr: *out_msg.addr_opt_id.addr(),
             });
             if let Some(tx) = out_msg.into_transaction() {
                 self.tx_manager.push(tx);
@@ -613,7 +613,7 @@ impl Node {
                 debug!("tx timed out: {:?}", tx);
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
-                        AddrId::new(tx.addr_opt_id.addr(), node_id),
+                        AddrId::new(*tx.addr_opt_id.addr(), node_id),
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,

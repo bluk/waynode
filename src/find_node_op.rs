@@ -39,7 +39,7 @@ impl From<PotentialAddrOptId<SocketAddrV4>> for PotentialAddrOptId<SocketAddr> {
         PotentialAddrOptId {
             distance: potential_addr_info.distance,
             addr_opt_id: AddrOptId::new(
-                potential_addr_info.addr_opt_id.addr().into(),
+                (*potential_addr_info.addr_opt_id.addr()).into(),
                 potential_addr_info.addr_opt_id.id(),
             ),
         }
@@ -53,7 +53,7 @@ impl From<PotentialAddrOptId<SocketAddrV6>> for PotentialAddrOptId<SocketAddr> {
         PotentialAddrOptId {
             distance: potential_addr_info.distance,
             addr_opt_id: AddrOptId::new(
-                potential_addr_info.addr_opt_id.addr().into(),
+                (*potential_addr_info.addr_opt_id.addr()).into(),
                 potential_addr_info.addr_opt_id.id(),
             ),
         }
@@ -121,16 +121,16 @@ where
     fn extend_potential_addrs<'a, I>(&'a mut self, target_id: Id, potential_addr_opt_ids: I)
     where
         I: IntoIterator<Item = &'a AddrId<A>>,
-        A: Ord + Copy,
+        A: Ord + Clone,
     {
         let max_distance = self.max_distance();
 
         let potential_addr_opt_ids = potential_addr_opt_ids
             .into_iter()
-            .filter(|n| !self.queried_addrs.contains(&n.addr()))
+            .filter(|n| !self.queried_addrs.contains(n.addr()))
             .map(|n| PotentialAddrOptId {
                 distance: Some(n.id().distance(target_id)),
-                addr_opt_id: AddrOptId::new(n.addr(), Some(n.id())),
+                addr_opt_id: AddrOptId::new(n.addr().clone(), Some(n.id())),
             })
             .filter(|potential_addr| {
                 potential_addr
@@ -144,13 +144,13 @@ where
 
     fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<A>>
     where
-        A: Ord + Copy,
+        A: Ord + Clone,
     {
         let max_distance = self.max_distance();
         while let Some(potential_addr_opt_id) = self.potential_addr_opt_ids.pop() {
             if self
                 .queried_addrs
-                .contains(&potential_addr_opt_id.addr_opt_id.addr())
+                .contains(potential_addr_opt_id.addr_opt_id.addr())
             {
                 continue;
             }
@@ -161,7 +161,7 @@ where
                 .unwrap_or(true)
             {
                 self.queried_addrs
-                    .insert(potential_addr_opt_id.addr_opt_id.addr());
+                    .insert(potential_addr_opt_id.addr_opt_id.addr().clone());
 
                 return Some(potential_addr_opt_id);
             }
@@ -240,13 +240,13 @@ impl FindNodeOp {
     ) -> Self
     where
         T: IntoIterator<Item = AddrOptId<A>>,
-        A: Into<SocketAddr> + Copy,
+        A: Into<SocketAddr> + Clone,
     {
         let mut potential_addr_opt_ids_v4 = Vec::new();
         let mut potential_addr_opt_ids_v6 = Vec::new();
 
         for addr_opt_id in potential_addr_opt_ids.into_iter() {
-            match addr_opt_id.addr().into() {
+            match (*addr_opt_id.addr()).clone().into() {
                 SocketAddr::V4(addr) => potential_addr_opt_ids_v4.push(PotentialAddrOptId {
                     distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
                     addr_opt_id: AddrOptId::new(addr, addr_opt_id.id()),
@@ -329,7 +329,7 @@ impl FindNodeOp {
             Response::Resp(resp) => {
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.addr_space.replace_closest_queried_nodes(
-                        tx.addr_opt_id.addr(),
+                        *tx.addr_opt_id.addr(),
                         self.target_id,
                         node_id,
                     );

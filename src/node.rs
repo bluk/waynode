@@ -178,7 +178,7 @@ impl<A> AddrId<A> {
     /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
     /// let node_id = Id::rand(&mut rand::thread_rng()).unwrap();
     /// let addr_id = AddrId::new(socket_addr, node_id);
-    /// assert_eq!(addr_id.addr(), socket_addr);
+    /// assert_eq!(*addr_id.addr(), socket_addr);
     /// assert_eq!(addr_id.id(), node_id);
     /// # Ok(())
     /// # }
@@ -188,11 +188,8 @@ impl<A> AddrId<A> {
     }
 
     /// Returns the network address.
-    pub fn addr(&self) -> A
-    where
-        A: Copy,
-    {
-        self.addr
+    pub fn addr(&self) -> &A {
+        &self.addr
     }
 
     /// Returns the node Id.
@@ -203,55 +200,55 @@ impl<A> AddrId<A> {
 
 impl From<AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
     fn from(addr_id: AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
-        AddrId::new(SocketAddr::V4(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V4(*addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
     fn from(addr_id: AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
-        AddrId::new(SocketAddr::V6(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V6(*addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrId<SocketAddr> {
     fn from(addr_id: &AddrId<SocketAddrV4>) -> AddrId<SocketAddr> {
-        AddrId::new(SocketAddr::V4(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V4(*addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrId<SocketAddr> {
     fn from(addr_id: &AddrId<SocketAddrV6>) -> AddrId<SocketAddr> {
-        AddrId::new(SocketAddr::V6(addr_id.addr()), addr_id.id())
+        AddrId::new(SocketAddr::V6(*addr_id.addr()), addr_id.id())
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for SocketAddrV4 {
     fn from(addr_id: AddrId<SocketAddrV4>) -> SocketAddrV4 {
-        addr_id.addr()
+        *addr_id.addr()
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for SocketAddrV6 {
     fn from(addr_id: AddrId<SocketAddrV6>) -> SocketAddrV6 {
-        addr_id.addr()
+        *addr_id.addr()
     }
 }
 
 impl From<AddrId<SocketAddr>> for SocketAddr {
     fn from(addr_id: AddrId<SocketAddr>) -> SocketAddr {
-        addr_id.addr()
+        *addr_id.addr()
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for SocketAddr {
     fn from(addr_id: AddrId<SocketAddrV4>) -> SocketAddr {
-        SocketAddr::V4(addr_id.addr())
+        SocketAddr::V4(*addr_id.addr())
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for SocketAddr {
     fn from(addr_id: AddrId<SocketAddrV6>) -> SocketAddr {
-        SocketAddr::V6(addr_id.addr())
+        SocketAddr::V6(*addr_id.addr())
     }
 }
 
@@ -281,7 +278,7 @@ impl<A> AddrOptId<A> {
     /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
     /// let node_id = Id::rand(&mut rand::thread_rng()).unwrap();
     /// let addr_opt_id = AddrOptId::new(socket_addr, Some(node_id));
-    /// assert_eq!(addr_opt_id.addr(), socket_addr);
+    /// assert_eq!(*addr_opt_id.addr(), socket_addr);
     /// assert_eq!(addr_opt_id.id(), Some(node_id));
     /// # Ok(())
     /// # }
@@ -303,7 +300,7 @@ impl<A> AddrOptId<A> {
     ///
     /// let socket_addr = "example.com:6881".to_socket_addrs().unwrap().next().unwrap();
     /// let addr_opt_id = AddrOptId::with_addr(socket_addr);
-    /// assert_eq!(addr_opt_id.addr(), socket_addr);
+    /// assert_eq!(*addr_opt_id.addr(), socket_addr);
     /// assert_eq!(addr_opt_id.id(), None);
     /// # Ok(())
     /// # }
@@ -313,11 +310,8 @@ impl<A> AddrOptId<A> {
     }
 
     /// Returns the network address.
-    pub fn addr(&self) -> A
-    where
-        A: Copy,
-    {
-        self.addr
+    pub fn addr(&self) -> &A {
+        &self.addr
     }
 
     /// Returns the optional node Id.
@@ -346,13 +340,13 @@ impl From<SocketAddr> for AddrOptId<SocketAddr> {
 
 impl From<AddrOptId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> Self {
-        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V4(*addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<AddrOptId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> Self {
-        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V6(*addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
@@ -376,103 +370,103 @@ impl From<&SocketAddr> for AddrOptId<SocketAddr> {
 
 impl From<&AddrOptId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrOptId<SocketAddrV4>) -> Self {
-        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V4(*addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<&AddrOptId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrOptId<SocketAddrV6>) -> Self {
-        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), addr_opt_id.id())
+        AddrOptId::new(SocketAddr::V6(*addr_opt_id.addr()), addr_opt_id.id())
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
     fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
     fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V4(*addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V6(*addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: AddrId<SocketAddr>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddrV4> {
     fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddrV6> {
     fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV4>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddrV4>) -> Self {
-        AddrOptId::new(SocketAddr::V4(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V4(*addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddrV6>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddrV6>) -> Self {
-        AddrOptId::new(SocketAddr::V6(addr_opt_id.addr()), Some(addr_opt_id.id()))
+        AddrOptId::new(SocketAddr::V6(*addr_opt_id.addr()), Some(addr_opt_id.id()))
     }
 }
 
 impl From<&AddrId<SocketAddr>> for AddrOptId<SocketAddr> {
     fn from(addr_opt_id: &AddrId<SocketAddr>) -> Self {
-        AddrOptId::new(addr_opt_id.addr(), Some(addr_opt_id.id()))
+        AddrOptId::new(*addr_opt_id.addr(), Some(addr_opt_id.id()))
     }
 }
 
 impl From<AddrOptId<SocketAddrV4>> for SocketAddrV4 {
     fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> SocketAddrV4 {
-        addr_opt_id.addr()
+        *addr_opt_id.addr()
     }
 }
 
 impl From<AddrOptId<SocketAddrV6>> for SocketAddrV6 {
     fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> SocketAddrV6 {
-        addr_opt_id.addr()
+        *addr_opt_id.addr()
     }
 }
 
 impl From<AddrOptId<SocketAddr>> for SocketAddr {
     fn from(addr_opt_id: AddrOptId<SocketAddr>) -> SocketAddr {
-        addr_opt_id.addr()
+        *addr_opt_id.addr()
     }
 }
 
 impl From<AddrOptId<SocketAddrV4>> for SocketAddr {
     fn from(addr_opt_id: AddrOptId<SocketAddrV4>) -> SocketAddr {
-        SocketAddr::V4(addr_opt_id.addr())
+        SocketAddr::V4(*addr_opt_id.addr())
     }
 }
 
 impl From<AddrOptId<SocketAddrV6>> for SocketAddr {
     fn from(addr_opt_id: AddrOptId<SocketAddrV6>) -> SocketAddr {
-        SocketAddr::V6(addr_opt_id.addr())
+        SocketAddr::V6(*addr_opt_id.addr())
     }
 }
 

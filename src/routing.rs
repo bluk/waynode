@@ -145,13 +145,15 @@ where
 
 impl<A> Bucket<A>
 where
-    A: Into<SocketAddr> + Copy,
+    A: Into<SocketAddr>,
 {
+    const NODES_NONE: Option<Node<A>> = None;
+
     fn new(range: RangeInclusive<Id>) -> Self {
         Bucket {
             range,
-            nodes: [None; BUCKET_SIZE],
-            replacement_nodes: [None; BUCKET_SIZE],
+            nodes: [Self::NODES_NONE; BUCKET_SIZE],
+            replacement_nodes: [Self::NODES_NONE; BUCKET_SIZE],
             expected_change_deadline: Instant::now() + Duration::from_secs(5 * 60),
         }
     }
@@ -179,7 +181,7 @@ where
         now: Instant,
     ) -> Result<(), Error>
     where
-        A: Copy,
+        A: Clone,
     {
         let pinged_nodes_count = self
             .nodes
@@ -199,7 +201,7 @@ where
                 msg_buffer.write_query(
                     &PingQueryArgs::new(config.local_id),
                     AddrOptId::new(
-                        node_to_ping.addr_id.addr().into(),
+                        ((*node_to_ping.addr_id.addr()).clone()).into(),
                         Some(node_to_ping.addr_id.id()),
                     ),
                     config.default_query_timeout,
@@ -222,7 +224,7 @@ where
         now: Instant,
     ) -> Result<(), Error>
     where
-        A: PartialEq + Copy,
+        A: PartialEq + Clone,
     {
         if let Some(node) = self
             .nodes
@@ -269,7 +271,8 @@ where
             }
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
-                n.map(|n| n.state_with_now(now) == NodeState::Bad)
+                n.as_ref()
+                    .map(|n| n.state_with_now(now) == NodeState::Bad)
                     .unwrap_or(false)
             }) {
                 let mut node = Node::with_addr_id(addr_id);
@@ -304,7 +307,7 @@ where
         now: Instant,
     ) -> Result<(), Error>
     where
-        A: PartialEq + Copy,
+        A: PartialEq + Clone,
     {
         if let Some(node) = self
             .nodes
@@ -355,7 +358,10 @@ where
         }
     }
 
-    fn split(self) -> (Bucket<A>, Bucket<A>) {
+    fn split(self) -> (Bucket<A>, Bucket<A>)
+    where
+        A: Clone,
+    {
         let middle = r::middle(*self.range.end(), *self.range.start());
 
         let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle));
@@ -364,18 +370,18 @@ where
         for node in self.nodes.iter().flatten() {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
-                lower_bucket.split_insert(*node);
+                lower_bucket.split_insert(node.clone());
             } else {
-                upper_bucket.split_insert(*node);
+                upper_bucket.split_insert(node.clone());
             }
         }
 
         for node in self.replacement_nodes.iter().flatten() {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
-                lower_bucket.split_replacement_insert(*node);
+                lower_bucket.split_replacement_insert(node.clone());
             } else {
-                upper_bucket.split_replacement_insert(*node);
+                upper_bucket.split_replacement_insert(node.clone());
             }
         }
 
@@ -691,7 +697,7 @@ where
 {
     pub(crate) fn new(pivot: Id, now: Instant) -> Self
     where
-        A: Copy,
+        A: Clone,
     {
         Self {
             pivot,
@@ -711,12 +717,12 @@ where
     ) -> Result<FindNodeOp, Error>
     where
         I: IntoIterator<Item = A>,
-        A: Copy,
+        A: Clone,
     {
         let neighbors = self
             .find_neighbors(target_id, now)
             .take(8)
-            .map(|a| AddrOptId::new(a.addr(), Some(a.id())))
+            .map(|a| AddrOptId::new((*a.addr()).clone(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
         let mut find_node_op = FindNodeOp::new(config, target_id, neighbors);
         find_node_op.start(config, tx_manager, msg_buffer)?;
@@ -725,7 +731,7 @@ where
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant)
     where
-        A: Copy,
+        A: Clone,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -760,12 +766,12 @@ where
 
     pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>>
     where
-        A: Copy,
+        A: Clone,
     {
         let mut nodes = self
             .buckets
             .iter()
-            .flat_map(|b| b.prioritized_nodes(now).copied())
+            .flat_map(|b| b.prioritized_nodes(now).cloned())
             .collect::<Vec<_>>();
         nodes.sort_by_key(|a| a.id().distance(id));
         nodes.into_iter()
@@ -781,7 +787,8 @@ where
         now: Instant,
     ) -> Result<(), crate::error::Error>
     where
-        A: PartialEq + Copy,
+        A: PartialEq,
+        A: Clone,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -856,7 +863,7 @@ where
     ) -> Result<(), Error>
     where
         R: rand::Rng,
-        A: Copy,
+        A: Clone,
     {
         if self.find_pivot_id_deadline <= now {
             find_node_ops.push(self.find_node(
@@ -916,7 +923,7 @@ impl RoutingTable {
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                        routing_table.try_insert(AddrId::new(addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now)
                     }
                     RoutingTable::Ipv6(_) => {}
                 },
@@ -924,7 +931,7 @@ impl RoutingTable {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                        routing_table.try_insert(AddrId::new(addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now)
                     }
                 },
             }
@@ -1008,7 +1015,7 @@ impl RoutingTable {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_msg_received(
-                        AddrId::new(addr, addr_id.id()),
+                        AddrId::new(*addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -1022,7 +1029,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_msg_received(
-                        AddrId::new(addr, addr_id.id()),
+                        AddrId::new(*addr, addr_id.id()),
                         kind,
                         config,
                         tx_manager,
@@ -1047,7 +1054,7 @@ impl RoutingTable {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_resp_timeout(
-                        AddrId::new(addr, addr_id.id()),
+                        AddrId::new(*addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
@@ -1060,7 +1067,7 @@ impl RoutingTable {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_resp_timeout(
-                        AddrId::new(addr, addr_id.id()),
+                        AddrId::new(*addr, addr_id.id()),
                         config,
                         tx_manager,
                         msg_buffer,
