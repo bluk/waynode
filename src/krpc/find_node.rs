@@ -34,19 +34,23 @@ pub struct FindNodeQueryArgs {
 
 impl FindNodeQueryArgs {
     /// Instantiates a new query message with the local querying node Id and the target Id.
-    pub fn new(id: LocalId, target: Id) -> Self {
+    pub fn new<L, T>(id: L, target: T) -> Self
+    where
+        L: Into<LocalId>,
+        T: Into<Id>,
+    {
         Self {
-            id: id.into(),
-            target,
+            id: id.into().into(),
+            target: target.into(),
         }
     }
 
     /// Sets the querying node ID in the arguments.
     pub fn set_id<I>(&mut self, id: I)
     where
-        I: Into<Id>,
+        I: Into<LocalId>,
     {
-        self.id = id.into();
+        self.id = id.into().into();
     }
 
     /// Returns the target Id.
@@ -55,8 +59,11 @@ impl FindNodeQueryArgs {
     }
 
     /// Sets the target Id.
-    pub fn set_target(&mut self, target: Id) {
-        self.target = target;
+    pub fn set_target<I>(&mut self, target: I)
+    where
+        I: Into<Id>,
+    {
+        self.target = target.into();
     }
 }
 

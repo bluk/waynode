@@ -152,6 +152,24 @@ impl LocalId {
     }
 }
 
+impl From<[u8; 20]> for LocalId {
+    fn from(bytes: [u8; 20]) -> Self {
+        Self(Id(bytes))
+    }
+}
+
+impl From<LocalId> for Vec<u8> {
+    fn from(id: LocalId) -> Self {
+        Vec::from((id.0).0)
+    }
+}
+
+impl From<LocalId> for [u8; 20] {
+    fn from(id: LocalId) -> Self {
+        (id.0).0
+    }
+}
+
 impl From<Id> for LocalId {
     fn from(id: Id) -> LocalId {
         LocalId(id)
