@@ -174,6 +174,7 @@ impl ErrorMsg for Value {
 
 /// Standard error codes in KRPC error messages.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ErrorCode {
     GenericError,
     ServerError,
