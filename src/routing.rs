@@ -457,7 +457,7 @@ mod r {
 
         let data_bit_diff = difference(*range.end(), *range.start());
 
-        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, true, rng)?;
+        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, rng)?;
         let _ = rand_bits.overflowing_add(&range.start().0);
         Ok(Id::from(rand_bits))
     }
@@ -505,7 +505,7 @@ mod r {
         /// Shifts the bits right by 1.
         fn shift_right(&mut self);
 
-        fn randomize_up_to<R>(end: Self, is_closed_range: bool, rng: &mut R) -> Result<Self, Error>
+        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, Error>
         where
             R: rand::Rng,
             Self: Sized;
@@ -550,36 +550,25 @@ mod r {
             }
         }
 
-        fn randomize_up_to<R>(end: Self, is_closed_range: bool, rng: &mut R) -> Result<Self, Error>
+        /// An inclusive randomize up to.
+        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, Error>
         where
             R: rand::Rng,
         {
             let mut data: Self = [0; 20];
             let mut lower_than_max = false;
 
-            if !is_closed_range
-                && end == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            {
-                return Err(Error::CannotGenerateNodeId);
-            }
-
-            loop {
-                for idx in 0..data.len() {
-                    data[idx] = if lower_than_max {
-                        rng.gen()
-                    } else {
-                        let idx_val = end[idx];
-                        let val = rng.gen_range(0..=idx_val);
-                        if val < idx_val {
-                            lower_than_max = true;
-                        }
-                        val
-                    };
-                }
-
-                if lower_than_max || is_closed_range {
-                    break;
-                }
+            for idx in 0..data.len() {
+                data[idx] = if lower_than_max {
+                    rng.gen()
+                } else {
+                    let idx_val = end[idx];
+                    let val = rng.gen_range(0..=idx_val);
+                    if val < idx_val {
+                        lower_than_max = true;
+                    }
+                    val
+                };
             }
 
             Ok(data)

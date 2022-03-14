@@ -10,8 +10,6 @@
 
 #[derive(Debug)]
 pub enum Error {
-    /// Random node ID cannot be generated
-    CannotGenerateNodeId,
     CannotDeserializeKrpcMessage,
     CannotSerializeKrpcMessage,
     InvalidCompactAddr,
