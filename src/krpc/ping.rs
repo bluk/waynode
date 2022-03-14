@@ -29,16 +29,21 @@ pub struct PingQueryArgs {
 
 impl PingQueryArgs {
     /// Instantiates a new query message.
-    pub fn new(id: LocalId) -> Self {
-        Self { id: Id::from(id) }
+    pub fn new<L>(id: L) -> Self
+    where
+        L: Into<LocalId>,
+    {
+        Self {
+            id: Id::from(id.into()),
+        }
     }
 
     /// Sets the querying node ID in the arguments.
     pub fn set_id<I>(&mut self, id: I)
     where
-        I: Into<Id>,
+        I: Into<LocalId>,
     {
-        self.id = id.into();
+        self.id = Id::from(id.into());
     }
 }
 
@@ -113,16 +118,21 @@ pub struct PingRespValues {
 
 impl PingRespValues {
     /// Instantiates a new instance.
-    pub fn new(id: LocalId) -> Self {
-        Self { id: Id::from(id) }
+    pub fn new<L>(id: L) -> Self
+    where
+        L: Into<LocalId>,
+    {
+        Self {
+            id: Id::from(id.into()),
+        }
     }
 
     /// Sets the queried node Id.
     pub fn set_id<I>(&mut self, id: I)
     where
-        I: Into<Id>,
+        I: Into<LocalId>,
     {
-        self.id = id.into();
+        self.id = Id::from(id.into());
     }
 }
 

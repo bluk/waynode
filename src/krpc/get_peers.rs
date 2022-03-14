@@ -38,9 +38,12 @@ pub struct GetPeersQueryArgs {
 
 impl GetPeersQueryArgs {
     /// Instantiates a new query message.
-    pub fn new(id: LocalId, info_hash: InfoHash) -> Self {
+    pub fn new<L>(id: L, info_hash: InfoHash) -> Self
+    where
+        L: Into<LocalId>,
+    {
         Self {
-            id: Id::from(id),
+            id: Id::from(id.into()),
             info_hash,
         }
     }
@@ -48,9 +51,9 @@ impl GetPeersQueryArgs {
     /// Sets the querying node ID in the arguments.
     pub fn set_id<I>(&mut self, id: I)
     where
-        I: Into<Id>,
+        I: Into<LocalId>,
     {
-        self.id = id.into();
+        self.id = Id::from(id.into());
     }
 
     /// Returns the `InfoHash` for the relevant torrent.
@@ -148,15 +151,18 @@ pub struct GetPeersRespValues {
 
 impl GetPeersRespValues {
     /// Instantiates a new instance.
-    pub fn new(
-        id: LocalId,
+    pub fn new<L>(
+        id: L,
         token: Vec<u8>,
         values: Option<Vec<SocketAddr>>,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
         nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
-    ) -> Self {
+    ) -> Self
+    where
+        L: Into<LocalId>,
+    {
         Self {
-            id: Id::from(id),
+            id: Id::from(id.into()),
             token,
             values,
             nodes,
@@ -167,9 +173,9 @@ impl GetPeersRespValues {
     /// Sets the queried node Id.
     pub fn set_id<I>(&mut self, id: I)
     where
-        I: Into<Id>,
+        I: Into<LocalId>,
     {
-        self.id = id.into();
+        self.id = Id::from(id.into());
     }
 
     /// Returns an opaque token which can be used in an announce peer message.
