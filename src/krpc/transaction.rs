@@ -26,7 +26,7 @@ impl Id {
         Self(id.to_be_bytes())
     }
 
-    fn next(&self) -> Self {
+    fn next(self) -> Self {
         let cur_id = u16::from_be_bytes(self.0);
         let (next_id, _) = cur_id.overflowing_add(1);
         Id(next_id.to_be_bytes())
@@ -57,7 +57,7 @@ pub(crate) struct Transaction {
 impl std::hash::Hash for Transaction {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.tx_id.hash(state);
-        self.addr_opt_id.hash(state)
+        self.addr_opt_id.hash(state);
     }
 }
 

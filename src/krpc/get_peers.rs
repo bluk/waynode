@@ -26,17 +26,17 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
-/// The "get_peers" query method name.
+/// The `get_peers` query method name.
 pub const METHOD_GET_PEERS: &[u8] = b"get_peers";
 
 /// The arguments for the get peers query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GetPeersQueryArgs {
+pub struct QueryArgs {
     id: Id,
     info_hash: InfoHash,
 }
 
-impl GetPeersQueryArgs {
+impl QueryArgs {
     /// Instantiates a new query message.
     pub fn new<L>(id: L, info_hash: InfoHash) -> Self
     where
@@ -57,6 +57,7 @@ impl GetPeersQueryArgs {
     }
 
     /// Returns the `InfoHash` for the relevant torrent.
+    #[must_use]
     pub fn info_hash(&self) -> InfoHash {
         self.info_hash
     }
@@ -67,7 +68,7 @@ impl GetPeersQueryArgs {
     }
 }
 
-impl super::QueryArgs for GetPeersQueryArgs {
+impl super::QueryArgs for QueryArgs {
     fn method_name() -> &'static [u8] {
         METHOD_GET_PEERS
     }
@@ -81,7 +82,7 @@ impl super::QueryArgs for GetPeersQueryArgs {
     }
 }
 
-impl TryFrom<Value> for GetPeersQueryArgs {
+impl TryFrom<Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -89,7 +90,7 @@ impl TryFrom<Value> for GetPeersQueryArgs {
     }
 }
 
-impl TryFrom<&Value> for GetPeersQueryArgs {
+impl TryFrom<&Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
@@ -101,32 +102,32 @@ impl TryFrom<&Value> for GetPeersQueryArgs {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersQueryArgs {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             args.get(Bytes::new(b"id"))
-                .and_then(|id| id.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             args.get(Bytes::new("info_hash".as_bytes()))
-                .and_then(|t| t.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|t| InfoHash::try_from(t.as_slice()).ok()),
         ) {
-            (Some(id), Some(info_hash)) => Ok(GetPeersQueryArgs { id, info_hash }),
+            (Some(id), Some(info_hash)) => Ok(QueryArgs { id, info_hash }),
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
 }
 
-impl From<GetPeersQueryArgs> for Value {
-    fn from(args: GetPeersQueryArgs) -> Self {
+impl From<QueryArgs> for Value {
+    fn from(args: QueryArgs) -> Self {
         Value::from(&args)
     }
 }
 
-impl From<&GetPeersQueryArgs> for Value {
-    fn from(args: &GetPeersQueryArgs) -> Self {
+impl From<&QueryArgs> for Value {
+    fn from(args: &QueryArgs) -> Self {
         let mut d: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         d.insert(
             ByteBuf::from(String::from("id")),
@@ -141,7 +142,7 @@ impl From<&GetPeersQueryArgs> for Value {
 }
 
 /// The value for the get peers response.
-pub struct GetPeersRespValues {
+pub struct RespValues {
     id: Id,
     token: Vec<u8>,
     values: Option<Vec<SocketAddr>>,
@@ -149,7 +150,7 @@ pub struct GetPeersRespValues {
     nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
 }
 
-impl GetPeersRespValues {
+impl RespValues {
     /// Instantiates a new instance.
     pub fn new<L>(
         id: L,
@@ -179,16 +180,18 @@ impl GetPeersRespValues {
     }
 
     /// Returns an opaque token which can be used in an announce peer message.
+    #[must_use]
     pub fn token(&self) -> &[u8] {
         &self.token
     }
 
     /// Sets an opaque token which can be used in an announce peer message.
     pub fn set_token(&mut self, token: Vec<u8>) {
-        self.token = token
+        self.token = token;
     }
 
     /// Returns peers' socket addresses for the torrent.
+    #[must_use]
     pub fn values(&self) -> Option<&Vec<SocketAddr>> {
         self.values.as_ref()
     }
@@ -199,6 +202,7 @@ impl GetPeersRespValues {
     }
 
     /// Returns IPv4 nodes which may have more relevant information for the torrent.
+    #[must_use]
     pub fn nodes(&self) -> Option<&Vec<AddrId<SocketAddrV4>>> {
         self.nodes.as_ref()
     }
@@ -209,6 +213,7 @@ impl GetPeersRespValues {
     }
 
     /// Returns IPv6 nodes which may have more relevant information for the torrent.
+    #[must_use]
     pub fn nodes6(&self) -> Option<&Vec<AddrId<SocketAddrV6>>> {
         self.nodes6.as_ref()
     }
@@ -219,7 +224,7 @@ impl GetPeersRespValues {
     }
 }
 
-impl super::RespVal for GetPeersRespValues {
+impl super::RespVal for RespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -229,21 +234,21 @@ impl super::RespVal for GetPeersRespValues {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for RespValues {
     type Error = crate::error::Error;
 
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             values
                 .get(Bytes::new(b"id"))
-                .and_then(|id| id.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             values
                 .get(Bytes::new(b"token"))
                 .and_then(|id| id.as_byte_str().cloned()),
             values
                 .get(Bytes::new(b"values"))
-                .and_then(|values| values.as_array())
+                .and_then(bt_bencode::Value::as_array)
                 .map(|values| {
                     values
                         .iter()
@@ -274,11 +279,11 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                 }),
             values
                 .get(Bytes::new(b"nodes"))
-                .and_then(|nodes| nodes.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .map(super::decode_addr_ipv4_list),
             values
                 .get(Bytes::new(b"nodes6"))
-                .and_then(|nodes6| nodes6.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .map(super::decode_addr_ipv6_list),
         ) {
             (Some(id), Some(token), values, nodes, nodes6) => {
@@ -286,7 +291,7 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
                 let nodes = nodes.transpose()?;
                 let nodes6 = nodes6.transpose()?;
 
-                Ok(GetPeersRespValues {
+                Ok(RespValues {
                     id,
                     token: token.into_vec(),
                     values,
@@ -299,14 +304,14 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for GetPeersRespValues {
     }
 }
 
-impl From<GetPeersRespValues> for Value {
-    fn from(values: GetPeersRespValues) -> Self {
+impl From<RespValues> for Value {
+    fn from(values: RespValues) -> Self {
         Value::from(&values)
     }
 }
 
-impl From<&GetPeersRespValues> for Value {
-    fn from(values: &GetPeersRespValues) -> Self {
+impl From<&RespValues> for Value {
+    fn from(values: &RespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
@@ -385,7 +390,7 @@ mod tests {
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
-            .and_then(|a| GetPeersQueryArgs::try_from(a).ok())
+            .and_then(|a| crate::krpc::get_peers::QueryArgs::try_from(a).ok())
         {
             assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
             assert_eq!(args.info_hash(), InfoHash::from(*b"mnopqrstuvwxyz123456"));
@@ -431,7 +436,7 @@ mod tests {
 
         if let Some(values) = msg_value
             .values()
-            .and_then(|a| GetPeersRespValues::try_from(a).ok())
+            .and_then(|a| RespValues::try_from(a).ok())
         {
             assert_eq!(values.id(), Id::from(*b"0123456789abcdefghij"));
 

@@ -22,17 +22,17 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::net::{SocketAddrV4, SocketAddrV6};
 
-/// The "find_node" query method name.
+/// The `find_node` query method name.
 pub const METHOD_FIND_NODE: &[u8] = b"find_node";
 
 /// The arguments for the find node query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FindNodeQueryArgs {
+pub struct QueryArgs {
     id: Id,
     target: Id,
 }
 
-impl FindNodeQueryArgs {
+impl QueryArgs {
     /// Instantiates a new query message with the local querying node Id and the target Id.
     pub fn new<L, T>(id: L, target: T) -> Self
     where
@@ -54,6 +54,7 @@ impl FindNodeQueryArgs {
     }
 
     /// Returns the target Id.
+    #[must_use]
     pub fn target(&self) -> Id {
         self.target
     }
@@ -67,7 +68,7 @@ impl FindNodeQueryArgs {
     }
 }
 
-impl super::QueryArgs for FindNodeQueryArgs {
+impl super::QueryArgs for QueryArgs {
     fn method_name() -> &'static [u8] {
         METHOD_FIND_NODE
     }
@@ -81,7 +82,7 @@ impl super::QueryArgs for FindNodeQueryArgs {
     }
 }
 
-impl TryFrom<Value> for FindNodeQueryArgs {
+impl TryFrom<Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -89,7 +90,7 @@ impl TryFrom<Value> for FindNodeQueryArgs {
     }
 }
 
-impl TryFrom<&Value> for FindNodeQueryArgs {
+impl TryFrom<&Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
@@ -101,32 +102,32 @@ impl TryFrom<&Value> for FindNodeQueryArgs {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeQueryArgs {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             args.get(Bytes::new(b"id"))
-                .and_then(|id| id.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             args.get(Bytes::new(b"target"))
-                .and_then(|t| t.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|t| Id::try_from(t.as_slice()).ok()),
         ) {
-            (Some(id), Some(target)) => Ok(FindNodeQueryArgs { id, target }),
+            (Some(id), Some(target)) => Ok(QueryArgs { id, target }),
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
 }
 
-impl From<FindNodeQueryArgs> for Value {
-    fn from(args: FindNodeQueryArgs) -> Self {
+impl From<QueryArgs> for Value {
+    fn from(args: QueryArgs) -> Self {
         Value::from(&args)
     }
 }
 
-impl From<&FindNodeQueryArgs> for Value {
-    fn from(args: &FindNodeQueryArgs) -> Self {
+impl From<&QueryArgs> for Value {
+    fn from(args: &QueryArgs) -> Self {
         let mut d: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         d.insert(
             ByteBuf::from(String::from("id")),
@@ -141,14 +142,15 @@ impl From<&FindNodeQueryArgs> for Value {
 }
 
 /// The value for the find node response.
-pub struct FindNodeRespValues {
+pub struct RespValues {
     id: Id,
     nodes: Option<Vec<AddrId<SocketAddrV4>>>,
     nodes6: Option<Vec<AddrId<SocketAddrV6>>>,
 }
 
-impl FindNodeRespValues {
+impl RespValues {
     /// Instantiates a new instance.
+    #[must_use]
     pub fn with_id_and_nodes_and_nodes6(
         id: LocalId,
         nodes: Option<Vec<AddrId<SocketAddrV4>>>,
@@ -170,6 +172,7 @@ impl FindNodeRespValues {
     }
 
     /// Returns the IPv4 nodes.
+    #[must_use]
     pub fn nodes(&self) -> Option<&Vec<AddrId<SocketAddrV4>>> {
         self.nodes.as_ref()
     }
@@ -180,6 +183,7 @@ impl FindNodeRespValues {
     }
 
     /// Returns the IPv6 nodes.
+    #[must_use]
     pub fn nodes6(&self) -> Option<&Vec<AddrId<SocketAddrV6>>> {
         self.nodes6.as_ref()
     }
@@ -190,7 +194,7 @@ impl FindNodeRespValues {
     }
 }
 
-impl super::RespVal for FindNodeRespValues {
+impl super::RespVal for RespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -200,42 +204,42 @@ impl super::RespVal for FindNodeRespValues {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for FindNodeRespValues {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for RespValues {
     type Error = crate::error::Error;
 
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         match (
             values
                 .get(Bytes::new(b"id"))
-                .and_then(|id| id.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|id| Id::try_from(id.as_slice()).ok()),
             values
                 .get(Bytes::new(b"nodes"))
-                .and_then(|nodes| nodes.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .map(super::decode_addr_ipv4_list),
             values
                 .get(Bytes::new(b"nodes6"))
-                .and_then(|nodes6| nodes6.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .map(super::decode_addr_ipv6_list),
         ) {
             (Some(id), nodes, nodes6) => {
                 let nodes = nodes.transpose()?;
                 let nodes6 = nodes6.transpose()?;
-                Ok(FindNodeRespValues { id, nodes, nodes6 })
+                Ok(RespValues { id, nodes, nodes6 })
             }
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
 }
 
-impl From<FindNodeRespValues> for Value {
-    fn from(values: FindNodeRespValues) -> Self {
+impl From<RespValues> for Value {
+    fn from(values: RespValues) -> Self {
         Value::from(&values)
     }
 }
 
-impl From<&FindNodeRespValues> for Value {
-    fn from(values: &FindNodeRespValues) -> Self {
+impl From<&RespValues> for Value {
+    fn from(values: &RespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
@@ -293,7 +297,7 @@ mod tests {
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
-            .and_then(|a| FindNodeQueryArgs::try_from(a).ok())
+            .and_then(|a| crate::krpc::find_node::QueryArgs::try_from(a).ok())
         {
             assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
             assert_eq!(args.target(), Id::from(*b"mnopqrstuvwxyz123456"));
@@ -339,7 +343,7 @@ mod tests {
 
         if let Some(values) = msg_value
             .values()
-            .and_then(|a| FindNodeRespValues::try_from(a).ok())
+            .and_then(|a| RespValues::try_from(a).ok())
         {
             assert_eq!(values.id(), Id::from(*b"0123456789abcdefghij"));
 

@@ -150,16 +150,19 @@ pub struct ReadEvent {
 
 impl ReadEvent {
     /// Returns the relevant node's network address and optional Id.
+    #[must_use]
     pub fn addr_opt_id(&self) -> AddrOptId<SocketAddr> {
         self.addr_opt_id
     }
 
     /// Returns the relevant local transaction Id if the event is related to a query sent by the local node.
+    #[must_use]
     pub fn tx_id(&self) -> Option<transaction::Id> {
         self.tx_id
     }
 
     /// Returns the message event which may contain a query, response, error, or timeout.
+    #[must_use]
     pub fn msg(&self) -> &MsgEvent {
         &self.msg
     }
@@ -216,6 +219,7 @@ impl Config {
     }
 
     /// Returns the node's local Id.
+    #[must_use]
     pub fn local_id(&self) -> node::LocalId {
         self.local_id
     }
@@ -229,6 +233,7 @@ impl Config {
     }
 
     /// Returns the client version.
+    #[must_use]
     pub fn client_version(&self) -> Option<&[u8]> {
         self.client_version.as_deref()
     }
@@ -238,20 +243,22 @@ impl Config {
     where
         I: Into<Option<Vec<u8>>>,
     {
-        self.client_version = client_version.into()
+        self.client_version = client_version.into();
     }
 
     /// Returns the default query timeout.
+    #[must_use]
     pub fn default_query_timeout(&self) -> Duration {
         self.default_query_timeout
     }
 
     /// Sets the default query timeout.
     pub fn set_default_query_timeout(&mut self, default_query_timeout: Duration) {
-        self.default_query_timeout = default_query_timeout
+        self.default_query_timeout = default_query_timeout;
     }
 
     /// Returns true if the node is read only, false otherwise.
+    #[must_use]
     pub fn is_read_only_node(&self) -> bool {
         self.is_read_only_node
     }
@@ -262,6 +269,7 @@ impl Config {
     }
 
     /// Returns true if responses from queried nodes are strictly checked for the expected node Id, false otherwise.
+    #[must_use]
     pub fn is_response_queried_node_id_strictly_checked(&self) -> bool {
         self.is_response_queried_node_id_strictly_checked
     }
@@ -276,6 +284,7 @@ impl Config {
     }
 
     /// Returns the supported address types.
+    #[must_use]
     pub fn supported_addr(&self) -> SupportedAddr {
         self.supported_addr
     }
@@ -341,6 +350,7 @@ impl Node {
     }
 
     /// Returns the config.
+    #[must_use]
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -368,11 +378,10 @@ impl Node {
                 match kind {
                     Kind::Response => {
                         let queried_node_id = RespMsg::queried_node_id(&value);
-                        let is_response_queried_id_valid = tx
-                            .addr_opt_id
-                            .id()
-                            .map(|expected_node_id| queried_node_id == Some(expected_node_id))
-                            .unwrap_or(true);
+                        let is_response_queried_id_valid =
+                            tx.addr_opt_id.id().map_or(true, |expected_node_id| {
+                                queried_node_id == Some(expected_node_id)
+                            });
                         if is_response_queried_id_valid
                             || (!self.config.is_response_queried_node_id_strictly_checked
                                 && queried_node_id == Some(node::Id::from(self.config.local_id)))
@@ -548,7 +557,7 @@ impl Node {
     pub fn write_err<A, T>(
         &mut self,
         transaction_id: &[u8],
-        details: T,
+        details: &T,
         addr_opt_id: A,
     ) -> Result<(), error::Error>
     where
@@ -581,6 +590,7 @@ impl Node {
         }
     }
 
+    #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
         [self.tx_manager.timeout(), self.routing_table.timeout()]
             .iter()
@@ -665,14 +675,11 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use krpc::find_node::FindNodeQueryArgs;
     use std::convert::{TryFrom, TryInto};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::krpc::{
-        find_node::METHOD_FIND_NODE,
-        ping::{PingQueryArgs, METHOD_PING},
-        Kind, Msg, QueryMsg,
+        find_node::METHOD_FIND_NODE, ping::METHOD_PING, Kind, Msg, QueryArgs, QueryMsg,
     };
 
     fn new_config() -> Result<Config, rand::Error> {
@@ -706,7 +713,7 @@ mod tests {
         let remote_addr = remote_addr();
         let addr_opt_id = AddrOptId::new(remote_addr, Some(id));
 
-        let args = PingQueryArgs::new(local_id);
+        let args = crate::krpc::ping::QueryArgs::new(local_id);
 
         let mut node: Node = Node::new(
             new_config().unwrap(),
@@ -758,7 +765,7 @@ mod tests {
                     Some(core::str::from_utf8(METHOD_FIND_NODE).unwrap())
                 );
                 let find_node_query_args =
-                    FindNodeQueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
+                    krpc::find_node::QueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
                 assert_eq!(
                     find_node_query_args.target(),
                     node::Id::from(node.config.local_id)

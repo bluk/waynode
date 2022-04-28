@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     find_node_op::FindNodeOp,
-    krpc::{ping::PingQueryArgs, Kind},
+    krpc::{ping::QueryArgs, Kind},
     msg_buffer,
     node::{AddrId, AddrOptId, Id},
     transaction,
@@ -159,7 +159,7 @@ where
     }
 
     fn is_full(&self) -> bool {
-        self.nodes.iter().all(|n| n.is_some())
+        self.nodes.iter().all(std::option::Option::is_some)
     }
 
     #[inline]
@@ -199,7 +199,7 @@ where
                 n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
             }) {
                 msg_buffer.write_query(
-                    &PingQueryArgs::new(config.local_id),
+                    &QueryArgs::new(config.local_id),
                     AddrOptId::new(
                         ((*node_to_ping.addr_id.addr()).clone()).into(),
                         Some(node_to_ping.addr_id.id()),
@@ -272,8 +272,7 @@ where
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
                 n.as_ref()
-                    .map(|n| n.state_with_now(now) == NodeState::Bad)
-                    .unwrap_or(false)
+                    .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
             }) {
                 let mut node = Node::with_addr_id(addr_id);
                 node.on_msg_received(kind, now);
@@ -300,7 +299,7 @@ where
 
     fn on_resp_timeout(
         &mut self,
-        addr_id: AddrId<A>,
+        addr_id: &AddrId<A>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
@@ -313,7 +312,7 @@ where
             .nodes
             .iter_mut()
             .flatten()
-            .find(|n| n.addr_id == addr_id)
+            .find(|n| n.addr_id == *addr_id)
         {
             node.on_resp_timeout();
             match node.state_with_now(now) {
@@ -343,7 +342,7 @@ where
     }
 
     fn split_insert(&mut self, node: Node<A>) {
-        if let Some(pos) = self.nodes.iter().position(|n| n.is_none()) {
+        if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
             self.nodes[pos] = Some(node);
         } else {
             unreachable!()
@@ -351,7 +350,11 @@ where
     }
 
     fn split_replacement_insert(&mut self, node: Node<A>) {
-        if let Some(pos) = self.replacement_nodes.iter().position(|n| n.is_none()) {
+        if let Some(pos) = self
+            .replacement_nodes
+            .iter()
+            .position(std::option::Option::is_none)
+        {
             self.replacement_nodes[pos] = Some(node);
         } else {
             unreachable!()
@@ -403,12 +406,10 @@ where
         self.nodes.sort_unstable_by(|a, b| match (a, b) {
             (Some(a), Some(b)) => {
                 match (a.state_with_now(now), b.state_with_now(now)) {
-                    (NodeState::Good, NodeState::Questionable)
-                    | (NodeState::Good, NodeState::Bad)
+                    (NodeState::Good, NodeState::Questionable | NodeState::Bad)
                     | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
-                    (NodeState::Questionable, NodeState::Good)
-                    | (NodeState::Bad, NodeState::Questionable)
-                    | (NodeState::Bad, NodeState::Good) => return Ordering::Greater,
+                    (NodeState::Questionable | NodeState::Bad, NodeState::Good)
+                    | (NodeState::Bad, NodeState::Questionable) => return Ordering::Greater,
                     (NodeState::Good, NodeState::Good)
                     | (NodeState::Questionable, NodeState::Questionable)
                     | (NodeState::Bad, NodeState::Bad) => {}
@@ -580,11 +581,10 @@ mod r {
         use super::*;
 
         #[test]
-        fn test_debug() -> Result<(), Error> {
+        fn test_debug() {
             let node_id = Id::max();
             let debug_str = format!("{:?}", node_id);
             assert_eq!(debug_str, "Id(FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)");
-            Ok(())
         }
 
         #[test]
@@ -776,8 +776,7 @@ where
         now: Instant,
     ) -> Result<(), crate::error::Error>
     where
-        A: PartialEq,
-        A: Clone,
+        A: Clone + PartialEq,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -829,7 +828,7 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        bucket.on_resp_timeout(addr_id, config, tx_manager, msg_buffer, now)?;
+        bucket.on_resp_timeout(&addr_id, config, tx_manager, msg_buffer, now)?;
         Ok(())
     }
 
@@ -907,12 +906,12 @@ impl RoutingTable {
     where
         I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
     {
-        for addr_id in addrs.into_iter() {
+        for addr_id in addrs {
             match addr_id.addr() {
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now);
                     }
                     RoutingTable::Ipv6(_) => {}
                 },
@@ -920,7 +919,7 @@ impl RoutingTable {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now)
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now);
                     }
                 },
             }
@@ -942,7 +941,7 @@ impl RoutingTable {
     {
         let mut ipv4_socket_addrs = Vec::new();
         let mut ipv6_socket_addrs = Vec::new();
-        for socket_addr in bootstrap_addrs.into_iter() {
+        for socket_addr in bootstrap_addrs {
             match socket_addr {
                 SocketAddr::V4(addr) => {
                     ipv4_socket_addrs.push(addr);

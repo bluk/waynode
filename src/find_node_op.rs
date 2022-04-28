@@ -9,7 +9,7 @@
 use crate::{
     error::Error,
     krpc::{
-        find_node::{FindNodeQueryArgs, FindNodeRespValues},
+        find_node::{QueryArgs, RespValues},
         transaction, RespMsg,
     },
     msg_buffer,
@@ -112,8 +112,7 @@ where
             self.potential_addr_opt_ids.retain(|potential_addr_opt_id| {
                 potential_addr_opt_id
                     .distance
-                    .map(|potential_dist| potential_dist < max_distance)
-                    .unwrap_or(true)
+                    .map_or(true, |potential_dist| potential_dist < max_distance)
             });
         }
     }
@@ -135,8 +134,7 @@ where
             .filter(|potential_addr| {
                 potential_addr
                     .distance
-                    .map(|potential_dist| potential_dist < max_distance)
-                    .unwrap_or(true)
+                    .map_or(true, |potential_dist| potential_dist < max_distance)
             })
             .collect::<Vec<_>>();
         self.potential_addr_opt_ids.extend(potential_addr_opt_ids);
@@ -157,8 +155,7 @@ where
 
             if potential_addr_opt_id
                 .distance
-                .map(|node_dist| node_dist < max_distance)
-                .unwrap_or(true)
+                .map_or(true, |node_dist| node_dist < max_distance)
             {
                 self.queried_addrs
                     .insert(potential_addr_opt_id.addr_opt_id.addr().clone());
@@ -173,9 +170,9 @@ where
 
 #[derive(Debug)]
 enum AddrSpace {
-    V4(AddrInfo<SocketAddrV4>),
-    V6(AddrInfo<SocketAddrV6>),
-    V4AndV6(AddrInfo<SocketAddrV4>, AddrInfo<SocketAddrV6>),
+    V4(Box<AddrInfo<SocketAddrV4>>),
+    V6(Box<AddrInfo<SocketAddrV6>>),
+    V4AndV6(Box<AddrInfo<SocketAddrV4>>, Box<AddrInfo<SocketAddrV6>>),
 }
 
 impl AddrSpace {
@@ -214,12 +211,20 @@ impl AddrSpace {
 
     fn pop_potential_addr(&mut self) -> Option<PotentialAddrOptId<SocketAddr>> {
         match self {
-            AddrSpace::V4(addr_info) => addr_info.pop_potential_addr().map(|a| a.into()),
-            AddrSpace::V6(addr_info) => addr_info.pop_potential_addr().map(|a| a.into()),
+            AddrSpace::V4(addr_info) => {
+                addr_info.pop_potential_addr().map(std::convert::Into::into)
+            }
+            AddrSpace::V6(addr_info) => {
+                addr_info.pop_potential_addr().map(std::convert::Into::into)
+            }
             AddrSpace::V4AndV6(addr_info_v4, addr_info_v6) => addr_info_v4
                 .pop_potential_addr()
-                .map(|a| a.into())
-                .or_else(|| addr_info_v6.pop_potential_addr().map(|a| a.into())),
+                .map(std::convert::Into::into)
+                .or_else(|| {
+                    addr_info_v6
+                        .pop_potential_addr()
+                        .map(std::convert::Into::into)
+                }),
         }
     }
 }
@@ -245,7 +250,7 @@ impl FindNodeOp {
         let mut potential_addr_opt_ids_v4 = Vec::new();
         let mut potential_addr_opt_ids_v6 = Vec::new();
 
-        for addr_opt_id in potential_addr_opt_ids.into_iter() {
+        for addr_opt_id in potential_addr_opt_ids {
             match (*addr_opt_id.addr()).clone().into() {
                 SocketAddr::V4(addr) => potential_addr_opt_ids_v4.push(PotentialAddrOptId {
                     distance: addr_opt_id.id().map(|node_id| node_id.distance(target_id)),
@@ -259,11 +264,15 @@ impl FindNodeOp {
         }
 
         let addr_space = match supported_addr {
-            SupportedAddr::Ipv4 => AddrSpace::V4(AddrInfo::new(potential_addr_opt_ids_v4)),
-            SupportedAddr::Ipv6 => AddrSpace::V6(AddrInfo::new(potential_addr_opt_ids_v6)),
+            SupportedAddr::Ipv4 => {
+                AddrSpace::V4(Box::new(AddrInfo::new(potential_addr_opt_ids_v4)))
+            }
+            SupportedAddr::Ipv6 => {
+                AddrSpace::V6(Box::new(AddrInfo::new(potential_addr_opt_ids_v6)))
+            }
             SupportedAddr::Ipv4AndIpv6 => AddrSpace::V4AndV6(
-                AddrInfo::new(potential_addr_opt_ids_v4),
-                AddrInfo::new(potential_addr_opt_ids_v6),
+                Box::new(AddrInfo::new(potential_addr_opt_ids_v4)),
+                Box::new(AddrInfo::new(potential_addr_opt_ids_v6)),
             ),
         };
 
@@ -291,7 +300,7 @@ impl FindNodeOp {
         let mut count = 0;
         while let Some(potential_addr_opt_id) = self.addr_space.pop_potential_addr() {
             let tx_id = msg_buffer.write_query(
-                &FindNodeQueryArgs::new(config.local_id, self.target_id),
+                &QueryArgs::new(config.local_id, self.target_id),
                 potential_addr_opt_id.addr_opt_id,
                 config.default_query_timeout,
                 config.client_version(),
@@ -337,7 +346,7 @@ impl FindNodeOp {
 
                 if let Some(find_node_resp) = resp
                     .values()
-                    .and_then(|values| FindNodeRespValues::try_from(values).ok())
+                    .and_then(|values| RespValues::try_from(values).ok())
                 {
                     if let Some(nodes) = find_node_resp.nodes() {
                         match &mut self.addr_space {
@@ -366,7 +375,7 @@ impl FindNodeOp {
             let mut queries_to_write = MAX_CONCURRENT_REQUESTS - outstanding_queries;
             while let Some(potential_node) = self.addr_space.pop_potential_addr() {
                 let tx_id = msg_buffer.write_query(
-                    &FindNodeQueryArgs::new(config.local_id, self.target_id),
+                    &QueryArgs::new(config.local_id, self.target_id),
                     potential_node.addr_opt_id,
                     config.default_query_timeout,
                     config.client_version(),

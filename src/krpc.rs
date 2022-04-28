@@ -31,6 +31,7 @@ pub enum Kind<'a> {
 }
 
 impl<'a> Kind<'a> {
+    #[must_use]
     pub fn val(&self) -> &'a str {
         match self {
             Kind::Query => "q",
@@ -62,22 +63,24 @@ pub trait Msg {
 impl Msg for Value {
     fn tx_id(&self) -> Option<&[u8]> {
         self.get("t")
-            .and_then(|t| t.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .map(|t| t.as_slice())
     }
 
     fn kind(&self) -> Option<Kind> {
-        self.get("y").and_then(|y| y.as_str()).map(|y| match y {
-            "q" => Kind::Query,
-            "r" => Kind::Response,
-            "e" => Kind::Error,
-            y => Kind::Unknown(y),
-        })
+        self.get("y")
+            .and_then(bt_bencode::Value::as_str)
+            .map(|y| match y {
+                "q" => Kind::Query,
+                "r" => Kind::Response,
+                "e" => Kind::Error,
+                y => Kind::Unknown(y),
+            })
     }
 
     fn client_version(&self) -> Option<&[u8]> {
         self.get("v")
-            .and_then(|v| v.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .map(|v| v.as_slice())
     }
 }
@@ -100,7 +103,7 @@ pub trait QueryMsg: Msg {
     fn querying_node_id(&self) -> Option<Id> {
         self.args()
             .and_then(|a| a.get(Bytes::new(b"id")))
-            .and_then(|id| id.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
 }
@@ -108,12 +111,12 @@ pub trait QueryMsg: Msg {
 impl QueryMsg for Value {
     fn method_name(&self) -> Option<&[u8]> {
         self.get("q")
-            .and_then(|q| q.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .map(|v| v.as_slice())
     }
 
     fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
-        self.get("a").and_then(|a| a.as_dict())
+        self.get("a").and_then(bt_bencode::Value::as_dict)
     }
 }
 
@@ -140,13 +143,13 @@ pub trait RespMsg: Msg {
 
 impl RespMsg for Value {
     fn values(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
-        self.get("r").and_then(|a| a.as_dict())
+        self.get("r").and_then(bt_bencode::Value::as_dict)
     }
 
     fn queried_node_id(&self) -> Option<Id> {
         self.get("r")
             .and_then(|a| a.get("id"))
-            .and_then(|id| id.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .and_then(|id| Id::try_from(id.as_slice()).ok())
     }
 }
@@ -168,7 +171,9 @@ pub trait ErrorMsg: Msg {
 
 impl ErrorMsg for Value {
     fn error(&self) -> Option<&[Value]> {
-        self.get("e").and_then(|e| e.as_array()).map(|v| v.as_ref())
+        self.get("e")
+            .and_then(bt_bencode::Value::as_array)
+            .map(std::convert::AsRef::as_ref)
     }
 }
 
@@ -184,13 +189,13 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    fn code(&self) -> i32 {
+    fn code(self) -> i32 {
         match self {
             ErrorCode::GenericError => 201,
             ErrorCode::ServerError => 202,
             ErrorCode::ProtocolError => 203,
             ErrorCode::MethodUnknown => 204,
-            ErrorCode::Other(n) => *n,
+            ErrorCode::Other(n) => n,
         }
     }
 }

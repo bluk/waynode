@@ -23,11 +23,11 @@ pub const METHOD_PING: &[u8] = b"ping";
 
 /// The arguments for the ping query message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PingQueryArgs {
+pub struct QueryArgs {
     id: Id,
 }
 
-impl PingQueryArgs {
+impl QueryArgs {
     /// Instantiates a new query message.
     pub fn new<L>(id: L) -> Self
     where
@@ -47,7 +47,7 @@ impl PingQueryArgs {
     }
 }
 
-impl super::QueryArgs for PingQueryArgs {
+impl super::QueryArgs for QueryArgs {
     fn method_name() -> &'static [u8] {
         METHOD_PING
     }
@@ -61,7 +61,7 @@ impl super::QueryArgs for PingQueryArgs {
     }
 }
 
-impl TryFrom<Value> for PingQueryArgs {
+impl TryFrom<Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -69,7 +69,7 @@ impl TryFrom<Value> for PingQueryArgs {
     }
 }
 
-impl TryFrom<&Value> for PingQueryArgs {
+impl TryFrom<&Value> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
@@ -81,20 +81,20 @@ impl TryFrom<&Value> for PingQueryArgs {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingQueryArgs {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for QueryArgs {
     type Error = crate::error::Error;
 
     fn try_from(args: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         args.get(Bytes::new(b"id"))
-            .and_then(|id| id.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .and_then(|id| Id::try_from(id.as_slice()).ok())
-            .map(|id| PingQueryArgs { id })
+            .map(|id| QueryArgs { id })
             .ok_or(crate::error::Error::CannotDeserializeKrpcMessage)
     }
 }
 
-impl From<PingQueryArgs> for Value {
-    fn from(args: PingQueryArgs) -> Self {
+impl From<QueryArgs> for Value {
+    fn from(args: QueryArgs) -> Self {
         let mut d: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         d.insert(
             ByteBuf::from(String::from("id")),
@@ -104,19 +104,19 @@ impl From<PingQueryArgs> for Value {
     }
 }
 
-impl From<&PingQueryArgs> for Value {
-    fn from(args: &PingQueryArgs) -> Self {
+impl From<&QueryArgs> for Value {
+    fn from(args: &QueryArgs) -> Self {
         Value::from(*args)
     }
 }
 
 /// The value for the ping response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PingRespValues {
+pub struct RespValues {
     id: Id,
 }
 
-impl PingRespValues {
+impl RespValues {
     /// Instantiates a new instance.
     pub fn new<L>(id: L) -> Self
     where
@@ -136,7 +136,7 @@ impl PingRespValues {
     }
 }
 
-impl super::RespVal for PingRespValues {
+impl super::RespVal for RespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -146,27 +146,27 @@ impl super::RespVal for PingRespValues {
     }
 }
 
-impl TryFrom<&BTreeMap<ByteBuf, Value>> for PingRespValues {
+impl TryFrom<&BTreeMap<ByteBuf, Value>> for RespValues {
     type Error = crate::error::Error;
 
     fn try_from(values: &BTreeMap<ByteBuf, Value>) -> Result<Self, Self::Error> {
         values
             .get(Bytes::new(b"id"))
-            .and_then(|id| id.as_byte_str())
+            .and_then(bt_bencode::Value::as_byte_str)
             .and_then(|id| Id::try_from(id.as_slice()).ok())
-            .map(|id| PingRespValues { id })
+            .map(|id| RespValues { id })
             .ok_or(crate::error::Error::CannotDeserializeKrpcMessage)
     }
 }
 
-impl From<PingRespValues> for Value {
-    fn from(values: PingRespValues) -> Self {
+impl From<RespValues> for Value {
+    fn from(values: RespValues) -> Self {
         Value::from(&values)
     }
 }
 
-impl From<&PingRespValues> for Value {
-    fn from(values: &PingRespValues) -> Self {
+impl From<&RespValues> for Value {
+    fn from(values: &RespValues) -> Self {
         let mut args: BTreeMap<ByteBuf, Value> = BTreeMap::new();
         args.insert(
             ByteBuf::from(String::from("id")),
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));
         if let Some(args) = msg_value
             .args()
-            .and_then(|a| PingQueryArgs::try_from(a).ok())
+            .and_then(|a| crate::krpc::ping::QueryArgs::try_from(a).ok())
         {
             assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
 
@@ -229,7 +229,7 @@ mod tests {
 
         if let Some(values) = msg_value
             .values()
-            .and_then(|a| PingRespValues::try_from(a).ok())
+            .and_then(|a| RespValues::try_from(a).ok())
         {
             assert_eq!(values.id(), Id::from(*b"mnopqrstuvwxyz123456"));
 

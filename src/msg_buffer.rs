@@ -120,7 +120,7 @@ impl Buffer {
     pub fn write_err<A, T>(
         &mut self,
         transaction_id: &[u8],
-        details: T,
+        details: &T,
         addr_opt_id: A,
         client_version: Option<&[u8]>,
     ) -> Result<(), Error>

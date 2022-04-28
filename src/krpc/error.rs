@@ -19,19 +19,20 @@ use std::convert::TryFrom;
 
 /// The error message values.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ErrorValues {
+pub struct Values {
     code: ErrorCode,
     description: String,
 }
 
-impl ErrorValues {
+impl Values {
     /// Instantiates a standard error value with a code and description.
+    #[must_use]
     pub fn new(code: ErrorCode, description: String) -> Self {
         Self { code, description }
     }
 }
 
-impl ErrorValues {
+impl Values {
     /// Sets the code.
     pub fn set_code(&mut self, code: ErrorCode) {
         self.code = code;
@@ -39,11 +40,11 @@ impl ErrorValues {
 
     /// Sets the description.
     pub fn set_description(&mut self, description: String) {
-        self.description = description
+        self.description = description;
     }
 }
 
-impl super::ErrorVal for ErrorValues {
+impl super::ErrorVal for Values {
     fn code(&self) -> ErrorCode {
         self.code
     }
@@ -57,7 +58,7 @@ impl super::ErrorVal for ErrorValues {
     }
 }
 
-impl TryFrom<Value> for ErrorValues {
+impl TryFrom<Value> for Values {
     type Error = crate::error::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -69,7 +70,7 @@ impl TryFrom<Value> for ErrorValues {
     }
 }
 
-impl TryFrom<&Vec<Value>> for ErrorValues {
+impl TryFrom<&Vec<Value>> for Values {
     type Error = crate::error::Error;
 
     fn try_from(value: &Vec<Value>) -> Result<Self, Self::Error> {
@@ -81,7 +82,7 @@ impl TryFrom<&Vec<Value>> for ErrorValues {
             }),
             value
                 .get(1)
-                .and_then(|value| value.as_byte_str())
+                .and_then(bt_bencode::Value::as_byte_str)
                 .and_then(|bs| std::str::from_utf8(bs).ok())
                 .map(String::from),
         ) {
@@ -108,21 +109,21 @@ impl TryFrom<&Vec<Value>> for ErrorValues {
                         ),
                     },
                 };
-                Ok(ErrorValues { code, description })
+                Ok(Values { code, description })
             }
             _ => Err(crate::error::Error::CannotDeserializeKrpcMessage),
         }
     }
 }
 
-impl From<ErrorValues> for Value {
-    fn from(value: ErrorValues) -> Self {
+impl From<Values> for Value {
+    fn from(value: Values) -> Self {
         Value::from(&value)
     }
 }
 
-impl From<&ErrorValues> for Value {
-    fn from(value: &ErrorValues) -> Self {
+impl From<&Values> for Value {
+    fn from(value: &Values) -> Self {
         Value::List(vec![
             Value::Int(Number::Signed(i64::from(value.code.code()))),
             Value::ByteStr(ByteBuf::from(value.description.clone())),

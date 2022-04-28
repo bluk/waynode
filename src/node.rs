@@ -32,7 +32,7 @@ impl Id {
 
     /// Determines the distance between this `Id` and the `Id` argument.
     ///
-    /// The distance is calculated by XORing the corresponding bytes.
+    /// The distance is calculated by `XORing` the corresponding bytes.
     ///
     /// # Example
     ///
@@ -78,6 +78,10 @@ impl Id {
     ///
     /// It may be useful to generate a random `Id` when initializing a DHT node
     /// for the first time.
+    ///
+    /// # Errors
+    ///
+    /// If the random number generator cannot fill an array with random data.
     pub fn rand<R>(rng: &mut R) -> Result<Id, rand::Error>
     where
         R: rand::Rng,
@@ -147,6 +151,7 @@ fmt_byte_array!(Id);
 pub struct LocalId(pub(crate) Id);
 
 impl LocalId {
+    #[must_use]
     pub fn new(id: Id) -> Self {
         Self(id)
     }
@@ -712,15 +717,13 @@ impl quickcheck::Arbitrary for Id {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::error::Error;
     use quickcheck_macros::quickcheck;
 
     #[test]
-    fn test_debug() -> Result<(), Error> {
+    fn test_debug() {
         let node_id = Id::max();
         let debug_str = format!("{:?}", node_id);
         assert_eq!(debug_str, "Id(FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)");
-        Ok(())
     }
 
     #[quickcheck]
@@ -739,6 +742,7 @@ mod test {
     }
 
     #[quickcheck]
+    #[allow(clippy::needless_pass_by_value)]
     fn id_try_from_slice(values: Vec<u8>) -> bool {
         if values.len() == 20 {
             Id::try_from(values.as_slice()).is_ok()

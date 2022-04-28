@@ -145,7 +145,7 @@ fn main() -> io::Result<()> {
                     match inbound_msg.msg() {
                         sloppy::MsgEvent::Query(msg) => match msg.method_name() {
                             Some(ping::METHOD_PING) => {
-                                let ping_resp = ping::PingRespValues::new(node.config().local_id());
+                                let ping_resp = ping::RespValues::new(node.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
                                     match node.write_resp(
                                         tx_id,
@@ -159,11 +159,11 @@ fn main() -> io::Result<()> {
                             }
                             Some(method_name) => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error = sloppy::krpc::error::ErrorValues::new(
+                                    let error = sloppy::krpc::error::Values::new(
                                         ErrorCode::MethodUnknown,
                                         core::str::from_utf8(method_name).unwrap_or("").to_string(),
                                     );
-                                    match node.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
+                                    match node.write_err(tx_id, &error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
@@ -171,11 +171,11 @@ fn main() -> io::Result<()> {
                             }
                             None => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error = sloppy::krpc::error::ErrorValues::new(
+                                    let error = sloppy::krpc::error::Values::new(
                                         ErrorCode::ProtocolError,
                                         String::from("method name not listed"),
                                     );
-                                    match node.write_err(tx_id, error, inbound_msg.addr_opt_id()) {
+                                    match node.write_err(tx_id, &error, inbound_msg.addr_opt_id()) {
                                         Ok(()) => {}
                                         Err(e) => error!("write_err error: {:?}", e),
                                     };
