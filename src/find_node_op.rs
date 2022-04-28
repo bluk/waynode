@@ -234,7 +234,7 @@ pub(crate) struct FindNodeOp {
 
 impl FindNodeOp {
     pub(crate) fn new<A, T>(
-        config: &crate::Config,
+        supported_addr: SupportedAddr,
         target_id: node::Id,
         potential_addr_opt_ids: T,
     ) -> Self
@@ -258,7 +258,7 @@ impl FindNodeOp {
             }
         }
 
-        let addr_space = match config.supported_addr {
+        let addr_space = match supported_addr {
             SupportedAddr::Ipv4 => AddrSpace::V4(AddrInfo::new(potential_addr_opt_ids_v4)),
             SupportedAddr::Ipv6 => AddrSpace::V6(AddrInfo::new(potential_addr_opt_ids_v6)),
             SupportedAddr::Ipv4AndIpv6 => AddrSpace::V4AndV6(

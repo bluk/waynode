@@ -713,7 +713,7 @@ where
             .take(8)
             .map(|a| AddrOptId::new((*a.addr()).clone(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
-        let mut find_node_op = FindNodeOp::new(config, target_id, neighbors);
+        let mut find_node_op = FindNodeOp::new(config.supported_addr, target_id, neighbors);
         find_node_op.start(config, tx_manager, msg_buffer)?;
         Ok(find_node_op)
     }
