@@ -117,7 +117,6 @@ pub mod krpc;
 pub(crate) mod msg_buffer;
 pub mod node;
 pub(crate) mod routing;
-pub mod torrent;
 
 use crate::{
     find_node_op::FindNodeOp,

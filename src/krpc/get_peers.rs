@@ -16,9 +16,9 @@ use crate::{
     error::Error,
     krpc::{CompactAddrV4Info, CompactAddrV6Info},
     node::{AddrId, Id, LocalId},
-    torrent::InfoHash,
 };
 use bt_bencode::Value;
+use cloudburst::metainfo::InfoHash;
 use serde_bytes::{ByteBuf, Bytes};
 use std::{
     collections::BTreeMap,

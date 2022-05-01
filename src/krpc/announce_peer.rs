@@ -15,9 +15,9 @@
 use crate::{
     error::Error,
     node::{Id, LocalId},
-    torrent::InfoHash,
 };
 use bt_bencode::{value::Number, Value};
+use cloudburst::metainfo::InfoHash;
 use serde_bytes::{ByteBuf, Bytes};
 use std::{collections::BTreeMap, convert::TryFrom};
 
@@ -308,7 +308,7 @@ mod tests {
             .and_then(|a| crate::krpc::announce_peer::QueryArgs::try_from(a).ok())
         {
             assert_eq!(args.id(), Id::from(*b"abcdefghij0123456789"));
-            assert_eq!(args.info_hash(), InfoHash::new(*b"mnopqrstuvwxyz123456"));
+            assert_eq!(args.info_hash(), InfoHash::from(*b"mnopqrstuvwxyz123456"));
             assert_eq!(args.token(), b"abcd1234");
             assert_eq!(args.port(), Some(6331));
             assert!(args.implied_port().is_none());
