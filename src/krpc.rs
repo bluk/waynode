@@ -69,6 +69,5 @@ where
         .collect::<Vec<_>>())
 }
 
-pub mod announce_peer;
 pub mod get_peers;
 pub mod transaction;
