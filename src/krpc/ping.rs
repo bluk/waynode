@@ -47,7 +47,7 @@ impl QueryArgs {
     }
 }
 
-impl super::QueryArgs for QueryArgs {
+impl cloudburst::dht::krpc::QueryArgs for QueryArgs {
     fn method_name() -> &'static [u8] {
         METHOD_PING
     }
@@ -136,7 +136,7 @@ impl RespValues {
     }
 }
 
-impl super::RespVal for RespValues {
+impl cloudburst::dht::krpc::RespVal for RespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -181,7 +181,7 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
+    use cloudburst::dht::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
 
     #[test]
     fn test_serde_ping_query() -> Result<(), Error> {

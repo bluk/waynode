@@ -21,13 +21,13 @@ use std::time::Duration;
 use clap::Arg;
 use clap::Command;
 
-use cloudburst::dht::node::{Id, LocalId};
+use cloudburst::dht::{
+    krpc::{ErrorCode, Msg, QueryMsg},
+    node::{Id, LocalId},
+};
 use mio::{Events, Interest, Poll, Token};
 
-use sloppy::{
-    krpc::{ping, ErrorCode, Msg, QueryMsg},
-    Node,
-};
+use sloppy::{krpc::ping, Node};
 
 fn main() -> io::Result<()> {
     env_logger::init();

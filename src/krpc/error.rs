@@ -12,8 +12,8 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use super::ErrorCode;
 use bt_bencode::{value::Number, Value};
+use cloudburst::dht::krpc::ErrorCode;
 use serde_bytes::ByteBuf;
 use std::convert::TryFrom;
 
@@ -44,7 +44,7 @@ impl Values {
     }
 }
 
-impl super::ErrorVal for Values {
+impl cloudburst::dht::krpc::ErrorVal for Values {
     fn code(&self) -> ErrorCode {
         self.code
     }

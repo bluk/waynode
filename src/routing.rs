@@ -7,12 +7,12 @@
 // except according to those terms.
 
 use crate::{
-    error::Error,
-    find_node_op::FindNodeOp,
-    krpc::{ping::QueryArgs, Ty},
-    msg_buffer, transaction,
+    error::Error, find_node_op::FindNodeOp, krpc::ping::QueryArgs, msg_buffer, transaction,
 };
-use cloudburst::dht::node::{AddrId, AddrOptId, Id};
+use cloudburst::dht::{
+    krpc::Ty,
+    node::{AddrId, AddrOptId, Id},
+};
 use std::{
     cmp::Ordering,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -112,6 +112,9 @@ where
                 if self.missing_responses < u8::MAX {
                     self.missing_responses += 1;
                 }
+            }
+            _ => {
+                todo!()
             }
         }
     }
@@ -262,11 +265,17 @@ where
                         self.sort_node_ids(now);
                     }
                 },
+                _ => {
+                    todo!()
+                }
             }
         } else {
             match kind {
                 Ty::Response | Ty::Query | Ty::Error => {}
                 Ty::Unknown(_) => return Ok(()),
+                _ => {
+                    todo!()
+                }
             }
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {

@@ -9,240 +9,11 @@
 //! KRPC messages are the protocol messages exchanged.
 
 use crate::error::Error;
-use bt_bencode::Value;
-use cloudburst::dht::node::{AddrId, Id};
-use serde_bytes::{ByteBuf, Bytes};
-use std::{
-    collections::BTreeMap,
-    convert::TryFrom,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+use cloudburst::dht::{
+    krpc::{CompactAddrV4Info, CompactAddrV6Info},
+    node::{AddrId, Id},
 };
-
-/// Type of KRPC message.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum Ty<'a> {
-    Query,
-    Response,
-    Error,
-    Unknown(&'a str),
-}
-
-impl<'a> Ty<'a> {
-    #[must_use]
-    pub fn val(&self) -> &'a str {
-        match self {
-            Ty::Query => "q",
-            Ty::Response => "r",
-            Ty::Error => "e",
-            Ty::Unknown(v) => v,
-        }
-    }
-}
-
-/// A KRPC message.
-pub trait Msg {
-    /// The transaction id for the message.
-    fn tx_id(&self) -> Option<&[u8]>;
-
-    /// The type of message.
-    fn ty(&self) -> Option<Ty>;
-
-    /// The client version as a byte buffer.
-    fn client_version(&self) -> Option<&[u8]>;
-
-    /// The client version as a string.
-    fn client_version_str(&self) -> Option<&str> {
-        self.client_version()
-            .and_then(|v| std::str::from_utf8(v).ok())
-    }
-}
-
-impl Msg for Value {
-    fn tx_id(&self) -> Option<&[u8]> {
-        self.get("t")
-            .and_then(bt_bencode::Value::as_byte_str)
-            .map(|t| t.as_slice())
-    }
-
-    fn ty(&self) -> Option<Ty> {
-        self.get("y")
-            .and_then(bt_bencode::Value::as_str)
-            .map(|y| match y {
-                "q" => Ty::Query,
-                "r" => Ty::Response,
-                "e" => Ty::Error,
-                y => Ty::Unknown(y),
-            })
-    }
-
-    fn client_version(&self) -> Option<&[u8]> {
-        self.get("v")
-            .and_then(bt_bencode::Value::as_byte_str)
-            .map(|v| v.as_slice())
-    }
-}
-
-/// A KPRC query message.
-pub trait QueryMsg: Msg {
-    /// The method name of the query.
-    fn method_name(&self) -> Option<&[u8]>;
-
-    /// The method name of the query as a string.
-    fn method_name_str(&self) -> Option<&str> {
-        self.method_name()
-            .and_then(|v| core::str::from_utf8(v).ok())
-    }
-
-    /// The arguments for the query.
-    fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>>;
-
-    /// The querying node ID.
-    fn querying_node_id(&self) -> Option<Id> {
-        self.args()
-            .and_then(|a| a.get(Bytes::new(b"id")))
-            .and_then(bt_bencode::Value::as_byte_str)
-            .and_then(|id| Id::try_from(id.as_slice()).ok())
-    }
-}
-
-impl QueryMsg for Value {
-    fn method_name(&self) -> Option<&[u8]> {
-        self.get("q")
-            .and_then(bt_bencode::Value::as_byte_str)
-            .map(|v| v.as_slice())
-    }
-
-    fn args(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
-        self.get("a").and_then(bt_bencode::Value::as_dict)
-    }
-}
-
-/// KRPC query arguments.
-pub trait QueryArgs {
-    /// The query method name.
-    fn method_name() -> &'static [u8];
-
-    /// The querying node ID.
-    fn id(&self) -> Id;
-
-    /// Represents the arguments as a Bencoded Value.
-    fn to_value(&self) -> Value;
-}
-
-/// A KPRC response message.
-pub trait RespMsg: Msg {
-    /// The response values.
-    fn values(&self) -> Option<&BTreeMap<ByteBuf, Value>>;
-
-    /// The queried node id.
-    fn queried_node_id(&self) -> Option<Id>;
-}
-
-impl RespMsg for Value {
-    fn values(&self) -> Option<&BTreeMap<ByteBuf, Value>> {
-        self.get("r").and_then(bt_bencode::Value::as_dict)
-    }
-
-    fn queried_node_id(&self) -> Option<Id> {
-        self.get("r")
-            .and_then(|a| a.get("id"))
-            .and_then(bt_bencode::Value::as_byte_str)
-            .and_then(|id| Id::try_from(id.as_slice()).ok())
-    }
-}
-
-/// KRPC response values.
-pub trait RespVal {
-    /// The queried node ID.
-    fn id(&self) -> Id;
-
-    /// Represents the values as a Bencoded value.
-    fn to_value(&self) -> Value;
-}
-
-/// A KRPC error message.
-pub trait ErrorMsg: Msg {
-    /// The error value.
-    fn error(&self) -> Option<&[Value]>;
-}
-
-impl ErrorMsg for Value {
-    fn error(&self) -> Option<&[Value]> {
-        self.get("e")
-            .and_then(bt_bencode::Value::as_array)
-            .map(std::convert::AsRef::as_ref)
-    }
-}
-
-/// Standard error codes in KRPC error messages.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum ErrorCode {
-    GenericError,
-    ServerError,
-    ProtocolError,
-    MethodUnknown,
-    Other(i32),
-}
-
-impl ErrorCode {
-    fn code(self) -> i32 {
-        match self {
-            ErrorCode::GenericError => 201,
-            ErrorCode::ServerError => 202,
-            ErrorCode::ProtocolError => 203,
-            ErrorCode::MethodUnknown => 204,
-            ErrorCode::Other(n) => n,
-        }
-    }
-}
-
-/// The error value.
-pub trait ErrorVal {
-    /// The error code.
-    fn code(&self) -> ErrorCode;
-
-    /// The error description.
-    fn description(&self) -> &str;
-
-    /// Represents the arguments as a Bencoded Value.
-    fn to_value(&self) -> Value;
-}
-
-/// An IPv4 socket address representable by a compact format.
-///
-/// The trait is intended to help convert an IPv4 socket address to the compact form used in KRPC messages.
-///
-/// This trait is sealed and cannot be implemented for types outside this crate.
-pub trait CompactAddrV4Info: private::Sealed {
-    /// Returns the address encoded as a compact address.
-    fn to_compact_address(&self) -> [u8; 6];
-
-    /// Converts from the compact address to the self type.
-    fn from_compact_address(bytes: [u8; 6]) -> Self;
-}
-
-impl CompactAddrV4Info for SocketAddrV4 {
-    fn to_compact_address(&self) -> [u8; 6] {
-        let mut a: [u8; 6] = [0; 6];
-        a[0..4].copy_from_slice(&self.ip().octets());
-        a[4..6].copy_from_slice(&self.port().to_be_bytes());
-        a
-    }
-
-    fn from_compact_address(bytes: [u8; 6]) -> Self {
-        let mut ip: [u8; 4] = [0; 4];
-        ip[0..4].copy_from_slice(&bytes[0..4]);
-        let ip = Ipv4Addr::from(ip);
-
-        let mut port: [u8; 2] = [0; 2];
-        port[0..2].copy_from_slice(&bytes[4..6]);
-        let port = u16::from_be_bytes(port);
-
-        SocketAddrV4::new(ip, port)
-    }
-}
+use std::net::{SocketAddrV4, SocketAddrV6};
 
 fn decode_addr_ipv4_list<B>(nodes: B) -> Result<Vec<AddrId<SocketAddrV4>>, Error>
 where
@@ -265,7 +36,7 @@ where
 
             let mut compact_addr: [u8; 6] = [0; 6];
             compact_addr.copy_from_slice(&nodes[offset + 20..offset + 26]);
-            AddrId::new(SocketAddrV4::from_compact_address(compact_addr), id)
+            AddrId::new(SocketAddrV4::from_compact_addr(compact_addr), id)
         })
         .collect::<Vec<_>>())
 }
@@ -291,54 +62,11 @@ where
 
             let mut compact_addr: [u8; 18] = [0; 18];
             compact_addr.copy_from_slice(&nodes6[offset + 20..offset + 38]);
-            let addr = SocketAddrV6::from_compact_address(compact_addr);
+            let addr = SocketAddrV6::from_compact_addr(compact_addr);
 
             AddrId::new(addr, id)
         })
         .collect::<Vec<_>>())
-}
-
-/// An IPv6 socket address representable by a compact format.
-///
-/// The trait is intended to help convert an IPv6 socket address to the compact form used in KRPC messages.
-///
-/// This trait is sealed and cannot be implemented for types outside this crate.
-pub trait CompactAddrV6Info: private::Sealed {
-    /// Returns the address encoded as a compact address.
-    fn to_compact_address(&self) -> [u8; 18];
-
-    /// Converts from the compact address to the self type.
-    fn from_compact_address(bytes: [u8; 18]) -> Self;
-}
-
-impl CompactAddrV6Info for SocketAddrV6 {
-    fn to_compact_address(&self) -> [u8; 18] {
-        let mut a: [u8; 18] = [0; 18];
-        a[0..16].copy_from_slice(&self.ip().octets());
-        a[16..18].copy_from_slice(&self.port().to_be_bytes());
-        a
-    }
-
-    fn from_compact_address(bytes: [u8; 18]) -> Self {
-        let mut ip: [u8; 16] = [0; 16];
-        ip[0..16].copy_from_slice(&bytes[0..16]);
-        let ip = Ipv6Addr::from(ip);
-
-        let mut port: [u8; 2] = [0; 2];
-        port[0..2].copy_from_slice(&bytes[16..18]);
-        let port = u16::from_be_bytes(port);
-
-        SocketAddrV6::new(ip, port, 0, 0)
-    }
-}
-
-mod private {
-    use std::net::{SocketAddrV4, SocketAddrV6};
-
-    pub trait Sealed {}
-
-    impl Sealed for SocketAddrV6 {}
-    impl Sealed for SocketAddrV4 {}
 }
 
 pub mod announce_peer;

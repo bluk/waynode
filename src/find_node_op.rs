@@ -10,13 +10,16 @@ use crate::{
     error::Error,
     krpc::{
         find_node::{QueryArgs, RespValues},
-        transaction, RespMsg,
+        transaction,
     },
     msg_buffer, SupportedAddr,
 };
 
 use bt_bencode::Value;
-use cloudburst::dht::node::{self, AddrId, AddrOptId, Id};
+use cloudburst::dht::{
+    krpc::RespMsg,
+    node::{self, AddrId, AddrOptId, Id},
+};
 use std::{
     collections::BTreeSet,
     convert::TryFrom,

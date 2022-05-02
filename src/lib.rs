@@ -43,12 +43,12 @@ pub mod krpc;
 pub(crate) mod msg_buffer;
 pub(crate) mod routing;
 
-use crate::{
-    find_node_op::FindNodeOp,
-    krpc::{transaction, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
-};
+use crate::{find_node_op::FindNodeOp, krpc::transaction};
 use bt_bencode::Value;
-use cloudburst::dht::node::{AddrId, AddrOptId, Id, LocalId};
+use cloudburst::dht::{
+    krpc::{ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
+    node::{AddrId, AddrOptId, Id, LocalId},
+};
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
@@ -289,7 +289,7 @@ impl Node {
         addr: SocketAddr,
         now: Instant,
     ) -> Result<(), error::Error> {
-        use krpc::Msg as KrpcMsg;
+        use cloudburst::dht::krpc::Msg as KrpcMsg;
 
         debug!("on_recv_with_now addr={}", addr);
         let value: Value = bt_bencode::from_slice(bytes)
@@ -398,6 +398,9 @@ impl Node {
                     );
                         self.tx_manager.push(tx);
                     }
+                    _ => {
+                        todo!()
+                    }
                 }
             } else {
                 match kind {
@@ -428,6 +431,9 @@ impl Node {
                         value.client_version_str(),
                         value
                     ),
+                    _ => {
+                        todo!()
+                    }
                 }
             }
         } else {
@@ -602,9 +608,9 @@ mod tests {
     use std::convert::{TryFrom, TryInto};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use crate::krpc::{
-        find_node::METHOD_FIND_NODE, ping::METHOD_PING, Msg, QueryArgs, QueryMsg, Ty,
-    };
+    use cloudburst::dht::krpc::{Msg, QueryArgs, QueryMsg, Ty};
+
+    use crate::krpc::{find_node::METHOD_FIND_NODE, ping::METHOD_PING};
 
     fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {

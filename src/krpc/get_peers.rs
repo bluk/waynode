@@ -12,13 +12,13 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::{
-    error::Error,
-    krpc::{CompactAddrV4Info, CompactAddrV6Info},
-};
+use crate::error::Error;
 use bt_bencode::Value;
 use cloudburst::{
-    dht::node::{AddrId, Id, LocalId},
+    dht::{
+        krpc::{CompactAddrV4Info, CompactAddrV6Info},
+        node::{AddrId, Id, LocalId},
+    },
     metainfo::InfoHash,
 };
 use serde_bytes::{ByteBuf, Bytes};
@@ -70,7 +70,7 @@ impl QueryArgs {
     }
 }
 
-impl super::QueryArgs for QueryArgs {
+impl cloudburst::dht::krpc::QueryArgs for QueryArgs {
     fn method_name() -> &'static [u8] {
         METHOD_GET_PEERS
     }
@@ -226,7 +226,7 @@ impl RespValues {
     }
 }
 
-impl super::RespVal for RespValues {
+impl cloudburst::dht::krpc::RespVal for RespValues {
     fn id(&self) -> Id {
         self.id
     }
@@ -260,14 +260,14 @@ impl TryFrom<&BTreeMap<ByteBuf, Value>> for RespValues {
                                     6 => {
                                         let mut compact_addr: [u8; 6] = [0; 6];
                                         compact_addr.copy_from_slice(&v.as_slice()[0..6]);
-                                        Ok(SocketAddr::V4(SocketAddrV4::from_compact_address(
+                                        Ok(SocketAddr::V4(SocketAddrV4::from_compact_addr(
                                             compact_addr,
                                         )))
                                     }
                                     18 => {
                                         let mut compact_addr: [u8; 18] = [0; 18];
                                         compact_addr.copy_from_slice(&v.as_slice()[0..18]);
-                                        Ok(SocketAddr::V6(SocketAddrV6::from_compact_address(
+                                        Ok(SocketAddr::V6(SocketAddrV6::from_compact_addr(
                                             compact_addr,
                                         )))
                                     }
@@ -324,7 +324,7 @@ impl From<&RespValues> for Value {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes {
                 byte_str.extend_from_slice(n.id().as_ref());
-                byte_str.extend_from_slice(&n.addr().to_compact_address());
+                byte_str.extend_from_slice(&n.addr().to_compact_addr());
             }
             args.insert(
                 ByteBuf::from(String::from("nodes")),
@@ -336,7 +336,7 @@ impl From<&RespValues> for Value {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes6 {
                 byte_str.extend_from_slice(n.id().as_ref());
-                byte_str.extend_from_slice(&n.addr().to_compact_address());
+                byte_str.extend_from_slice(&n.addr().to_compact_addr());
             }
             args.insert(
                 ByteBuf::from(String::from("nodes6")),
@@ -357,8 +357,8 @@ impl From<&RespValues> for Value {
                         .iter()
                         .map(|addr| {
                             Value::ByteStr(match addr {
-                                SocketAddr::V4(addr) => ByteBuf::from(addr.to_compact_address()),
-                                SocketAddr::V6(addr) => ByteBuf::from(addr.to_compact_address()),
+                                SocketAddr::V4(addr) => ByteBuf::from(addr.to_compact_addr()),
+                                SocketAddr::V6(addr) => ByteBuf::from(addr.to_compact_addr()),
                             })
                         })
                         .collect::<Vec<Value>>(),
@@ -376,7 +376,7 @@ mod tests {
 
     use super::*;
 
-    use crate::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
+    use cloudburst::dht::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
 
     #[test]
     fn test_serde_get_peers_query() -> Result<(), Error> {
@@ -419,7 +419,7 @@ mod tests {
         use std::net::Ipv4Addr;
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234);
-        let compact_addr = addr.to_compact_address();
+        let compact_addr = addr.to_compact_addr();
         let node_id = addr.ip().rand_id(None, &mut rand::thread_rng()).unwrap();
         let mut get_peers_resp = vec![];
         get_peers_resp.extend_from_slice(b"d1:rd2:id20:0123456789abcdefghij5:nodes26:");
