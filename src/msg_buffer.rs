@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, transaction, ReadEvent};
+use crate::{transaction, ReadEvent};
 use cloudburst::dht::{
-    krpc::{self, ErrorVal, QueryArgs, RespVal},
+    krpc::{self, Error, ErrorVal, QueryArgs, RespVal},
     node::AddrOptId,
 };
 use serde_bytes::Bytes;
@@ -84,8 +84,7 @@ impl Buffer {
                 q: Bytes::new(T::method_name()),
                 t: Bytes::new(tx_id.as_ref()),
                 v: client_version.map(Bytes::new),
-            })
-            .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            })?,
             timeout,
         });
         Ok(tx_id)
@@ -109,8 +108,7 @@ impl Buffer {
                 r: resp.map(|resp| resp.to_value()).as_ref(),
                 t: Bytes::new(transaction_id),
                 v: client_version.map(Bytes::new),
-            })
-            .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            })?,
             timeout: Duration::new(0, 0),
         });
         Ok(())
@@ -134,8 +132,7 @@ impl Buffer {
                 e: Some(&details.to_value()),
                 t: Bytes::new(transaction_id),
                 v: client_version.map(Bytes::new),
-            })
-            .map_err(|_| Error::CannotSerializeKrpcMessage)?,
+            })?,
             timeout: Duration::new(0, 0),
         });
         Ok(())

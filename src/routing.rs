@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, find_node_op::FindNodeOp, msg_buffer, transaction};
+use crate::{find_node_op::FindNodeOp, msg_buffer, transaction};
 use cloudburst::dht::{
-    krpc::{ping::QueryArgs, Ty},
+    krpc::{ping::QueryArgs, Error, Ty},
     node::{AddrId, AddrOptId, Id},
 };
 use std::{
@@ -436,8 +436,7 @@ where
 }
 
 mod r {
-    use crate::error::Error;
-    use cloudburst::dht::node::Id;
+    use cloudburst::dht::{krpc::Error, node::Id};
 
     pub(super) fn rand_in_inclusive_range<R>(
         range: &std::ops::RangeInclusive<Id>,
@@ -793,7 +792,7 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error>
+    ) -> Result<(), Error>
     where
         A: Clone + PartialEq,
     {
@@ -837,7 +836,7 @@ where
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error>
+    ) -> Result<(), Error>
     where
         A: PartialEq + Copy,
     {
@@ -1056,7 +1055,7 @@ impl RoutingTable {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), Error> {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {

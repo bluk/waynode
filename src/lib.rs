@@ -37,7 +37,6 @@
 #[macro_use]
 extern crate log;
 
-pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
 pub(crate) mod msg_buffer;
@@ -46,7 +45,7 @@ pub(crate) mod routing;
 use crate::{find_node_op::FindNodeOp, krpc::transaction};
 use bt_bencode::Value;
 use cloudburst::dht::{
-    krpc::{ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
+    krpc::{Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
     node::{AddrId, AddrOptId, Id, LocalId},
 };
 use std::{
@@ -236,7 +235,7 @@ impl Node {
         config: Config,
         addr_ids: A,
         bootstrap_socket_addrs: B,
-    ) -> Result<Self, error::Error>
+    ) -> Result<Self, Error>
     where
         A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
@@ -279,7 +278,7 @@ impl Node {
         &self.config
     }
 
-    pub fn on_recv(&mut self, bytes: &[u8], addr: SocketAddr) -> Result<(), error::Error> {
+    pub fn on_recv(&mut self, bytes: &[u8], addr: SocketAddr) -> Result<(), Error> {
         self.on_recv_with_now(bytes, addr, Instant::now())
     }
 
@@ -288,12 +287,11 @@ impl Node {
         bytes: &[u8],
         addr: SocketAddr,
         now: Instant,
-    ) -> Result<(), error::Error> {
+    ) -> Result<(), Error> {
         use cloudburst::dht::krpc::Msg as KrpcMsg;
 
         debug!("on_recv_with_now addr={}", addr);
-        let value: Value = bt_bencode::from_slice(bytes)
-            .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
+        let value: Value = bt_bencode::from_slice(bytes)?;
         if let Some(kind) = value.ty() {
             if let Some(tx) = value
                 .tx_id()
@@ -452,7 +450,7 @@ impl Node {
         args: &T,
         addr_opt_id: A,
         timeout: Option<Duration>,
-    ) -> Result<transaction::Id, error::Error>
+    ) -> Result<transaction::Id, Error>
     where
         T: QueryArgs,
         A: Into<AddrOptId<SocketAddr>>,
@@ -471,7 +469,7 @@ impl Node {
         transaction_id: &[u8],
         resp: Option<T>,
         addr_opt_id: A,
-    ) -> Result<(), error::Error>
+    ) -> Result<(), Error>
     where
         T: RespVal,
         A: Into<AddrOptId<SocketAddr>>,
@@ -489,7 +487,7 @@ impl Node {
         transaction_id: &[u8],
         details: &T,
         addr_opt_id: A,
-    ) -> Result<(), error::Error>
+    ) -> Result<(), Error>
     where
         T: ErrorVal,
         A: Into<AddrOptId<SocketAddr>>,
@@ -502,11 +500,10 @@ impl Node {
         )
     }
 
-    pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, error::Error> {
+    pub fn send_to(&mut self, mut buf: &mut [u8]) -> Result<Option<SendInfo>, std::io::Error> {
         if let Some(out_msg) = self.msg_buffer.pop_outbound() {
             use std::io::Write;
-            buf.write_all(&out_msg.msg_data)
-                .map_err(|_| error::Error::CannotSerializeKrpcMessage)?;
+            buf.write_all(&out_msg.msg_data)?;
             let result = Some(SendInfo {
                 len: out_msg.msg_data.len(),
                 addr: *out_msg.addr_opt_id.addr(),
@@ -536,14 +533,14 @@ impl Node {
             })
     }
 
-    pub fn on_timeout<R>(&mut self, rng: &mut R) -> Result<(), error::Error>
+    pub fn on_timeout<R>(&mut self, rng: &mut R) -> Result<(), Error>
     where
         R: rand::Rng,
     {
         self.on_timeout_with_now(rng, Instant::now())
     }
 
-    fn on_timeout_with_now<R>(&mut self, rng: &mut R, now: Instant) -> Result<(), error::Error>
+    fn on_timeout_with_now<R>(&mut self, rng: &mut R, now: Instant) -> Result<(), Error>
     where
         R: rand::Rng,
     {
@@ -637,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn test_send_ping() -> Result<(), error::Error> {
+    fn test_send_ping() -> Result<(), Error> {
         let local_id = LocalId::from(node_id());
         let id = node_id();
         let remote_addr = remote_addr();
@@ -653,13 +650,12 @@ mod tests {
         let tx_id = node.write_query(&args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
-        match node.send_to(&mut out)? {
+        match node.send_to(&mut out).unwrap() {
             Some(send_info) => {
                 assert_eq!(send_info.addr, remote_addr);
 
                 let filled_buf = &out[..send_info.len];
-                let msg_sent: Value = bt_bencode::from_slice(filled_buf)
-                    .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
+                let msg_sent: Value = bt_bencode::from_slice(filled_buf)?;
                 assert_eq!(msg_sent.ty(), Some(Ty::Query));
                 assert_eq!(
                     msg_sent.method_name_str(),
@@ -677,18 +673,17 @@ mod tests {
     }
 
     #[test]
-    fn test_bootstrap() -> Result<(), error::Error> {
+    fn test_bootstrap() -> Result<(), Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
         let mut node: Node = Node::new(new_config().unwrap(), &[], vec![bootstrap_remote_addr])?;
 
         let mut out: [u8; 65535] = [0; 65535];
-        match node.send_to(&mut out)? {
+        match node.send_to(&mut out).unwrap() {
             Some(send_info) => {
                 assert_eq!(send_info.addr, bootstrap_remote_addr);
 
                 let filled_buf = &out[..send_info.len];
-                let msg_sent: Value = bt_bencode::from_slice(filled_buf)
-                    .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
+                let msg_sent: Value = bt_bencode::from_slice(filled_buf)?;
                 assert_eq!(msg_sent.ty(), Some(Ty::Query));
                 assert_eq!(
                     msg_sent.method_name_str(),
