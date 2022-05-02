@@ -26,14 +26,11 @@ enum NodeState {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node<A>
-where
-    A: Into<SocketAddr>,
-{
+struct Node<A> {
     addr_id: AddrId<A>,
-    missing_responses: u8,
-    next_response_deadline: Option<Instant>,
-    next_query_deadline: Option<Instant>,
+    karma: i8,
+    next_response_deadline: Instant,
+    next_query_deadline: Instant,
     last_pinged: Option<Instant>,
 }
 
@@ -43,73 +40,55 @@ where
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-    fn with_addr_id(addr_id: AddrId<A>) -> Self {
+    fn with_addr_id(addr_id: AddrId<A>, now: Instant) -> Self {
         Self {
             addr_id,
-            missing_responses: 0,
-            next_response_deadline: None,
-            next_query_deadline: None,
+            karma: 0,
+            next_response_deadline: now + Self::TIMEOUT_INTERVAL,
+            next_query_deadline: now + Self::TIMEOUT_INTERVAL,
             last_pinged: None,
         }
     }
 
     fn state_with_now(&self, now: Instant) -> NodeState {
-        if let Some(next_response_deadline) = self.next_response_deadline {
-            if now < next_response_deadline {
-                return NodeState::Good;
-            }
+        if now < self.next_response_deadline {
+            return NodeState::Good;
         }
 
-        if let Some(next_query_deadline) = self.next_query_deadline {
-            if self.next_response_deadline.is_some() && now < next_query_deadline {
-                return NodeState::Good;
-            }
+        if now < self.next_query_deadline {
+            return NodeState::Good;
         }
 
-        if self.missing_responses > 2 {
+        if self.karma < -2 {
             return NodeState::Bad;
         }
 
         NodeState::Questionable
     }
 
-    fn next_msg_deadline(&self) -> Option<Instant> {
-        match (self.next_query_deadline, self.next_response_deadline) {
-            (Some(query), None) => Some(query),
-            (None, Some(resp)) => Some(resp),
-            (Some(query), Some(resp)) => {
-                if resp < query {
-                    Some(query)
-                } else {
-                    Some(resp)
-                }
-            }
-            (None, None) => None,
-        }
+    fn next_msg_deadline(&self) -> Instant {
+        core::cmp::max(self.next_response_deadline, self.next_query_deadline)
     }
 
     fn on_msg_received(&mut self, kind: &Ty, now: Instant) {
         self.last_pinged = None;
         match kind {
             Ty::Response => {
-                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
-                if self.missing_responses > 0 {
-                    self.missing_responses -= 1;
+                self.next_response_deadline = now + Self::TIMEOUT_INTERVAL;
+                self.karma = self.karma.saturating_add(1);
+                if self.karma > 3 {
+                    self.karma = 3;
                 }
             }
             Ty::Query => {
-                self.next_query_deadline = Some(now + Self::TIMEOUT_INTERVAL);
+                self.next_query_deadline = now + Self::TIMEOUT_INTERVAL;
             }
             Ty::Error => {
-                self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
-                if self.missing_responses < u8::MAX {
-                    self.missing_responses += 1;
-                }
+                self.next_response_deadline = now + Self::TIMEOUT_INTERVAL;
+                self.karma = self.karma.saturating_sub(1);
             }
             Ty::Unknown(_) => {
-                if self.missing_responses < u8::MAX {
-                    self.missing_responses += 1;
-                }
+                self.karma = self.karma.saturating_sub(1);
             }
             _ => {
                 todo!()
@@ -119,9 +98,7 @@ where
 
     fn on_resp_timeout(&mut self) {
         self.last_pinged = None;
-        if self.missing_responses < u8::MAX {
-            self.missing_responses += 1;
-        }
+        self.karma = self.karma.saturating_sub(1);
     }
 
     fn on_ping(&mut self, now: Instant) {
@@ -168,7 +145,7 @@ where
     }
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
-        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id));
+        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now));
         self.sort_node_ids(now);
         self.update_expected_change_deadline();
     }
@@ -280,7 +257,7 @@ where
                 n.as_ref()
                     .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
             }) {
-                let mut node = Node::with_addr_id(addr_id);
+                let mut node = Node::with_addr_id(addr_id, now);
                 node.on_msg_received(kind, now);
                 self.nodes[pos] = Some(node);
                 self.sort_node_ids(now);
@@ -291,7 +268,7 @@ where
                 .rev()
                 .position(|n| n.is_none())
             {
-                let mut node = Node::with_addr_id(addr_id);
+                let mut node = Node::with_addr_id(addr_id, now);
                 node.on_msg_received(kind, now);
                 self.replacement_nodes[pos] = Some(node);
                 self.sort_node_ids(now);
@@ -421,12 +398,7 @@ where
                     | (NodeState::Bad, NodeState::Bad) => {}
                 }
 
-                match (a.next_msg_deadline(), b.next_msg_deadline()) {
-                    (None, None) => Ordering::Equal,
-                    (Some(_), None) => Ordering::Less,
-                    (None, Some(_)) => Ordering::Greater,
-                    (Some(first), Some(second)) => second.cmp(&first),
-                }
+                b.next_msg_deadline().cmp(&a.next_msg_deadline())
             }
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -486,28 +458,22 @@ mod r {
     #[inline]
     #[must_use]
     pub(super) fn prev(id: Id) -> Id {
+        let id_bytes = <[u8; 20]>::from(id);
         let mut data: [u8; 20] = [0; 20];
-        let offset_from_end = <[u8; 20]>::from(id)
-            .iter()
-            .rposition(|v| *v != 0)
-            .unwrap_or(0);
-        for (val, self_val) in data
-            .iter_mut()
-            .zip(<[u8; 20]>::from(id).iter())
-            .take(offset_from_end)
-        {
+        let offset_from_end = id_bytes.iter().rposition(|v| *v != 0).unwrap_or(0);
+        for (val, self_val) in data.iter_mut().zip(id_bytes.iter()).take(offset_from_end) {
             *val = *self_val;
         }
 
-        data[offset_from_end] = if <[u8; 20]>::from(id)[offset_from_end] == 0 {
+        data[offset_from_end] = if id_bytes[offset_from_end] == 0 {
             0xff
         } else {
-            <[u8; 20]>::from(id)[offset_from_end] - 1
+            id_bytes[offset_from_end] - 1
         };
 
         for val in data
             .iter_mut()
-            .take(<[u8; 20]>::from(id).len())
+            .take(id_bytes.len())
             .skip(offset_from_end + 1)
         {
             *val = 0xff;
@@ -595,7 +561,7 @@ mod r {
     }
 
     #[cfg(test)]
-    mod test {
+    mod tests {
         use super::*;
 
         #[test]
