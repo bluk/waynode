@@ -608,9 +608,9 @@ mod tests {
     use std::convert::{TryFrom, TryInto};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use cloudburst::dht::krpc::{ping::METHOD_PING, Msg, QueryArgs, QueryMsg, Ty};
-
-    use crate::krpc::find_node::METHOD_FIND_NODE;
+    use cloudburst::dht::krpc::{
+        find_node::METHOD_FIND_NODE, ping::METHOD_PING, Msg, QueryArgs, QueryMsg, Ty,
+    };
 
     fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {
@@ -695,7 +695,8 @@ mod tests {
                     Some(core::str::from_utf8(METHOD_FIND_NODE).unwrap())
                 );
                 let find_node_query_args =
-                    krpc::find_node::QueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
+                    cloudburst::dht::krpc::find_node::QueryArgs::try_from(msg_sent.args().unwrap())
+                        .unwrap();
                 assert_eq!(
                     find_node_query_args.target(),
                     Id::from(node.config.local_id)

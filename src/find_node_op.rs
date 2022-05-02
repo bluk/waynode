@@ -6,18 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{
-    error::Error,
-    krpc::{
-        find_node::{QueryArgs, RespValues},
-        transaction,
-    },
-    msg_buffer, SupportedAddr,
-};
+use crate::{error::Error, krpc::transaction, msg_buffer, SupportedAddr};
 
 use bt_bencode::Value;
 use cloudburst::dht::{
-    krpc::RespMsg,
+    krpc::{
+        find_node::{QueryArgs, RespValues},
+        RespMsg,
+    },
     node::{self, AddrId, AddrOptId, Id},
 };
 use std::{

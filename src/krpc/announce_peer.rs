@@ -314,7 +314,7 @@ mod tests {
             assert!(args.implied_port().is_none());
 
             let args_value = args.into();
-            let ser_query_msg = crate::krpc::ser::QueryMsg {
+            let ser_query_msg = cloudburst::dht::krpc::ser::QueryMsg {
                 a: Some(&args_value),
                 q: Bytes::new(METHOD_ANNOUNCE_PEER),
                 t: Bytes::new(b"aa"),
@@ -346,7 +346,7 @@ mod tests {
             assert_eq!(values.id(), Id::from(*b"0123456789abcdefghij"));
 
             let resp_values = values.into();
-            let ser_resp_msg = crate::krpc::ser::RespMsg {
+            let ser_resp_msg = cloudburst::dht::krpc::ser::RespMsg {
                 r: Some(&resp_values),
                 t: Bytes::new(b"aa"),
                 v: None,

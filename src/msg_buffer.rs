@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{error::Error, krpc, transaction, ReadEvent};
+use crate::{error::Error, transaction, ReadEvent};
 use cloudburst::dht::{
-    krpc::{ErrorVal, QueryArgs, RespVal},
+    krpc::{self, ErrorVal, QueryArgs, RespVal},
     node::AddrOptId,
 };
 use serde_bytes::Bytes;
