@@ -8,11 +8,9 @@
 
 //! KRPC messages are the protocol messages exchanged.
 
-use crate::{
-    error::Error,
-    node::{AddrId, Id},
-};
+use crate::error::Error;
 use bt_bencode::Value;
+use cloudburst::dht::node::{AddrId, Id};
 use serde_bytes::{ByteBuf, Bytes};
 use std::{
     collections::BTreeMap,
@@ -23,21 +21,21 @@ use std::{
 /// Type of KRPC message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum Kind<'a> {
+pub enum Ty<'a> {
     Query,
     Response,
     Error,
     Unknown(&'a str),
 }
 
-impl<'a> Kind<'a> {
+impl<'a> Ty<'a> {
     #[must_use]
     pub fn val(&self) -> &'a str {
         match self {
-            Kind::Query => "q",
-            Kind::Response => "r",
-            Kind::Error => "e",
-            Kind::Unknown(v) => v,
+            Ty::Query => "q",
+            Ty::Response => "r",
+            Ty::Error => "e",
+            Ty::Unknown(v) => v,
         }
     }
 }
@@ -48,7 +46,7 @@ pub trait Msg {
     fn tx_id(&self) -> Option<&[u8]>;
 
     /// The type of message.
-    fn kind(&self) -> Option<Kind>;
+    fn ty(&self) -> Option<Ty>;
 
     /// The client version as a byte buffer.
     fn client_version(&self) -> Option<&[u8]>;
@@ -67,14 +65,14 @@ impl Msg for Value {
             .map(|t| t.as_slice())
     }
 
-    fn kind(&self) -> Option<Kind> {
+    fn ty(&self) -> Option<Ty> {
         self.get("y")
             .and_then(bt_bencode::Value::as_str)
             .map(|y| match y {
-                "q" => Kind::Query,
-                "r" => Kind::Response,
-                "e" => Kind::Error,
-                y => Kind::Unknown(y),
+                "q" => Ty::Query,
+                "r" => Ty::Response,
+                "e" => Ty::Error,
+                y => Ty::Unknown(y),
             })
     }
 

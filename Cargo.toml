@@ -17,7 +17,7 @@ include = [
 
 [dependencies]
 bt_bencode = "0.6"
-cloudburst = "0.0.2"
+cloudburst = { git = "https://github.com/bluk/cloudburst", branch = "next" }
 serde = { version = "1", features=["derive"] }
 serde_bytes = "0.11"
 rand = "0.8"

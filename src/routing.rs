@@ -9,11 +9,10 @@
 use crate::{
     error::Error,
     find_node_op::FindNodeOp,
-    krpc::{ping::QueryArgs, Kind},
-    msg_buffer,
-    node::{AddrId, AddrOptId, Id},
-    transaction,
+    krpc::{ping::QueryArgs, Ty},
+    msg_buffer, transaction,
 };
+use cloudburst::dht::node::{AddrId, AddrOptId, Id};
 use std::{
     cmp::Ordering,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -91,25 +90,25 @@ where
         }
     }
 
-    fn on_msg_received(&mut self, kind: &Kind, now: Instant) {
+    fn on_msg_received(&mut self, kind: &Ty, now: Instant) {
         self.last_pinged = None;
         match kind {
-            Kind::Response => {
+            Ty::Response => {
                 self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
                 if self.missing_responses > 0 {
                     self.missing_responses -= 1;
                 }
             }
-            Kind::Query => {
+            Ty::Query => {
                 self.next_query_deadline = Some(now + Self::TIMEOUT_INTERVAL);
             }
-            Kind::Error => {
+            Ty::Error => {
                 self.next_response_deadline = Some(now + Self::TIMEOUT_INTERVAL);
                 if self.missing_responses < u8::MAX {
                     self.missing_responses += 1;
                 }
             }
-            Kind::Unknown(_) => {
+            Ty::Unknown(_) => {
                 if self.missing_responses < u8::MAX {
                     self.missing_responses += 1;
                 }
@@ -217,7 +216,7 @@ where
     fn on_msg_received<'a>(
         &mut self,
         addr_id: AddrId<A>,
-        kind: &Kind<'a>,
+        kind: &Ty<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
@@ -234,14 +233,14 @@ where
         {
             node.on_msg_received(kind, now);
             match kind {
-                Kind::Response | Kind::Query => {
+                Ty::Response | Ty::Query => {
                     self.sort_node_ids(now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, now,
                     )?;
                     self.update_expected_change_deadline();
                 }
-                Kind::Error | Kind::Unknown(_) => match node.state_with_now(now) {
+                Ty::Error | Ty::Unknown(_) => match node.state_with_now(now) {
                     NodeState::Good => {
                         self.sort_node_ids(now);
                     }
@@ -266,8 +265,8 @@ where
             }
         } else {
             match kind {
-                Kind::Response | Kind::Query | Kind::Error => {}
-                Kind::Unknown(_) => return Ok(()),
+                Ty::Response | Ty::Query | Ty::Error => {}
+                Ty::Unknown(_) => return Ok(()),
             }
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
@@ -430,7 +429,8 @@ where
 }
 
 mod r {
-    use crate::{error::Error, node::Id};
+    use crate::error::Error;
+    use cloudburst::dht::node::Id;
 
     pub(super) fn rand_in_inclusive_range<R>(
         range: &std::ops::RangeInclusive<Id>,
@@ -445,21 +445,22 @@ mod r {
             let mut bigger: [u8; 20];
             let mut smaller: [u8; 20];
             if first < second {
-                bigger = second.0;
-                smaller = first.0;
+                bigger = <[u8; 20]>::from(second);
+                smaller = <[u8; 20]>::from(first);
             } else {
-                bigger = first.0;
-                smaller = second.0;
+                bigger = <[u8; 20]>::from(first);
+                smaller = <[u8; 20]>::from(second);
             }
             smaller.twos_complement();
             let _ = bigger.overflowing_add(&smaller);
-            Id(bigger)
+            Id::from(bigger)
         }
 
         let data_bit_diff = difference(*range.end(), *range.start());
 
-        let mut rand_bits: [u8; 20] = <[u8; 20]>::randomize_up_to(data_bit_diff.0, rng)?;
-        let _ = rand_bits.overflowing_add(&range.start().0);
+        let mut rand_bits: [u8; 20] =
+            <[u8; 20]>::randomize_up_to(<[u8; 20]>::from(data_bit_diff), rng)?;
+        let _ = rand_bits.overflowing_add(&<[u8; 20]>::from(*range.start()));
         Ok(Id::from(rand_bits))
     }
 
@@ -467,35 +468,46 @@ mod r {
     #[inline]
     #[must_use]
     pub(super) fn middle(first: Id, second: Id) -> Id {
-        let mut data = first.0;
-        let overflow = data.overflowing_add(&second.0);
+        let mut data = <[u8; 20]>::from(first);
+        let overflow = data.overflowing_add(&<[u8; 20]>::from(second));
         data.shift_right();
         if overflow {
             data[0] |= 0x80;
         }
-        Id(data)
+        Id::from(data)
     }
 
     #[inline]
     #[must_use]
     pub(super) fn prev(id: Id) -> Id {
         let mut data: [u8; 20] = [0; 20];
-        let offset_from_end = id.0.iter().rposition(|v| *v != 0).unwrap_or(0);
-        for (val, self_val) in data.iter_mut().zip(id.0.iter()).take(offset_from_end) {
+        let offset_from_end = <[u8; 20]>::from(id)
+            .iter()
+            .rposition(|v| *v != 0)
+            .unwrap_or(0);
+        for (val, self_val) in data
+            .iter_mut()
+            .zip(<[u8; 20]>::from(id).iter())
+            .take(offset_from_end)
+        {
             *val = *self_val;
         }
 
-        data[offset_from_end] = if id.0[offset_from_end] == 0 {
+        data[offset_from_end] = if <[u8; 20]>::from(id)[offset_from_end] == 0 {
             0xff
         } else {
-            id.0[offset_from_end] - 1
+            <[u8; 20]>::from(id)[offset_from_end] - 1
         };
 
-        for val in data.iter_mut().take(id.0.len()).skip(offset_from_end + 1) {
+        for val in data
+            .iter_mut()
+            .take(<[u8; 20]>::from(id).len())
+            .skip(offset_from_end + 1)
+        {
             *val = 0xff;
         }
 
-        Id(data)
+        Id::from(data)
     }
     trait IdBytes {
         #[must_use]
@@ -632,17 +644,17 @@ mod r {
         #[test]
         fn test_id_ord() {
             let mut node_ids = vec![
-                Id([0xff; 20]),
-                Id([0x00; 20]),
-                super::middle(Id([0xff; 20]), Id([0x00; 20])),
+                Id::from([0xff; 20]),
+                Id::from([0x00; 20]),
+                super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
             ];
             node_ids.sort();
             assert_eq!(
                 node_ids,
                 vec![
-                    Id([0x00; 20]),
-                    super::middle(Id([0xff; 20]), Id([0x00; 20])),
-                    Id([0xff; 20]),
+                    Id::from([0x00; 20]),
+                    super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                    Id::from([0xff; 20]),
                 ]
             );
         }
@@ -650,18 +662,18 @@ mod r {
         #[test]
         fn test_id_distance_ord() {
             let mut node_ids = vec![
-                Id([0x00; 20]),
-                super::middle(Id([0xff; 20]), Id([0x00; 20])),
-                Id([0xff; 20]),
+                Id::from([0x00; 20]),
+                super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                Id::from([0xff; 20]),
             ];
-            let pivot_id = super::middle(Id([0xef; 20]), Id([0x00; 20]));
+            let pivot_id = super::middle(Id::from([0xef; 20]), Id::from([0x00; 20]));
             node_ids.sort_by_key(|a| a.distance(pivot_id));
             assert_eq!(
                 node_ids,
                 vec![
-                    super::middle(Id([0xff; 20]), Id([0x00; 20])),
-                    Id([0x00; 20]),
-                    Id([0xff; 20]),
+                    super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                    Id::from([0x00; 20]),
+                    Id::from([0xff; 20]),
                 ]
             );
         }
@@ -769,7 +781,7 @@ where
     pub(crate) fn on_msg_received<'a>(
         &mut self,
         addr_id: AddrId<A>,
-        kind: &Kind<'a>,
+        kind: &Ty<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
@@ -993,7 +1005,7 @@ impl RoutingTable {
     pub(crate) fn on_msg_received<'a>(
         &mut self,
         addr_id: AddrId<SocketAddr>,
-        kind: &Kind<'a>,
+        kind: &Ty<'a>,
         config: &crate::Config,
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,

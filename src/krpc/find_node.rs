@@ -12,11 +12,9 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::{
-    krpc::{CompactAddrV4Info, CompactAddrV6Info},
-    node::{AddrId, Id, LocalId},
-};
+use crate::krpc::{CompactAddrV4Info, CompactAddrV6Info};
 use bt_bencode::Value;
+use cloudburst::dht::node::{AddrId, Id, LocalId};
 use serde_bytes::{ByteBuf, Bytes};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
@@ -249,7 +247,7 @@ impl From<&RespValues> for Value {
         if let Some(nodes) = &values.nodes {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes {
-                byte_str.extend_from_slice(&n.id().0);
+                byte_str.extend_from_slice(n.id().as_ref());
                 byte_str.extend_from_slice(&n.addr().to_compact_address());
             }
             args.insert(
@@ -261,7 +259,7 @@ impl From<&RespValues> for Value {
         if let Some(nodes6) = &values.nodes6 {
             let mut byte_str: Vec<u8> = vec![];
             for n in nodes6 {
-                byte_str.extend_from_slice(&n.id().0);
+                byte_str.extend_from_slice(n.id().as_ref());
                 byte_str.extend_from_slice(&n.addr().to_compact_address());
             }
             args.insert(
@@ -281,14 +279,14 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
+    use crate::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
 
     #[test]
     fn test_serde_find_node_query() -> Result<(), Error> {
         let find_node_query = b"d1:ad2:id20:abcdefghij01234567896:target20:mnopqrstuvwxyz123456e1:q9:find_node1:t2:aa1:y1:qe";
 
         let msg_value: Value = bt_bencode::from_reader(&find_node_query[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Query));
+        assert_eq!(msg_value.ty(), Some(Ty::Query));
         assert_eq!(msg_value.method_name(), Some(METHOD_FIND_NODE));
         assert_eq!(
             msg_value.method_name_str(),
@@ -320,23 +318,20 @@ mod tests {
 
     #[test]
     fn test_serde_find_node_response_values_one_node() -> Result<(), Error> {
-        use crate::node::NodeIdGenerator;
+        use cloudburst::dht::node::IdAllocator;
         use std::net::Ipv4Addr;
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234);
         let compact_addr = addr.to_compact_address();
-        let node_id = addr
-            .ip()
-            .make_node_id(None, &mut rand::thread_rng())
-            .unwrap();
+        let node_id = addr.ip().rand_id(None, &mut rand::thread_rng()).unwrap();
         let mut find_node_resp = vec![];
         find_node_resp.extend_from_slice(b"d1:rd2:id20:0123456789abcdefghij5:nodes26:");
-        find_node_resp.extend_from_slice(&node_id.0[..]);
+        find_node_resp.extend_from_slice(node_id.as_ref());
         find_node_resp.extend_from_slice(&compact_addr[..]);
         find_node_resp.extend_from_slice(b"e1:t2:aa1:y1:re");
 
         let msg_value: Value = bt_bencode::from_reader(&find_node_resp[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Response));
+        assert_eq!(msg_value.ty(), Some(Ty::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));

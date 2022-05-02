@@ -12,12 +12,12 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::{
-    error::Error,
-    node::{Id, LocalId},
-};
+use crate::error::Error;
 use bt_bencode::{value::Number, Value};
-use cloudburst::metainfo::InfoHash;
+use cloudburst::{
+    dht::node::{Id, LocalId},
+    metainfo::InfoHash,
+};
 use serde_bytes::{ByteBuf, Bytes};
 use std::{collections::BTreeMap, convert::TryFrom};
 
@@ -289,14 +289,14 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
+    use crate::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
 
     #[test]
     fn test_serde_announce_peer_query() -> Result<(), Error> {
         let announce_peer_query = b"d1:ad2:id20:abcdefghij01234567899:info_hash20:mnopqrstuvwxyz1234564:porti6331e5:token8:abcd1234e1:q13:announce_peer1:t2:aa1:y1:qe";
 
         let msg_value: Value = bt_bencode::from_reader(&announce_peer_query[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Query));
+        assert_eq!(msg_value.ty(), Some(Ty::Query));
         assert_eq!(msg_value.method_name(), Some(METHOD_ANNOUNCE_PEER));
         assert_eq!(
             msg_value.method_name_str(),
@@ -334,7 +334,7 @@ mod tests {
         let announce_peer_resp = b"d1:rd2:id20:0123456789abcdefghije1:t2:aa1:y1:re";
 
         let msg_value: Value = bt_bencode::from_reader(&announce_peer_resp[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Response));
+        assert_eq!(msg_value.ty(), Some(Ty::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));

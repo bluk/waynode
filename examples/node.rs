@@ -21,6 +21,7 @@ use std::time::Duration;
 use clap::Arg;
 use clap::Command;
 
+use cloudburst::dht::node::{Id, LocalId};
 use mio::{Events, Interest, Poll, Token};
 
 use sloppy::{
@@ -77,9 +78,7 @@ fn main() -> io::Result<()> {
     .map(|v| v.into_iter().flatten().collect::<Vec<_>>())
     .expect("addresses to resolve");
 
-    let mut config = sloppy::Config::new(sloppy::node::LocalId::new(
-        sloppy::node::Id::rand(&mut rng).unwrap(),
-    ));
+    let mut config = sloppy::Config::new(LocalId::new(Id::rand(&mut rng).unwrap()));
     config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);

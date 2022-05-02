@@ -12,8 +12,8 @@
 //!
 //! [bep_0005]: http://bittorrent.org/beps/bep_0005.html
 
-use crate::node::{Id, LocalId};
 use bt_bencode::Value;
+use cloudburst::dht::node::{Id, LocalId};
 use serde_bytes::{ByteBuf, Bytes};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
@@ -181,14 +181,14 @@ mod tests {
     use super::*;
 
     use crate::error::Error;
-    use crate::krpc::{Kind, Msg, QueryArgs, QueryMsg, RespMsg, RespVal};
+    use crate::krpc::{Msg, QueryArgs, QueryMsg, RespMsg, RespVal, Ty};
 
     #[test]
     fn test_serde_ping_query() -> Result<(), Error> {
         let ping_query = b"d1:ad2:id20:abcdefghij0123456789e1:q4:ping1:t2:aa1:y1:qe";
 
         let msg_value: Value = bt_bencode::from_reader(&ping_query[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Query));
+        assert_eq!(msg_value.ty(), Some(Ty::Query));
         assert_eq!(msg_value.method_name(), Some(METHOD_PING));
         assert_eq!(
             msg_value.method_name_str(),
@@ -222,7 +222,7 @@ mod tests {
         let ping_resp = b"d1:rd2:id20:mnopqrstuvwxyz123456e1:t2:aa1:y1:re";
 
         let msg_value: Value = bt_bencode::from_reader(&ping_resp[..])?;
-        assert_eq!(msg_value.kind(), Some(Kind::Response));
+        assert_eq!(msg_value.ty(), Some(Ty::Response));
         assert_eq!(msg_value.method_name(), None);
         assert_eq!(msg_value.method_name_str(), None);
         assert_eq!(msg_value.tx_id(), Some(b"aa".as_ref()));

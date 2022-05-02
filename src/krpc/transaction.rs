@@ -8,7 +8,7 @@
 
 //! Transactions correlate a KRPC query with its response.
 
-use crate::node::AddrOptId;
+use cloudburst::dht::node::AddrOptId;
 use std::{convert::TryFrom, net::SocketAddr, time::Instant};
 
 /// An opaque identifer which correlates a KRPC query with a response or error.

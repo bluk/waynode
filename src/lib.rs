@@ -37,93 +37,18 @@
 #[macro_use]
 extern crate log;
 
-macro_rules! fmt_byte_array {
-    ($id:ident) => {
-        impl fmt::Debug for $id {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                struct DebugFmt<'a>(&'a $id);
-
-                impl<'a> fmt::Debug for DebugFmt<'a> {
-                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        for b in (self.0).0 {
-                            write!(f, "{:02X}", b)?;
-                        }
-                        Ok(())
-                    }
-                }
-
-                f.debug_tuple(stringify!($id))
-                    .field(&DebugFmt(self))
-                    .finish()
-            }
-        }
-
-        impl fmt::Display for $id {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for b in self.0 {
-                    write!(f, "{:02X}", b)?;
-                }
-                Ok(())
-            }
-        }
-
-        impl core::fmt::UpperHex for $id {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                if f.alternate() {
-                    write!(f, "0x")?;
-                }
-
-                for b in self.0 {
-                    write!(f, "{:02X}", b)?;
-                }
-
-                Ok(())
-            }
-        }
-
-        impl fmt::LowerHex for $id {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                if f.alternate() {
-                    write!(f, "0x")?;
-                }
-
-                for b in self.0 {
-                    write!(f, "{:02x}", b)?;
-                }
-
-                Ok(())
-            }
-        }
-
-        impl fmt::Binary for $id {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                if f.alternate() {
-                    write!(f, "0b")?;
-                }
-
-                for b in self.0 {
-                    write!(f, "{:b}", b)?;
-                }
-
-                Ok(())
-            }
-        }
-    };
-}
-
 pub mod error;
 pub(crate) mod find_node_op;
 pub mod krpc;
 pub(crate) mod msg_buffer;
-pub mod node;
 pub(crate) mod routing;
 
 use crate::{
     find_node_op::FindNodeOp,
-    krpc::{transaction, ErrorVal, Kind, QueryArgs, QueryMsg, RespMsg, RespVal},
-    node::{AddrId, AddrOptId},
+    krpc::{transaction, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
 };
 use bt_bencode::Value;
+use cloudburst::dht::node::{AddrId, AddrOptId, Id, LocalId};
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
@@ -188,7 +113,7 @@ pub enum SupportedAddr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Local node id
-    local_id: node::LocalId,
+    local_id: LocalId,
     /// Client version identifier
     client_version: Option<Vec<u8>>,
     /// The default amount of time before a query without a response is considered timed out
@@ -205,7 +130,7 @@ impl Config {
     /// Instantiate a new config with a node's local Id.
     pub fn new<I>(id: I) -> Self
     where
-        I: Into<node::LocalId>,
+        I: Into<LocalId>,
     {
         Self {
             local_id: id.into(),
@@ -219,14 +144,14 @@ impl Config {
 
     /// Returns the node's local Id.
     #[must_use]
-    pub fn local_id(&self) -> node::LocalId {
+    pub fn local_id(&self) -> LocalId {
         self.local_id
     }
 
     /// Sets the node's local Id.
     pub fn set_local_id<I>(&mut self, id: I)
     where
-        I: Into<node::LocalId>,
+        I: Into<LocalId>,
     {
         self.local_id = id.into();
     }
@@ -316,7 +241,7 @@ impl Node {
         A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
     {
-        let local_id = node::Id::from(config.local_id);
+        let local_id = Id::from(config.local_id);
         let now = Instant::now();
 
         let mut routing_table = match config.supported_addr {
@@ -337,7 +262,7 @@ impl Node {
             find_node_ops: Vec::new(),
         };
         dht.routing_table.find_node(
-            node::Id::from(dht.config.local_id),
+            Id::from(dht.config.local_id),
             &dht.config,
             &mut dht.tx_manager,
             &mut dht.msg_buffer,
@@ -369,13 +294,13 @@ impl Node {
         debug!("on_recv_with_now addr={}", addr);
         let value: Value = bt_bencode::from_slice(bytes)
             .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
-        if let Some(kind) = value.kind() {
+        if let Some(kind) = value.ty() {
             if let Some(tx) = value
                 .tx_id()
                 .and_then(|tx_id| self.tx_manager.remove(tx_id, addr))
             {
                 match kind {
-                    Kind::Response => {
+                    Ty::Response => {
                         let queried_node_id = RespMsg::queried_node_id(&value);
                         let is_response_queried_id_valid =
                             tx.addr_opt_id.id().map_or(true, |expected_node_id| {
@@ -383,7 +308,7 @@ impl Node {
                             });
                         if is_response_queried_id_valid
                             || (!self.config.is_response_queried_node_id_strictly_checked
-                                && queried_node_id == Some(node::Id::from(self.config.local_id)))
+                                && queried_node_id == Some(Id::from(self.config.local_id)))
                         {
                             if is_response_queried_id_valid {
                                 if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
@@ -429,7 +354,7 @@ impl Node {
                             self.tx_manager.push(tx);
                         }
                     }
-                    Kind::Error => {
+                    Ty::Error => {
                         if let Some(node_id) = tx.addr_opt_id.id() {
                             self.routing_table.on_msg_received(
                                 AddrId::new(*tx.addr_opt_id.addr(), node_id),
@@ -458,7 +383,7 @@ impl Node {
                         });
                     }
                     // unexpected
-                    Kind::Query | Kind::Unknown(_) => {
+                    Ty::Query | Ty::Unknown(_) => {
                         error!(
                         "Message kind not expected. tx={:?}, addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
                         tx,
@@ -476,7 +401,7 @@ impl Node {
                 }
             } else {
                 match kind {
-                    Kind::Query => {
+                    Ty::Query => {
                         debug!("Recieved query. addr={}", addr);
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::new(addr, querying_node_id);
@@ -492,7 +417,7 @@ impl Node {
                         });
                     }
                     // unexpected
-                    Kind::Response | Kind::Error | Kind::Unknown(_) => error!(
+                    Ty::Response | Ty::Error | Ty::Unknown(_) => error!(
                         "Unexpected no local tx message. addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
                         addr,
                         kind,
@@ -662,11 +587,11 @@ impl Node {
         Ok(())
     }
 
-    pub fn find_neighbors_ipv4(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
+    pub fn find_neighbors_ipv4(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
         self.routing_table.find_neighbors_ipv4(id)
     }
 
-    pub fn find_neighbors_ipv6(&self, id: node::Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
+    pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         self.routing_table.find_neighbors_ipv6(id)
     }
 }
@@ -678,12 +603,12 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use crate::krpc::{
-        find_node::METHOD_FIND_NODE, ping::METHOD_PING, Kind, Msg, QueryArgs, QueryMsg,
+        find_node::METHOD_FIND_NODE, ping::METHOD_PING, Msg, QueryArgs, QueryMsg, Ty,
     };
 
     fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {
-            local_id: node::LocalId::from(node::Id::rand(&mut rand::thread_rng())?),
+            local_id: LocalId::from(Id::rand(&mut rand::thread_rng())?),
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -696,8 +621,8 @@ mod tests {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6532))
     }
 
-    fn node_id() -> node::Id {
-        node::Id::rand(&mut rand::thread_rng()).unwrap()
+    fn node_id() -> Id {
+        Id::rand(&mut rand::thread_rng()).unwrap()
     }
 
     fn bootstrap_remote_addr() -> SocketAddr {
@@ -707,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_send_ping() -> Result<(), error::Error> {
-        let local_id = node::LocalId(node_id());
+        let local_id = LocalId::from(node_id());
         let id = node_id();
         let remote_addr = remote_addr();
         let addr_opt_id = AddrOptId::new(remote_addr, Some(id));
@@ -729,7 +654,7 @@ mod tests {
                 let filled_buf = &out[..send_info.len];
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
-                assert_eq!(msg_sent.kind(), Some(Kind::Query));
+                assert_eq!(msg_sent.ty(), Some(Ty::Query));
                 assert_eq!(
                     msg_sent.method_name_str(),
                     Some(core::str::from_utf8(METHOD_PING).unwrap())
@@ -758,7 +683,7 @@ mod tests {
                 let filled_buf = &out[..send_info.len];
                 let msg_sent: Value = bt_bencode::from_slice(filled_buf)
                     .map_err(|_| error::Error::CannotDeserializeKrpcMessage)?;
-                assert_eq!(msg_sent.kind(), Some(Kind::Query));
+                assert_eq!(msg_sent.ty(), Some(Ty::Query));
                 assert_eq!(
                     msg_sent.method_name_str(),
                     Some(core::str::from_utf8(METHOD_FIND_NODE).unwrap())
@@ -767,12 +692,9 @@ mod tests {
                     krpc::find_node::QueryArgs::try_from(msg_sent.args().unwrap()).unwrap();
                 assert_eq!(
                     find_node_query_args.target(),
-                    node::Id::from(node.config.local_id)
+                    Id::from(node.config.local_id)
                 );
-                assert_eq!(
-                    find_node_query_args.id(),
-                    node::Id::from(node.config.local_id)
-                );
+                assert_eq!(find_node_query_args.id(), Id::from(node.config.local_id));
 
                 Ok(())
             }

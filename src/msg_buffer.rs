@@ -9,9 +9,9 @@
 use crate::{
     error::Error,
     krpc::{self, ErrorVal, QueryArgs, RespVal},
-    node::AddrOptId,
     transaction, ReadEvent,
 };
+use cloudburst::dht::node::AddrOptId;
 use serde_bytes::Bytes;
 use std::{
     collections::VecDeque,
