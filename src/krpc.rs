@@ -70,9 +70,7 @@ where
 }
 
 pub mod announce_peer;
-pub mod error;
 pub mod find_node;
 pub mod get_peers;
-pub mod ping;
 pub(crate) mod ser;
 pub mod transaction;

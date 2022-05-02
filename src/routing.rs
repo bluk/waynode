@@ -6,11 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{
-    error::Error, find_node_op::FindNodeOp, krpc::ping::QueryArgs, msg_buffer, transaction,
-};
+use crate::{error::Error, find_node_op::FindNodeOp, msg_buffer, transaction};
 use cloudburst::dht::{
-    krpc::Ty,
+    krpc::{ping::QueryArgs, Ty},
     node::{AddrId, AddrOptId, Id},
 };
 use std::{

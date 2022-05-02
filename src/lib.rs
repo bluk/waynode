@@ -608,9 +608,9 @@ mod tests {
     use std::convert::{TryFrom, TryInto};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use cloudburst::dht::krpc::{Msg, QueryArgs, QueryMsg, Ty};
+    use cloudburst::dht::krpc::{ping::METHOD_PING, Msg, QueryArgs, QueryMsg, Ty};
 
-    use crate::krpc::{find_node::METHOD_FIND_NODE, ping::METHOD_PING};
+    use crate::krpc::find_node::METHOD_FIND_NODE;
 
     fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {
@@ -643,7 +643,7 @@ mod tests {
         let remote_addr = remote_addr();
         let addr_opt_id = AddrOptId::new(remote_addr, Some(id));
 
-        let args = crate::krpc::ping::QueryArgs::new(local_id);
+        let args = cloudburst::dht::krpc::ping::QueryArgs::new(local_id);
 
         let mut node: Node = Node::new(
             new_config().unwrap(),

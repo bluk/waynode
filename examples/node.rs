@@ -22,12 +22,12 @@ use clap::Arg;
 use clap::Command;
 
 use cloudburst::dht::{
-    krpc::{ErrorCode, Msg, QueryMsg},
+    krpc::{ping, ErrorCode, Msg, QueryMsg},
     node::{Id, LocalId},
 };
 use mio::{Events, Interest, Poll, Token};
 
-use sloppy::{krpc::ping, Node};
+use sloppy::Node;
 
 fn main() -> io::Result<()> {
     env_logger::init();
@@ -158,7 +158,7 @@ fn main() -> io::Result<()> {
                             }
                             Some(method_name) => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error = sloppy::krpc::error::Values::new(
+                                    let error = cloudburst::dht::krpc::error::Values::new(
                                         ErrorCode::MethodUnknown,
                                         core::str::from_utf8(method_name).unwrap_or("").to_string(),
                                     );
@@ -170,7 +170,7 @@ fn main() -> io::Result<()> {
                             }
                             None => {
                                 if let Some(tx_id) = msg.tx_id() {
-                                    let error = sloppy::krpc::error::Values::new(
+                                    let error = cloudburst::dht::krpc::error::Values::new(
                                         ErrorCode::ProtocolError,
                                         String::from("method name not listed"),
                                     );
