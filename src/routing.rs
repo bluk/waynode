@@ -26,15 +26,16 @@ enum NodeState {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node<A> {
+struct Node<A, TxId> {
     addr_id: AddrId<A>,
     karma: i8,
     next_response_deadline: Instant,
     next_query_deadline: Instant,
+    tx_id: Option<TxId>,
     last_pinged: Option<Instant>,
 }
 
-impl<A> Node<A>
+impl<A, TxId> Node<A, TxId>
 where
     A: Into<SocketAddr>,
 {
@@ -46,6 +47,7 @@ where
             karma: 0,
             next_response_deadline: now + Self::TIMEOUT_INTERVAL,
             next_query_deadline: now + Self::TIMEOUT_INTERVAL,
+            tx_id: None,
             last_pinged: None,
         }
     }
@@ -96,7 +98,7 @@ where
         }
     }
 
-    fn on_resp_timeout(&mut self) {
+    fn on_ping_timeout(&mut self) {
         self.last_pinged = None;
         self.karma = self.karma.saturating_sub(1);
     }
@@ -110,28 +112,25 @@ const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const BUCKET_SIZE: usize = 8;
 
 #[derive(Debug)]
-struct Bucket<A>
-where
-    A: Into<SocketAddr>,
-{
+struct Bucket<A, TxId> {
     range: RangeInclusive<Id>,
-    nodes: [Option<Node<A>>; BUCKET_SIZE],
-    replacement_nodes: [Option<Node<A>>; BUCKET_SIZE],
+    nodes: [Option<Node<A, TxId>>; BUCKET_SIZE],
+    replacement_nodes: [Option<Node<A, TxId>>; BUCKET_SIZE],
     expected_change_deadline: Instant,
 }
 
-impl<A> Bucket<A>
+impl<A, TxId> Bucket<A, TxId>
 where
     A: Into<SocketAddr>,
 {
-    const NODES_NONE: Option<Node<A>> = None;
+    const NODES_NONE: Option<Node<A, TxId>> = None;
 
-    fn new(range: RangeInclusive<Id>) -> Self {
+    fn new(range: RangeInclusive<Id>, now: Instant) -> Self {
         Bucket {
             range,
             nodes: [Self::NODES_NONE; BUCKET_SIZE],
             replacement_nodes: [Self::NODES_NONE; BUCKET_SIZE],
-            expected_change_deadline: Instant::now() + Duration::from_secs(5 * 60),
+            expected_change_deadline: now + Duration::from_secs(5 * 60),
         }
     }
 
@@ -175,7 +174,7 @@ where
             if let Some(node_to_ping) = self.nodes.iter_mut().rev().flatten().find(|n| {
                 n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
             }) {
-                msg_buffer.write_query(
+                let tx_id = msg_buffer.write_query(
                     &QueryArgs::new(config.local_id),
                     AddrOptId::new(
                         ((*node_to_ping.addr_id.addr()).clone()).into(),
@@ -297,7 +296,7 @@ where
             .flatten()
             .find(|n| n.addr_id == *addr_id)
         {
-            node.on_resp_timeout();
+            node.on_ping_timeout();
             match node.state_with_now(now) {
                 NodeState::Good => {
                     // The sort order will not change if the state is still good
@@ -324,7 +323,7 @@ where
         Ok(())
     }
 
-    fn split_insert(&mut self, node: Node<A>) {
+    fn split_insert(&mut self, node: Node<A, TxId>) {
         if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
             self.nodes[pos] = Some(node);
         } else {
@@ -332,7 +331,7 @@ where
         }
     }
 
-    fn split_replacement_insert(&mut self, node: Node<A>) {
+    fn split_replacement_insert(&mut self, node: Node<A, TxId>) {
         if let Some(pos) = self
             .replacement_nodes
             .iter()
@@ -344,14 +343,15 @@ where
         }
     }
 
-    fn split(self) -> (Bucket<A>, Bucket<A>)
+    fn split(self, now: Instant) -> (Bucket<A, TxId>, Bucket<A, TxId>)
     where
         A: Clone,
+        TxId: Clone,
     {
         let middle = r::middle(*self.range.end(), *self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle));
-        let mut upper_bucket = Bucket::new(middle..=*self.range.end());
+        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle), now);
+        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), now);
 
         for node in self.nodes.iter().flatten() {
             let node_id = node.addr_id.id();
@@ -655,27 +655,21 @@ mod r {
 const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug)]
-pub(crate) struct Table<A>
-where
-    A: Into<SocketAddr>,
-{
+pub struct Table<A, TxId> {
     pivot: Id,
-    buckets: Vec<Bucket<A>>,
+    buckets: Vec<Bucket<A, TxId>>,
     find_pivot_id_deadline: Instant,
 }
 
-impl<A> Table<A>
+impl<A, TxId> Table<A, TxId>
 where
     A: Into<SocketAddr>,
 {
-    pub(crate) fn new(pivot: Id, now: Instant) -> Self
-    where
-        A: Clone,
-    {
+    pub fn new(pivot: Id, now: Instant) -> Self {
         Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max())],
-            find_pivot_id_deadline: now + FIND_LOCAL_ID_INTERVAL,
+            buckets: vec![Bucket::new(Id::min()..=Id::max(), now)],
+            find_pivot_id_deadline: now,
         }
     }
 
@@ -705,6 +699,7 @@ where
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant)
     where
         A: Clone,
+        TxId: Clone,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -718,7 +713,7 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split();
+            let (mut first_bucket, mut second_bucket) = bucket.split(now);
             if first_bucket.range.contains(&node_id) {
                 first_bucket.try_insert(addr_id, now);
             } else {
@@ -761,6 +756,7 @@ where
     ) -> Result<(), Error>
     where
         A: Clone + PartialEq,
+        TxId: Clone,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -774,7 +770,7 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split();
+            let (mut first_bucket, mut second_bucket) = bucket.split(now);
             if first_bucket.range.contains(&node_id) {
                 first_bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, now)?;
             } else {
@@ -879,16 +875,17 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) enum RoutingTable {
-    Ipv4(Table<SocketAddrV4>),
-    Ipv6(Table<SocketAddrV6>),
-    Ipv4AndIpv6(Table<SocketAddrV4>, Table<SocketAddrV6>),
+pub(crate) enum RoutingTable<TxId> {
+    Ipv4(Table<SocketAddrV4, TxId>),
+    Ipv6(Table<SocketAddrV6, TxId>),
+    Ipv4AndIpv6(Table<SocketAddrV4, TxId>, Table<SocketAddrV6, TxId>),
 }
 
-impl RoutingTable {
+impl<TxId> RoutingTable<TxId> {
     pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: Instant)
     where
         I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
+        TxId: Clone,
     {
         for addr_id in addrs {
             match addr_id.addr() {
@@ -982,7 +979,10 @@ impl RoutingTable {
         tx_manager: &mut transaction::Manager,
         msg_buffer: &mut msg_buffer::Buffer,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        TxId: Clone,
+    {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
@@ -1131,8 +1131,9 @@ mod tests {
 
     #[test]
     fn test_split_bucket() {
-        let bucket: Bucket<SocketAddrV4> = Bucket::new(Id::min()..=Id::max());
-        let (first_bucket, second_bucket) = bucket.split();
+        let now = Instant::now();
+        let bucket: Bucket<SocketAddrV4, transaction::Id> = Bucket::new(Id::min()..=Id::max(), now);
+        let (first_bucket, second_bucket) = bucket.split(now);
         assert_eq!(
             first_bucket.range,
             Id::min()
