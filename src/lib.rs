@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Sloppy is a library which can help build an application using the [BitTorrent][bittorrent]
+//! Sloppy is a library which can help build an application using the [`BitTorrent`][bittorrent]
 //! [Distributed Hash Table][bep_0005].
 //!
 //! # Features
@@ -42,10 +42,10 @@ pub mod krpc;
 pub(crate) mod msg_buffer;
 pub(crate) mod routing;
 
-use crate::{find_node_op::FindNodeOp, krpc::transaction};
+use crate::{find_node_op::FindNodeOp, krpc::transaction::Manager};
 use bt_bencode::Value;
 use cloudburst::dht::{
-    krpc::{Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
+    krpc::{transaction, Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
     node::{AddrId, AddrOptId, Id, LocalId},
 };
 use std::{
@@ -223,22 +223,24 @@ impl Config {
 pub struct Node {
     config: Config,
     routing_table: routing::RoutingTable<transaction::Id>,
-    tx_manager: transaction::Manager,
-    msg_buffer: msg_buffer::Buffer,
+    tx_manager: Manager<transaction::Id>,
+    msg_buffer: msg_buffer::Buffer<transaction::Id>,
 
     find_node_ops: Vec<FindNodeOp>,
 }
 
 impl Node {
     /// Instantiates a new node.
-    pub fn new<'a, A, B>(
+    pub fn new<'a, A, B, R>(
         config: Config,
         addr_ids: A,
         bootstrap_socket_addrs: B,
+        rng: &mut R,
     ) -> Result<Self, Error>
     where
         A: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         B: IntoIterator<Item = SocketAddr>,
+        R: rand::Rng,
     {
         let local_id = Id::from(config.local_id);
         let now = Instant::now();
@@ -256,7 +258,7 @@ impl Node {
         let mut dht = Self {
             config,
             routing_table,
-            tx_manager: transaction::Manager::new(),
+            tx_manager: Manager::new(),
             msg_buffer: msg_buffer::Buffer::new(),
             find_node_ops: Vec::new(),
         };
@@ -267,6 +269,7 @@ impl Node {
             &mut dht.msg_buffer,
             &mut dht.find_node_ops,
             bootstrap_socket_addrs,
+            rng,
             now,
         )?;
         Ok(dht)
@@ -278,24 +281,33 @@ impl Node {
         &self.config
     }
 
-    pub fn on_recv(&mut self, bytes: &[u8], addr: SocketAddr) -> Result<(), Error> {
-        self.on_recv_with_now(bytes, addr, Instant::now())
+    pub fn on_recv<R>(&mut self, bytes: &[u8], addr: SocketAddr, rng: &mut R) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
+        self.on_recv_with_now(bytes, addr, rng, Instant::now())
     }
 
-    fn on_recv_with_now(
+    fn on_recv_with_now<R>(
         &mut self,
         bytes: &[u8],
         addr: SocketAddr,
+        rng: &mut R,
         now: Instant,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
         use cloudburst::dht::krpc::Msg as KrpcMsg;
+        use core::convert::TryFrom;
 
         debug!("on_recv_with_now addr={}", addr);
         let value: Value = bt_bencode::from_slice(bytes)?;
         if let Some(kind) = value.ty() {
             if let Some(tx) = value
                 .tx_id()
-                .and_then(|tx_id| self.tx_manager.remove(tx_id, addr))
+                .and_then(|tx_id| transaction::Id::try_from(tx_id).ok())
+                .and_then(|tx_id| self.tx_manager.remove(&tx_id, addr))
             {
                 match kind {
                     Ty::Response => {
@@ -316,11 +328,11 @@ impl Node {
                                         &self.config,
                                         &mut self.tx_manager,
                                         &mut self.msg_buffer,
+                                        rng,
                                         now,
                                     )?;
                                 }
                             }
-                            debug!("Received response for tx_id={:?}", tx.tx_id);
                             for op in &mut self.find_node_ops {
                                 op.handle(
                                     &tx,
@@ -328,6 +340,7 @@ impl Node {
                                     &self.config,
                                     &mut self.tx_manager,
                                     &mut self.msg_buffer,
+                                    rng,
                                 )?;
                             }
                             self.find_node_ops.retain(|op| !op.is_done());
@@ -337,18 +350,6 @@ impl Node {
                                 msg: MsgEvent::Resp(value),
                             });
                         } else {
-                            error!(
-                        "Message did not match expected queried node id. tx={:?}, addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
-                        tx,
-                        addr,
-                        kind,
-                        value.tx_id(),
-                        value.queried_node_id(),
-                        value.method_name_str(),
-                        value.querying_node_id(),
-                        value.client_version_str(),
-                        value
-                    );
                             self.tx_manager.push(tx);
                         }
                     }
@@ -360,6 +361,7 @@ impl Node {
                                 &self.config,
                                 &mut self.tx_manager,
                                 &mut self.msg_buffer,
+                                rng,
                                 now,
                             )?;
                         }
@@ -371,6 +373,7 @@ impl Node {
                                 &self.config,
                                 &mut self.tx_manager,
                                 &mut self.msg_buffer,
+                                rng,
                             )?;
                         }
                         self.find_node_ops.retain(|op| !op.is_done());
@@ -382,18 +385,6 @@ impl Node {
                     }
                     // unexpected
                     Ty::Query | Ty::Unknown(_) => {
-                        error!(
-                        "Message kind not expected. tx={:?}, addr={} kind={:?} tx={:?} queried_node_id={:?} query_method_name={:?} querying_node_id={:?} client_version={:?} value={:?}",
-                        tx,
-                        addr,
-                        kind,
-                        value.tx_id(),
-                        value.queried_node_id(),
-                        value.method_name_str(),
-                        value.querying_node_id(),
-                        value.client_version_str(),
-                        value
-                    );
                         self.tx_manager.push(tx);
                     }
                     _ => {
@@ -408,7 +399,7 @@ impl Node {
                         let addr_opt_id = AddrOptId::new(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
                             self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, &self.config, &mut
-                            self.tx_manager, &mut self.msg_buffer, now)?;
+                            self.tx_manager, &mut self.msg_buffer, rng, now)?;
                         }
 
                         self.msg_buffer.push_inbound(ReadEvent {
@@ -447,20 +438,21 @@ impl Node {
 
     pub fn write_query<A, T>(
         &mut self,
+        tx_id: transaction::Id,
         args: &T,
         addr_opt_id: A,
         timeout: Option<Duration>,
-    ) -> Result<transaction::Id, Error>
+    ) -> Result<(), Error>
     where
         T: QueryArgs,
         A: Into<AddrOptId<SocketAddr>>,
     {
         self.msg_buffer.write_query(
+            tx_id,
             args,
             addr_opt_id,
             timeout.unwrap_or(self.config.default_query_timeout),
             self.config.client_version(),
-            &mut self.tx_manager,
         )
     }
 
@@ -547,13 +539,13 @@ impl Node {
         debug!("on_timeout_with_now now={:?}", now);
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
             for tx in timed_out_txs {
-                debug!("tx timed out: {:?}", tx);
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
                         AddrId::new(*tx.addr_opt_id.addr(), node_id),
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
+                        rng,
                         now,
                     )?;
                 }
@@ -565,6 +557,7 @@ impl Node {
                         &self.config,
                         &mut self.tx_manager,
                         &mut self.msg_buffer,
+                        rng,
                     )?;
                 }
                 self.find_node_ops.retain(|op| !op.is_done());
@@ -646,8 +639,10 @@ mod tests {
             new_config().unwrap(),
             std::iter::empty(),
             std::iter::empty(),
+            &mut rand::thread_rng(),
         )?;
-        let tx_id = node.write_query(&args, addr_opt_id, None).unwrap();
+        let tx_id = transaction::Id::rand(&mut rand::thread_rng()).unwrap();
+        node.write_query(tx_id, &args, addr_opt_id, None).unwrap();
 
         let mut out: [u8; 65535] = [0; 65535];
         match node.send_to(&mut out).unwrap() {
@@ -675,7 +670,12 @@ mod tests {
     #[test]
     fn test_bootstrap() -> Result<(), Error> {
         let bootstrap_remote_addr = bootstrap_remote_addr();
-        let mut node: Node = Node::new(new_config().unwrap(), &[], vec![bootstrap_remote_addr])?;
+        let mut node: Node = Node::new(
+            new_config().unwrap(),
+            &[],
+            vec![bootstrap_remote_addr],
+            &mut rand::thread_rng(),
+        )?;
 
         let mut out: [u8; 65535] = [0; 65535];
         match node.send_to(&mut out).unwrap() {

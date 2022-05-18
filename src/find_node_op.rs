@@ -6,13 +6,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{krpc::transaction, msg_buffer, SupportedAddr};
+use crate::{
+    krpc::transaction::{Manager, Transaction},
+    msg_buffer, SupportedAddr,
+};
 
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
         find_node::{QueryArgs, RespValues},
-        Error, RespMsg,
+        transaction, Error, RespMsg,
     },
     node::{self, AddrId, AddrOptId, Id},
 };
@@ -285,25 +288,30 @@ impl FindNodeOp {
     pub(crate) fn is_done(&self) -> bool {
         let ret = self.tx_ids.is_empty() && self.addr_space.is_done();
         if ret {
-            debug!("find_node is done. find_node_op={:?}", self);
+            // debug!("find_node is done. find_node_op={:?}", self);
         }
         ret
     }
 
-    pub(crate) fn start(
+    pub(crate) fn start<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut transaction::Manager,
-        msg_buffer: &mut msg_buffer::Buffer,
-    ) -> Result<(), Error> {
+        tx_manager: &mut Manager<transaction::Id>,
+        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
+        rng: &mut R,
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
         let mut count = 0;
         while let Some(potential_addr_opt_id) = self.addr_space.pop_potential_addr() {
-            let tx_id = msg_buffer.write_query(
+            let tx_id = tx_manager.next_transaction_id(rng).unwrap();
+            msg_buffer.write_query(
+                tx_id,
                 &QueryArgs::new(config.local_id, self.target_id),
                 potential_addr_opt_id.addr_opt_id,
                 config.default_query_timeout,
                 config.client_version(),
-                tx_manager,
             )?;
             self.tx_ids.insert(tx_id);
 
@@ -316,22 +324,22 @@ impl FindNodeOp {
         Ok(())
     }
 
-    pub(crate) fn handle<'a>(
+    pub(crate) fn handle<'a, R>(
         &mut self,
-        tx: &transaction::Transaction,
+        tx: &Transaction<transaction::Id>,
         resp: Response<'a>,
         config: &crate::Config,
-        tx_manager: &mut transaction::Manager,
-        msg_buffer: &mut msg_buffer::Buffer,
-    ) -> Result<(), Error> {
+        tx_manager: &mut Manager<transaction::Id>,
+        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
+        rng: &mut R,
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
         if !self.tx_ids.contains(&tx.tx_id) {
             return Ok(());
         }
         self.tx_ids.remove(&tx.tx_id);
-        debug!(
-            "handle target_id={:?} tx={:?} resp={:?}",
-            self.target_id, tx, resp
-        );
 
         match resp {
             Response::Resp(resp) => {
@@ -373,12 +381,13 @@ impl FindNodeOp {
         if outstanding_queries < MAX_CONCURRENT_REQUESTS {
             let mut queries_to_write = MAX_CONCURRENT_REQUESTS - outstanding_queries;
             while let Some(potential_node) = self.addr_space.pop_potential_addr() {
-                let tx_id = msg_buffer.write_query(
+                let tx_id = tx_manager.next_transaction_id(rng).unwrap();
+                msg_buffer.write_query(
+                    tx_id,
                     &QueryArgs::new(config.local_id, self.target_id),
                     potential_node.addr_opt_id,
                     config.default_query_timeout,
                     config.client_version(),
-                    tx_manager,
                 )?;
                 self.tx_ids.insert(tx_id);
 

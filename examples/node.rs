@@ -83,8 +83,8 @@ fn main() -> io::Result<()> {
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
 
-    let mut node: Node =
-        Node::new(config, &[], bootstrap_addrs).expect("dht to bootstrap successfully");
+    let mut node: Node = Node::new(config, &[], bootstrap_addrs, &mut rand::thread_rng())
+        .expect("dht to bootstrap successfully");
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -131,7 +131,7 @@ fn main() -> io::Result<()> {
 
             let filled_buf = &buf[..bytes_read];
 
-            match node.on_recv(filled_buf, src_addr) {
+            match node.on_recv(filled_buf, src_addr, &mut rng) {
                 Ok(()) => {}
                 Err(e) => {
                     error!("on_recv error: {:?}", e);

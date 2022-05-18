@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{transaction, ReadEvent};
+use crate::{krpc::transaction::Transaction, ReadEvent};
 use cloudburst::dht::{
     krpc::{self, Error, ErrorVal, QueryArgs, RespVal},
     node::AddrOptId,
@@ -19,18 +19,18 @@ use std::{
 };
 
 #[derive(Debug)]
-pub(crate) struct OutboundMsg {
-    tx_id: Option<transaction::Id>,
+pub(crate) struct OutboundMsg<TxId> {
+    tx_id: Option<TxId>,
     timeout: Duration,
     pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
     pub(crate) msg_data: Vec<u8>,
 }
 
-impl OutboundMsg {
-    pub(crate) fn into_transaction(self) -> Option<transaction::Transaction> {
+impl<TxId> OutboundMsg<TxId> {
+    pub(crate) fn into_transaction(self) -> Option<Transaction<TxId>> {
         let addr_opt_id = self.addr_opt_id;
         let timeout = self.timeout;
-        self.tx_id.map(|tx_id| transaction::Transaction {
+        self.tx_id.map(|tx_id| Transaction {
             tx_id,
             addr_opt_id,
             deadline: Instant::now() + timeout,
@@ -39,12 +39,12 @@ impl OutboundMsg {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Buffer {
+pub(crate) struct Buffer<TxId> {
     inbound: VecDeque<ReadEvent>,
-    outbound: VecDeque<OutboundMsg>,
+    outbound: VecDeque<OutboundMsg<TxId>>,
 }
 
-impl Buffer {
+impl<TxId> Buffer<TxId> {
     pub(crate) fn new() -> Self {
         Self {
             inbound: VecDeque::new(),
@@ -62,18 +62,17 @@ impl Buffer {
 
     pub(crate) fn write_query<A, T>(
         &mut self,
+        tx_id: TxId,
         args: &T,
         addr_opt_id: A,
         timeout: Duration,
         client_version: Option<&[u8]>,
-        tx_manager: &mut transaction::Manager,
-    ) -> Result<transaction::Id, Error>
+    ) -> Result<(), Error>
     where
         T: QueryArgs,
         A: Into<AddrOptId<SocketAddr>>,
+        TxId: Copy + AsRef<[u8]>,
     {
-        let tx_id = tx_manager.next_transaction_id();
-
         let addr_opt_id = addr_opt_id.into();
 
         self.outbound.push_back(OutboundMsg {
@@ -87,7 +86,7 @@ impl Buffer {
             })?,
             timeout,
         });
-        Ok(tx_id)
+        Ok(())
     }
 
     pub(crate) fn write_resp<A, T>(
@@ -138,7 +137,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub(crate) fn pop_outbound(&mut self) -> Option<OutboundMsg> {
+    pub(crate) fn pop_outbound(&mut self) -> Option<OutboundMsg<TxId>> {
         self.outbound.pop_front()
     }
 }
