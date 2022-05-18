@@ -176,7 +176,7 @@ where
             if let Some(node_to_ping) = self.nodes.iter_mut().rev().flatten().find(|n| {
                 n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
             }) {
-                let tx_id = tx_manager.next_transaction_id(rng).unwrap();
+                let tx_id = crate::krpc::transaction::next_tx_id(tx_manager, rng).unwrap();
                 msg_buffer.write_query(
                     tx_id,
                     &QueryArgs::new(config.local_id),

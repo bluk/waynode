@@ -8,29 +8,12 @@
 
 //! Transactions correlate a KRPC query with its response.
 
-use cloudburst::dht::{krpc::transaction::Id, node::AddrOptId};
+use cloudburst::dht::krpc::transaction::{Id, Transaction};
 use std::{net::SocketAddr, time::Instant};
 
 #[derive(Debug)]
-pub(crate) struct Transaction<TxId> {
-    pub(crate) tx_id: TxId,
-    pub(crate) addr_opt_id: AddrOptId<SocketAddr>,
-    pub(crate) deadline: Instant,
-}
-
-impl<TxId> std::hash::Hash for Transaction<TxId>
-where
-    TxId: std::hash::Hash,
-{
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.tx_id.hash(state);
-        self.addr_opt_id.hash(state);
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Manager<TxId> {
-    transactions: Vec<Transaction<TxId>>,
+    transactions: Vec<Transaction<TxId, std::time::Instant>>,
 }
 
 impl<TxId> Default for Manager<TxId> {
@@ -51,10 +34,21 @@ impl<TxId> Manager<TxId> {
     }
 
     pub(crate) fn timeout(&self) -> Option<Instant> {
-        self.transactions.iter().map(|t| t.deadline).min()
+        self.transactions.iter().map(|t| t.timeout_deadline).min()
     }
 
-    pub(crate) fn remove(&mut self, tx_id: &TxId, addr: SocketAddr) -> Option<Transaction<TxId>>
+    pub fn contains_tx_id(&self, tx_id: &TxId) -> bool
+    where
+        TxId: PartialEq,
+    {
+        self.transactions.iter().any(|tx| *tx_id == tx.tx_id)
+    }
+
+    pub(crate) fn remove(
+        &mut self,
+        tx_id: &TxId,
+        addr: SocketAddr,
+    ) -> Option<Transaction<TxId, Instant>>
     where
         TxId: PartialEq,
     {
@@ -69,18 +63,21 @@ impl<TxId> Manager<TxId> {
         }
     }
 
-    pub(crate) fn push(&mut self, tx: Transaction<TxId>) {
+    pub(crate) fn push(&mut self, tx: Transaction<TxId, std::time::Instant>) {
         self.transactions.push(tx);
         self.transactions
-            .sort_unstable_by(|a, b| a.deadline.cmp(&b.deadline));
+            .sort_unstable_by(|a, b| a.timeout_deadline.cmp(&b.timeout_deadline));
     }
 
-    pub(crate) fn timed_out_txs(&mut self, now: Instant) -> Option<Vec<Transaction<TxId>>> {
+    pub(crate) fn timed_out_txs(
+        &mut self,
+        now: Instant,
+    ) -> Option<Vec<Transaction<TxId, std::time::Instant>>> {
         if let Some(idx) = self
             .transactions
             .iter()
             .rev()
-            .position(|tx| tx.deadline <= now)
+            .position(|tx| tx.timeout_deadline <= now)
         {
             Some(self.transactions.drain(0..=idx).collect())
         } else {
@@ -89,17 +86,15 @@ impl<TxId> Manager<TxId> {
     }
 }
 
-impl Manager<Id> {
-    #[inline]
-    pub(crate) fn next_transaction_id<R>(&mut self, rng: &mut R) -> Result<Id, rand::Error>
-    where
-        R: rand::Rng,
-    {
-        loop {
-            let tx_id = Id::rand(rng)?;
-            if self.transactions.iter().all(|tx| tx_id != tx.tx_id) {
-                return Ok(tx_id);
-            }
+#[inline]
+pub(crate) fn next_tx_id<R>(manager: &Manager<Id>, rng: &mut R) -> Result<Id, rand::Error>
+where
+    R: rand::Rng,
+{
+    loop {
+        let tx_id = Id::rand(rng)?;
+        if !manager.contains_tx_id(&tx_id) {
+            return Ok(tx_id);
         }
     }
 }

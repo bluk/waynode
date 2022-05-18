@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{krpc::transaction::Transaction, ReadEvent};
+use crate::ReadEvent;
 use cloudburst::dht::{
-    krpc::{self, Error, ErrorVal, QueryArgs, RespVal},
+    krpc::{self, transaction::Transaction, Error, ErrorVal, QueryArgs, RespVal},
     node::AddrOptId,
 };
 use serde_bytes::Bytes;
@@ -27,13 +27,13 @@ pub(crate) struct OutboundMsg<TxId> {
 }
 
 impl<TxId> OutboundMsg<TxId> {
-    pub(crate) fn into_transaction(self) -> Option<Transaction<TxId>> {
+    pub(crate) fn into_transaction(self) -> Option<Transaction<TxId, Instant>> {
         let addr_opt_id = self.addr_opt_id;
         let timeout = self.timeout;
         self.tx_id.map(|tx_id| Transaction {
             tx_id,
             addr_opt_id,
-            deadline: Instant::now() + timeout,
+            timeout_deadline: Instant::now() + timeout,
         })
     }
 }

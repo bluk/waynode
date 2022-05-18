@@ -6,16 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{
-    krpc::transaction::{Manager, Transaction},
-    msg_buffer, SupportedAddr,
-};
+use crate::{krpc::transaction::Manager, msg_buffer, SupportedAddr};
 
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
         find_node::{QueryArgs, RespValues},
-        transaction, Error, RespMsg,
+        transaction::{self, Transaction},
+        Error, RespMsg,
     },
     node::{self, AddrId, AddrOptId, Id},
 };
@@ -305,7 +303,7 @@ impl FindNodeOp {
     {
         let mut count = 0;
         while let Some(potential_addr_opt_id) = self.addr_space.pop_potential_addr() {
-            let tx_id = tx_manager.next_transaction_id(rng).unwrap();
+            let tx_id = crate::krpc::transaction::next_tx_id(tx_manager, rng).unwrap();
             msg_buffer.write_query(
                 tx_id,
                 &QueryArgs::new(config.local_id, self.target_id),
@@ -326,7 +324,7 @@ impl FindNodeOp {
 
     pub(crate) fn handle<'a, R>(
         &mut self,
-        tx: &Transaction<transaction::Id>,
+        tx: &Transaction<transaction::Id, std::time::Instant>,
         resp: Response<'a>,
         config: &crate::Config,
         tx_manager: &mut Manager<transaction::Id>,
@@ -381,7 +379,7 @@ impl FindNodeOp {
         if outstanding_queries < MAX_CONCURRENT_REQUESTS {
             let mut queries_to_write = MAX_CONCURRENT_REQUESTS - outstanding_queries;
             while let Some(potential_node) = self.addr_space.pop_potential_addr() {
-                let tx_id = tx_manager.next_transaction_id(rng).unwrap();
+                let tx_id = crate::krpc::transaction::next_tx_id(tx_manager, rng).unwrap();
                 msg_buffer.write_query(
                     tx_id,
                     &QueryArgs::new(config.local_id, self.target_id),
