@@ -8,92 +8,19 @@
 
 //! Transactions correlate a KRPC query with its response.
 
-use cloudburst::dht::krpc::transaction::{Id, Transaction};
-use std::{net::SocketAddr, time::Instant};
-
-#[derive(Debug)]
-pub(crate) struct Manager<TxId> {
-    transactions: Vec<Transaction<TxId, std::time::Instant>>,
-}
-
-impl<TxId> Default for Manager<TxId> {
-    fn default() -> Self {
-        Self {
-            transactions: Vec::default(),
-        }
-    }
-}
-
-impl<TxId> Manager<TxId> {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.transactions.len()
-    }
-
-    pub(crate) fn timeout(&self) -> Option<Instant> {
-        self.transactions.iter().map(|t| t.timeout_deadline).min()
-    }
-
-    pub fn contains_tx_id(&self, tx_id: &TxId) -> bool
-    where
-        TxId: PartialEq,
-    {
-        self.transactions.iter().any(|tx| *tx_id == tx.tx_id)
-    }
-
-    pub(crate) fn remove(
-        &mut self,
-        tx_id: &TxId,
-        addr: SocketAddr,
-    ) -> Option<Transaction<TxId, Instant>>
-    where
-        TxId: PartialEq,
-    {
-        if let Some(idx) = self
-            .transactions
-            .iter()
-            .position(|t| t.tx_id == *tx_id && *t.addr_opt_id.addr() == addr)
-        {
-            Some(self.transactions.remove(idx))
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn push(&mut self, tx: Transaction<TxId, std::time::Instant>) {
-        self.transactions.push(tx);
-        self.transactions
-            .sort_unstable_by(|a, b| a.timeout_deadline.cmp(&b.timeout_deadline));
-    }
-
-    pub(crate) fn timed_out_txs(
-        &mut self,
-        now: Instant,
-    ) -> Option<Vec<Transaction<TxId, std::time::Instant>>> {
-        if let Some(idx) = self
-            .transactions
-            .iter()
-            .rev()
-            .position(|tx| tx.timeout_deadline <= now)
-        {
-            Some(self.transactions.drain(0..=idx).collect())
-        } else {
-            None
-        }
-    }
-}
+use cloudburst::dht::krpc::transaction::{Id, Transactions};
 
 #[inline]
-pub(crate) fn next_tx_id<R>(manager: &Manager<Id>, rng: &mut R) -> Result<Id, rand::Error>
+pub(crate) fn next_tx_id<R, A, I>(
+    active_txs: &Transactions<Id, A, I>,
+    rng: &mut R,
+) -> Result<Id, rand::Error>
 where
     R: rand::Rng,
 {
     loop {
         let tx_id = Id::rand(rng)?;
-        if !manager.contains_tx_id(&tx_id) {
+        if !active_txs.contains_tx_id(&tx_id) {
             return Ok(tx_id);
         }
     }

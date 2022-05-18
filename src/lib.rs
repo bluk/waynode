@@ -42,10 +42,14 @@ pub mod krpc;
 pub(crate) mod msg_buffer;
 pub(crate) mod routing;
 
-use crate::{find_node_op::FindNodeOp, krpc::transaction::Manager};
+use crate::find_node_op::FindNodeOp;
+
 use bt_bencode::Value;
 use cloudburst::dht::{
-    krpc::{transaction, Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty},
+    krpc::{
+        transaction::{self, Transactions},
+        Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty,
+    },
     node::{AddrId, AddrOptId, Id, LocalId},
 };
 use std::{
@@ -223,7 +227,7 @@ impl Config {
 pub struct Node {
     config: Config,
     routing_table: routing::RoutingTable<transaction::Id>,
-    tx_manager: Manager<transaction::Id>,
+    tx_manager: Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
     msg_buffer: msg_buffer::Buffer<transaction::Id>,
 
     find_node_ops: Vec<FindNodeOp>,
@@ -258,7 +262,7 @@ impl Node {
         let mut dht = Self {
             config,
             routing_table,
-            tx_manager: Manager::new(),
+            tx_manager: Transactions::default(),
             msg_buffer: msg_buffer::Buffer::new(),
             find_node_ops: Vec::new(),
         };
@@ -307,7 +311,7 @@ impl Node {
             if let Some(tx) = value
                 .tx_id()
                 .and_then(|tx_id| transaction::Id::try_from(tx_id).ok())
-                .and_then(|tx_id| self.tx_manager.remove(&tx_id, addr))
+                .and_then(|tx_id| self.tx_manager.remove(&tx_id, &addr))
             {
                 match kind {
                     Ty::Response => {
@@ -350,7 +354,7 @@ impl Node {
                                 msg: MsgEvent::Resp(value),
                             });
                         } else {
-                            self.tx_manager.push(tx);
+                            self.tx_manager.insert(tx);
                         }
                     }
                     Ty::Error => {
@@ -385,7 +389,7 @@ impl Node {
                     }
                     // unexpected
                     Ty::Query | Ty::Unknown(_) => {
-                        self.tx_manager.push(tx);
+                        self.tx_manager.insert(tx);
                     }
                     _ => {
                         todo!()
@@ -501,7 +505,7 @@ impl Node {
                 addr: *out_msg.addr_opt_id.addr(),
             });
             if let Some(tx) = out_msg.into_transaction() {
-                self.tx_manager.push(tx);
+                self.tx_manager.insert(tx);
             }
             Ok(result)
         } else {
@@ -511,7 +515,7 @@ impl Node {
 
     #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
-        [self.tx_manager.timeout(), self.routing_table.timeout()]
+        [self.tx_manager.min_timeout(), self.routing_table.timeout()]
             .iter()
             .filter_map(|&deadline| deadline)
             .min()
@@ -537,7 +541,7 @@ impl Node {
         R: rand::Rng,
     {
         debug!("on_timeout_with_now now={:?}", now);
-        if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(now) {
+        if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(&now) {
             for tx in timed_out_txs {
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(

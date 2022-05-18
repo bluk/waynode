@@ -6,9 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{find_node_op::FindNodeOp, krpc::transaction::Manager, msg_buffer};
+use crate::{find_node_op::FindNodeOp, msg_buffer};
 use cloudburst::dht::{
-    krpc::{ping::QueryArgs, transaction, Error, Ty},
+    krpc::{
+        ping::QueryArgs,
+        transaction::{self, Transactions},
+        Error, Ty,
+    },
     node::{AddrId, AddrOptId, Id},
 };
 use std::{
@@ -152,7 +156,7 @@ where
     fn ping_least_recently_seen_questionable_node<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -198,7 +202,7 @@ where
         addr_id: AddrId<A>,
         kind: &Ty<'a>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -288,7 +292,7 @@ where
         &mut self,
         addr_id: &AddrId<A>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -684,7 +688,7 @@ where
         &mut self,
         target_id: Id,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         bootstrap_addrs: I,
         rng: &mut R,
@@ -759,7 +763,7 @@ where
         addr_id: AddrId<A>,
         kind: &Ty<'a>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -807,7 +811,7 @@ where
         &mut self,
         addr_id: AddrId<A>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -837,7 +841,7 @@ where
     pub(crate) fn on_timeout<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         find_node_ops: &mut Vec<FindNodeOp>,
         rng: &mut R,
@@ -927,7 +931,7 @@ impl<TxId> RoutingTable<TxId> {
         &mut self,
         target_id: Id,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         find_node_ops: &mut Vec<FindNodeOp>,
         bootstrap_addrs: I,
@@ -998,7 +1002,7 @@ impl<TxId> RoutingTable<TxId> {
         addr_id: AddrId<SocketAddr>,
         kind: &Ty<'a>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -1044,7 +1048,7 @@ impl<TxId> RoutingTable<TxId> {
         &mut self,
         addr_id: AddrId<SocketAddr>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
         now: Instant,
@@ -1099,7 +1103,7 @@ impl<TxId> RoutingTable<TxId> {
     pub(crate) fn on_timeout<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         find_node_ops: &mut Vec<FindNodeOp>,
         rng: &mut R,

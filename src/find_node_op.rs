@@ -6,13 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{krpc::transaction::Manager, msg_buffer, SupportedAddr};
+use crate::{msg_buffer, SupportedAddr};
 
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
         find_node::{QueryArgs, RespValues},
-        transaction::{self, Transaction},
+        transaction::{self, Transaction, Transactions},
         Error, RespMsg,
     },
     node::{self, AddrId, AddrOptId, Id},
@@ -294,7 +294,7 @@ impl FindNodeOp {
     pub(crate) fn start<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
     ) -> Result<(), Error>
@@ -324,10 +324,10 @@ impl FindNodeOp {
 
     pub(crate) fn handle<'a, R>(
         &mut self,
-        tx: &Transaction<transaction::Id, std::time::Instant>,
+        tx: &Transaction<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         resp: Response<'a>,
         config: &crate::Config,
-        tx_manager: &mut Manager<transaction::Id>,
+        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
     ) -> Result<(), Error>
