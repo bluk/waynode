@@ -26,8 +26,8 @@ enum NodeState {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node<A, TxId, Instant> {
-    addr_id: AddrId<A>,
+struct Node<Addr, TxId, Instant> {
+    addr_id: AddrId<Addr>,
     karma: i8,
     next_response_deadline: Instant,
     next_query_deadline: Instant,
@@ -37,7 +37,6 @@ struct Node<A, TxId, Instant> {
 
 impl<A, TxId, Instant> Node<A, TxId, Instant>
 where
-    A: Into<SocketAddr>,
     Instant: cloudburst::time::Instant,
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -136,19 +135,20 @@ where
         }
     }
 
+    #[inline]
     fn is_full(&self) -> bool {
         self.nodes.iter().all(std::option::Option::is_some)
     }
 
     #[inline]
-    fn update_expected_change_deadline(&mut self) {
-        self.expected_change_deadline = Instant::now() + EXPECT_CHANGE_INTERVAL;
+    fn update_expected_change_deadline(&mut self, now: Instant) {
+        self.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
     }
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
         self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now.clone()));
         self.sort_node_ids(&now);
-        self.update_expected_change_deadline();
+        self.update_expected_change_deadline(now);
     }
 
     fn ping_least_recently_seen_questionable_node<R>(
@@ -222,9 +222,13 @@ where
                 Ty::Response | Ty::Query => {
                     self.sort_node_ids(&now);
                     self.ping_least_recently_seen_questionable_node(
-                        config, tx_manager, msg_buffer, rng, now,
+                        config,
+                        tx_manager,
+                        msg_buffer,
+                        rng,
+                        now.clone(),
                     )?;
-                    self.update_expected_change_deadline();
+                    self.update_expected_change_deadline(now);
                 }
                 Ty::Error | Ty::Unknown(_) => match node.state_with_now(&now) {
                     NodeState::Good => {
@@ -242,7 +246,7 @@ where
                         {
                             if let Some(replacement_node) = replacement_node.take() {
                                 *node = replacement_node;
-                                self.update_expected_change_deadline();
+                                self.update_expected_change_deadline(now.clone());
                             }
                         }
                         self.sort_node_ids(&now);
@@ -269,7 +273,7 @@ where
                 node.on_msg_received(kind, now.clone());
                 self.nodes[pos] = Some(node);
                 self.sort_node_ids(&now);
-                self.update_expected_change_deadline();
+                self.update_expected_change_deadline(now);
             } else if let Some(pos) = self
                 .replacement_nodes
                 .iter_mut()
@@ -324,7 +328,7 @@ where
                     {
                         if let Some(replacement_node) = replacement_node.take() {
                             *node = replacement_node;
-                            self.update_expected_change_deadline();
+                            self.update_expected_change_deadline(now.clone());
                         }
                     }
                     self.sort_node_ids(&now);
@@ -399,7 +403,7 @@ where
     fn sort_node_ids(&mut self, now: &Instant) {
         self.nodes.sort_unstable_by(|a, b| match (a, b) {
             (Some(a), Some(b)) => {
-                match (a.state_with_now(&now), b.state_with_now(&now)) {
+                match (a.state_with_now(now), b.state_with_now(now)) {
                     (NodeState::Good, NodeState::Questionable | NodeState::Bad)
                     | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
                     (NodeState::Questionable | NodeState::Bad, NodeState::Good)
@@ -702,7 +706,7 @@ where
         R: rand::Rng,
     {
         let neighbors = self
-            .find_neighbors(target_id, now)
+            .find_neighbors(target_id, &now)
             .take(8)
             .map(|a| AddrOptId::new((*a.addr()).clone(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
@@ -747,7 +751,7 @@ where
         }
     }
 
-    pub(crate) fn find_neighbors(&self, id: Id, now: Instant) -> std::vec::IntoIter<AddrId<A>>
+    pub(crate) fn find_neighbors(&self, id: Id, now: &Instant) -> std::vec::IntoIter<AddrId<A>>
     where
         A: Clone,
     {
@@ -1153,7 +1157,7 @@ where
     pub fn find_neighbors_ipv4(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
         match self {
             RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                routing_table.find_neighbors(id, Instant::now())
+                routing_table.find_neighbors(id, &Instant::now())
             }
             RoutingTable::Ipv6(_) => Vec::new().into_iter(),
         }
@@ -1162,7 +1166,7 @@ where
     pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         match self {
             RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                routing_table.find_neighbors(id, Instant::now())
+                routing_table.find_neighbors(id, &Instant::now())
             }
             RoutingTable::Ipv4(_) => Vec::new().into_iter(),
         }
