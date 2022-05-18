@@ -15,12 +15,8 @@ use cloudburst::dht::{
     },
     node::{AddrId, AddrOptId, Id},
 };
-use std::{
-    cmp::Ordering,
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    ops::RangeInclusive,
-    time::{Duration, Instant},
-};
+use core::{cmp::Ordering, ops::RangeInclusive, time::Duration};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 #[derive(Debug, PartialEq)]
 enum NodeState {
@@ -30,7 +26,7 @@ enum NodeState {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node<A, TxId> {
+struct Node<A, TxId, Instant> {
     addr_id: AddrId<A>,
     karma: i8,
     next_response_deadline: Instant,
@@ -39,9 +35,10 @@ struct Node<A, TxId> {
     last_pinged: Option<Instant>,
 }
 
-impl<A, TxId> Node<A, TxId>
+impl<A, TxId, Instant> Node<A, TxId, Instant>
 where
     A: Into<SocketAddr>,
+    Instant: cloudburst::time::Instant,
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
@@ -49,19 +46,19 @@ where
         Self {
             addr_id,
             karma: 0,
-            next_response_deadline: now + Self::TIMEOUT_INTERVAL,
+            next_response_deadline: now.clone() + Self::TIMEOUT_INTERVAL,
             next_query_deadline: now + Self::TIMEOUT_INTERVAL,
             tx_id: None,
             last_pinged: None,
         }
     }
 
-    fn state_with_now(&self, now: Instant) -> NodeState {
-        if now < self.next_response_deadline {
+    fn state_with_now(&self, now: &Instant) -> NodeState {
+        if *now < self.next_response_deadline {
             return NodeState::Good;
         }
 
-        if now < self.next_query_deadline {
+        if *now < self.next_query_deadline {
             return NodeState::Good;
         }
 
@@ -73,7 +70,7 @@ where
     }
 
     fn next_msg_deadline(&self) -> Instant {
-        core::cmp::max(self.next_response_deadline, self.next_query_deadline)
+        core::cmp::max(&self.next_response_deadline, &self.next_query_deadline).clone()
     }
 
     fn on_msg_received(&mut self, kind: &Ty, now: Instant) {
@@ -116,18 +113,19 @@ const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const BUCKET_SIZE: usize = 8;
 
 #[derive(Debug)]
-struct Bucket<A, TxId> {
+struct Bucket<A, TxId, Instant> {
     range: RangeInclusive<Id>,
-    nodes: [Option<Node<A, TxId>>; BUCKET_SIZE],
-    replacement_nodes: [Option<Node<A, TxId>>; BUCKET_SIZE],
+    nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
+    replacement_nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
     expected_change_deadline: Instant,
 }
 
-impl<A, TxId> Bucket<A, TxId>
+impl<A, TxId, Instant> Bucket<A, TxId, Instant>
 where
     A: Into<SocketAddr>,
+    Instant: cloudburst::time::Instant,
 {
-    const NODES_NONE: Option<Node<A, TxId>> = None;
+    const NODES_NONE: Option<Node<A, TxId, Instant>> = None;
 
     fn new(range: RangeInclusive<Id>, now: Instant) -> Self {
         Bucket {
@@ -148,8 +146,8 @@ where
     }
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
-        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now));
-        self.sort_node_ids(now);
+        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now.clone()));
+        self.sort_node_ids(&now);
         self.update_expected_change_deadline();
     }
 
@@ -169,7 +167,9 @@ where
             .nodes
             .iter()
             .flatten()
-            .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
+            .filter(|n| {
+                n.state_with_now(&now) == NodeState::Questionable && n.last_pinged.is_some()
+            })
             .count();
         let replacement_nodes_count = self
             .replacement_nodes
@@ -178,7 +178,7 @@ where
             .count();
         if pinged_nodes_count < replacement_nodes_count {
             if let Some(node_to_ping) = self.nodes.iter_mut().rev().flatten().find(|n| {
-                n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
+                n.state_with_now(&now) == NodeState::Questionable && n.last_pinged.is_none()
             }) {
                 let tx_id = crate::krpc::transaction::next_tx_id(tx_manager, rng).unwrap();
                 msg_buffer.write_query(
@@ -217,21 +217,21 @@ where
             .flatten()
             .find(|n| n.addr_id == addr_id)
         {
-            node.on_msg_received(kind, now);
+            node.on_msg_received(kind, now.clone());
             match kind {
                 Ty::Response | Ty::Query => {
-                    self.sort_node_ids(now);
+                    self.sort_node_ids(&now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, rng, now,
                     )?;
                     self.update_expected_change_deadline();
                 }
-                Ty::Error | Ty::Unknown(_) => match node.state_with_now(now) {
+                Ty::Error | Ty::Unknown(_) => match node.state_with_now(&now) {
                     NodeState::Good => {
-                        self.sort_node_ids(now);
+                        self.sort_node_ids(&now);
                     }
                     NodeState::Questionable => {
-                        self.sort_node_ids(now);
+                        self.sort_node_ids(&now);
                         self.ping_least_recently_seen_questionable_node(
                             config, tx_manager, msg_buffer, rng, now,
                         )?;
@@ -245,7 +245,7 @@ where
                                 self.update_expected_change_deadline();
                             }
                         }
-                        self.sort_node_ids(now);
+                        self.sort_node_ids(&now);
                     }
                 },
                 _ => {
@@ -263,12 +263,12 @@ where
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
                 n.as_ref()
-                    .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
+                    .map_or(false, |n| n.state_with_now(&now) == NodeState::Bad)
             }) {
-                let mut node = Node::with_addr_id(addr_id, now);
-                node.on_msg_received(kind, now);
+                let mut node = Node::with_addr_id(addr_id, now.clone());
+                node.on_msg_received(kind, now.clone());
                 self.nodes[pos] = Some(node);
-                self.sort_node_ids(now);
+                self.sort_node_ids(&now);
                 self.update_expected_change_deadline();
             } else if let Some(pos) = self
                 .replacement_nodes
@@ -276,10 +276,10 @@ where
                 .rev()
                 .position(|n| n.is_none())
             {
-                let mut node = Node::with_addr_id(addr_id, now);
-                node.on_msg_received(kind, now);
+                let mut node = Node::with_addr_id(addr_id, now.clone());
+                node.on_msg_received(kind, now.clone());
                 self.replacement_nodes[pos] = Some(node);
-                self.sort_node_ids(now);
+                self.sort_node_ids(&now);
                 self.ping_least_recently_seen_questionable_node(
                     config, tx_manager, msg_buffer, rng, now,
                 )?;
@@ -308,12 +308,12 @@ where
             .find(|n| n.addr_id == *addr_id)
         {
             node.on_ping_timeout();
-            match node.state_with_now(now) {
+            match node.state_with_now(&now) {
                 NodeState::Good => {
                     // The sort order will not change if the state is still good
                 }
                 NodeState::Questionable => {
-                    self.sort_node_ids(now);
+                    self.sort_node_ids(&now);
                     self.ping_least_recently_seen_questionable_node(
                         config, tx_manager, msg_buffer, rng, now,
                     )?;
@@ -327,14 +327,14 @@ where
                             self.update_expected_change_deadline();
                         }
                     }
-                    self.sort_node_ids(now);
+                    self.sort_node_ids(&now);
                 }
             }
         }
         Ok(())
     }
 
-    fn split_insert(&mut self, node: Node<A, TxId>) {
+    fn split_insert(&mut self, node: Node<A, TxId, Instant>) {
         if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
             self.nodes[pos] = Some(node);
         } else {
@@ -342,7 +342,7 @@ where
         }
     }
 
-    fn split_replacement_insert(&mut self, node: Node<A, TxId>) {
+    fn split_replacement_insert(&mut self, node: Node<A, TxId, Instant>) {
         if let Some(pos) = self
             .replacement_nodes
             .iter()
@@ -354,14 +354,14 @@ where
         }
     }
 
-    fn split(self, now: Instant) -> (Bucket<A, TxId>, Bucket<A, TxId>)
+    fn split(self, now: Instant) -> (Bucket<A, TxId, Instant>, Bucket<A, TxId, Instant>)
     where
         A: Clone,
         TxId: Clone,
     {
         let middle = r::middle(*self.range.end(), *self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle), now);
+        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle), now.clone());
         let mut upper_bucket = Bucket::new(middle..=*self.range.end(), now);
 
         for node in self.nodes.iter().flatten() {
@@ -390,16 +390,16 @@ where
             .iter()
             .flatten()
             .filter(move |n| {
-                n.state_with_now(now) == NodeState::Questionable
-                    || n.state_with_now(now) == NodeState::Good
+                n.state_with_now(&now) == NodeState::Questionable
+                    || n.state_with_now(&now) == NodeState::Good
             })
             .map(|n| &n.addr_id)
     }
 
-    fn sort_node_ids(&mut self, now: Instant) {
+    fn sort_node_ids(&mut self, now: &Instant) {
         self.nodes.sort_unstable_by(|a, b| match (a, b) {
             (Some(a), Some(b)) => {
-                match (a.state_with_now(now), b.state_with_now(now)) {
+                match (a.state_with_now(&now), b.state_with_now(&now)) {
                     (NodeState::Good, NodeState::Questionable | NodeState::Bad)
                     | (NodeState::Questionable, NodeState::Bad) => return Ordering::Less,
                     (NodeState::Questionable | NodeState::Bad, NodeState::Good)
@@ -492,6 +492,7 @@ mod r {
 
         Id::from(data)
     }
+
     trait IdBytes {
         #[must_use]
         fn overflowing_add(&mut self, other: &Self) -> bool;
@@ -666,20 +667,21 @@ mod r {
 const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug)]
-pub struct Table<A, TxId> {
+pub struct Table<A, TxId, Instant> {
     pivot: Id,
-    buckets: Vec<Bucket<A, TxId>>,
+    buckets: Vec<Bucket<A, TxId, Instant>>,
     find_pivot_id_deadline: Instant,
 }
 
-impl<A, TxId> Table<A, TxId>
+impl<A, TxId, Instant> Table<A, TxId, Instant>
 where
     A: Into<SocketAddr>,
+    Instant: cloudburst::time::Instant,
 {
     pub fn new(pivot: Id, now: Instant) -> Self {
         Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max(), now)],
+            buckets: vec![Bucket::new(Id::min()..=Id::max(), now.clone())],
             find_pivot_id_deadline: now,
         }
     }
@@ -726,7 +728,7 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(now);
+            let (mut first_bucket, mut second_bucket) = bucket.split(now.clone());
             if first_bucket.range.contains(&node_id) {
                 first_bucket.try_insert(addr_id, now);
             } else {
@@ -752,7 +754,7 @@ where
         let mut nodes = self
             .buckets
             .iter()
-            .flat_map(|b| b.prioritized_nodes(now).cloned())
+            .flat_map(|b| b.prioritized_nodes(now.clone()).cloned())
             .collect::<Vec<_>>();
         nodes.sort_by_key(|a| a.id().distance(id));
         nodes.into_iter()
@@ -785,7 +787,7 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(now);
+            let (mut first_bucket, mut second_bucket) = bucket.split(now.clone());
             if first_bucket.range.contains(&node_id) {
                 first_bucket
                     .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, rng, now)?;
@@ -833,8 +835,8 @@ where
     pub(crate) fn timeout(&self) -> Option<Instant> {
         self.buckets
             .iter()
-            .map(|b| b.expected_change_deadline)
-            .chain(std::iter::once(self.find_pivot_id_deadline))
+            .map(|b| b.expected_change_deadline.clone())
+            .chain(std::iter::once(self.find_pivot_id_deadline.clone()))
             .min()
     }
 
@@ -859,17 +861,17 @@ where
                 msg_buffer,
                 std::iter::empty(),
                 rng,
-                now,
+                now.clone(),
             )?);
-            self.find_pivot_id_deadline = now + FIND_LOCAL_ID_INTERVAL;
+            self.find_pivot_id_deadline = now.clone() + FIND_LOCAL_ID_INTERVAL;
         }
 
         let target_ids = self
             .buckets
             .iter_mut()
-            .filter(|b| b.expected_change_deadline <= now)
+            .filter(|b| b.expected_change_deadline <= now.clone())
             .map(|b| {
-                b.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
+                b.expected_change_deadline = now.clone() + EXPECT_CHANGE_INTERVAL;
                 r::rand_in_inclusive_range(&b.range, rng)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -882,7 +884,7 @@ where
                 msg_buffer,
                 std::iter::empty(),
                 rng,
-                now,
+                now.clone(),
             )?);
             debug!(
                 "starting to find target_id={:?} find_node_ops.len={}",
@@ -895,13 +897,19 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) enum RoutingTable<TxId> {
-    Ipv4(Table<SocketAddrV4, TxId>),
-    Ipv6(Table<SocketAddrV6, TxId>),
-    Ipv4AndIpv6(Table<SocketAddrV4, TxId>, Table<SocketAddrV6, TxId>),
+pub(crate) enum RoutingTable<TxId, Instant> {
+    Ipv4(Table<SocketAddrV4, TxId, Instant>),
+    Ipv6(Table<SocketAddrV6, TxId, Instant>),
+    Ipv4AndIpv6(
+        Table<SocketAddrV4, TxId, Instant>,
+        Table<SocketAddrV6, TxId, Instant>,
+    ),
 }
 
-impl<TxId> RoutingTable<TxId> {
+impl<TxId, Instant> RoutingTable<TxId, Instant>
+where
+    Instant: cloudburst::time::Instant,
+{
     pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: Instant)
     where
         I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
@@ -912,7 +920,7 @@ impl<TxId> RoutingTable<TxId> {
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now);
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now.clone());
                     }
                     RoutingTable::Ipv6(_) => {}
                 },
@@ -920,7 +928,7 @@ impl<TxId> RoutingTable<TxId> {
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now);
+                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now.clone());
                     }
                 },
             }
@@ -981,7 +989,7 @@ impl<TxId> RoutingTable<TxId> {
                     msg_buffer,
                     ipv4_socket_addrs,
                     rng,
-                    now,
+                    now.clone(),
                 )?);
                 find_node_ops.push(routing_table_v6.find_node(
                     target_id,
@@ -1093,8 +1101,9 @@ impl<TxId> RoutingTable<TxId> {
             RoutingTable::Ipv6(routing_table) => routing_table.timeout(),
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
                 [routing_table_v4.timeout(), routing_table_v6.timeout()]
+                    .as_ref()
                     .iter()
-                    .filter_map(|&deadline| deadline)
+                    .filter_map(std::clone::Clone::clone)
                     .min()
             }
         }
@@ -1126,7 +1135,7 @@ impl<TxId> RoutingTable<TxId> {
                     msg_buffer,
                     find_node_ops,
                     rng,
-                    now,
+                    now.clone(),
                 )?;
                 routing_table_v6.on_timeout(
                     config,
@@ -1168,8 +1177,9 @@ mod tests {
 
     #[test]
     fn test_split_bucket() {
-        let now = Instant::now();
-        let bucket: Bucket<SocketAddrV4, transaction::Id> = Bucket::new(Id::min()..=Id::max(), now);
+        let now = std::time::Instant::now();
+        let bucket: Bucket<SocketAddrV4, transaction::Id, _> =
+            Bucket::new(Id::min()..=Id::max(), now);
         let (first_bucket, second_bucket) = bucket.split(now);
         assert_eq!(
             first_bucket.range,

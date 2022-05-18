@@ -226,7 +226,7 @@ impl Config {
 #[derive(Debug)]
 pub struct Node {
     config: Config,
-    routing_table: routing::RoutingTable<transaction::Id>,
+    routing_table: routing::RoutingTable<transaction::Id, std::time::Instant>,
     tx_manager: Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
     msg_buffer: msg_buffer::Buffer<transaction::Id>,
 
