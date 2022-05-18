@@ -47,6 +47,7 @@ use crate::find_node_op::FindNodeOp;
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
+        ping,
         transaction::{self, Transactions},
         Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty,
     },
@@ -257,7 +258,7 @@ impl Node {
                 routing::Table::new(local_id, now),
             ),
         };
-        routing_table.try_insert_addr_ids(addr_ids, now);
+        routing_table.try_insert_addr_ids(addr_ids, &now);
 
         let mut dht = Self {
             config,
@@ -274,7 +275,7 @@ impl Node {
             &mut dht.find_node_ops,
             bootstrap_socket_addrs,
             rng,
-            now,
+            &now,
         )?;
         Ok(dht)
     }
@@ -329,12 +330,9 @@ impl Node {
                                     self.routing_table.on_msg_received(
                                         AddrId::new(addr, node_id),
                                         &kind,
-                                        &self.config,
-                                        &mut self.tx_manager,
-                                        &mut self.msg_buffer,
-                                        rng,
                                         now,
-                                    )?;
+                                    );
+                                    self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                                 }
                             }
                             for op in &mut self.find_node_ops {
@@ -362,12 +360,9 @@ impl Node {
                             self.routing_table.on_msg_received(
                                 AddrId::new(*tx.addr_opt_id.addr(), node_id),
                                 &kind,
-                                &self.config,
-                                &mut self.tx_manager,
-                                &mut self.msg_buffer,
-                                rng,
                                 now,
-                            )?;
+                            );
+                            self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
                         debug!("Received error for tx_local_id={:?}", tx.tx_id);
                         for op in &mut self.find_node_ops {
@@ -402,8 +397,8 @@ impl Node {
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::new(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
-                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, &self.config, &mut
-                            self.tx_manager, &mut self.msg_buffer, rng, now)?;
+                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, now);
+                            self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
 
                         self.msg_buffer.push_inbound(ReadEvent {
@@ -544,14 +539,10 @@ impl Node {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(&now) {
             for tx in timed_out_txs {
                 if let Some(node_id) = tx.addr_opt_id.id() {
-                    self.routing_table.on_resp_timeout(
-                        AddrId::new(*tx.addr_opt_id.addr(), node_id),
-                        &self.config,
-                        &mut self.tx_manager,
-                        &mut self.msg_buffer,
-                        rng,
-                        now,
-                    )?;
+                    self.routing_table
+                        .on_resp_timeout(AddrId::new(*tx.addr_opt_id.addr(), node_id), &now);
+
+                    self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                 }
 
                 for op in &mut self.find_node_ops {
@@ -579,7 +570,7 @@ impl Node {
             &mut self.msg_buffer,
             &mut self.find_node_ops,
             rng,
-            now,
+            &now,
         )?;
 
         debug!("remaining tx after timeout: {}", self.tx_manager.len());
@@ -593,6 +584,47 @@ impl Node {
 
     pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         self.routing_table.find_neighbors_ipv6(id)
+    }
+
+    fn ping_least_recently_seen_questionable_nodes<R>(
+        &mut self,
+        rng: &mut R,
+        now: Instant,
+    ) -> Result<(), Error>
+    where
+        R: rand::Rng,
+    {
+        while let Some(node_to_ping) = self.routing_table.find_node_to_ping_ipv4(&now) {
+            let tx_id = crate::krpc::transaction::next_tx_id(&self.tx_manager, rng).unwrap();
+            self.msg_buffer.write_query(
+                tx_id,
+                &ping::QueryArgs::new(self.config.local_id),
+                AddrOptId::new(
+                    *node_to_ping.addr_id.addr(),
+                    Some(node_to_ping.addr_id.id()),
+                ),
+                self.config.default_query_timeout,
+                self.config.client_version(),
+            )?;
+            node_to_ping.on_ping(now);
+        }
+
+        while let Some(node_to_ping) = self.routing_table.find_node_to_ping_ipv6(&now) {
+            let tx_id = crate::krpc::transaction::next_tx_id(&self.tx_manager, rng).unwrap();
+            self.msg_buffer.write_query(
+                tx_id,
+                &ping::QueryArgs::new(self.config.local_id),
+                AddrOptId::new(
+                    *node_to_ping.addr_id.addr(),
+                    Some(node_to_ping.addr_id.id()),
+                ),
+                self.config.default_query_timeout,
+                self.config.client_version(),
+            )?;
+            node_to_ping.on_ping(now);
+        }
+
+        Ok(())
     }
 }
 

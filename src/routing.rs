@@ -9,7 +9,6 @@
 use crate::{find_node_op::FindNodeOp, msg_buffer};
 use cloudburst::dht::{
     krpc::{
-        ping::QueryArgs,
         transaction::{self, Transactions},
         Error, Ty,
     },
@@ -26,8 +25,8 @@ enum NodeState {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node<Addr, TxId, Instant> {
-    addr_id: AddrId<Addr>,
+pub(crate) struct Node<Addr, TxId, Instant> {
+    pub(crate) addr_id: AddrId<Addr>,
     karma: i8,
     next_response_deadline: Instant,
     next_query_deadline: Instant,
@@ -98,12 +97,12 @@ where
         }
     }
 
-    fn on_ping_timeout(&mut self) {
+    pub(crate) fn on_ping_timeout(&mut self) {
         self.last_pinged = None;
         self.karma = self.karma.saturating_sub(1);
     }
 
-    fn on_ping(&mut self, now: Instant) {
+    pub(crate) fn on_ping(&mut self, now: Instant) {
         self.last_pinged = Some(now);
     }
 }
@@ -151,25 +150,12 @@ where
         self.update_expected_change_deadline(now);
     }
 
-    fn ping_least_recently_seen_questionable_node<R>(
-        &mut self,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
-    where
-        A: Clone,
-        R: rand::Rng,
-    {
+    fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
         let pinged_nodes_count = self
             .nodes
             .iter()
             .flatten()
-            .filter(|n| {
-                n.state_with_now(&now) == NodeState::Questionable && n.last_pinged.is_some()
-            })
+            .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
             .count();
         let replacement_nodes_count = self
             .replacement_nodes
@@ -177,39 +163,17 @@ where
             .filter(|n| n.is_some())
             .count();
         if pinged_nodes_count < replacement_nodes_count {
-            if let Some(node_to_ping) = self.nodes.iter_mut().rev().flatten().find(|n| {
-                n.state_with_now(&now) == NodeState::Questionable && n.last_pinged.is_none()
-            }) {
-                let tx_id = crate::krpc::transaction::next_tx_id(tx_manager, rng).unwrap();
-                msg_buffer.write_query(
-                    tx_id,
-                    &QueryArgs::new(config.local_id),
-                    AddrOptId::new(
-                        ((*node_to_ping.addr_id.addr()).clone()).into(),
-                        Some(node_to_ping.addr_id.id()),
-                    ),
-                    config.default_query_timeout,
-                    config.client_version(),
-                )?;
-                node_to_ping.on_ping(now);
-            }
+            self.nodes.iter_mut().rev().flatten().find(|n| {
+                n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
+            })
+        } else {
+            None
         }
-        Ok(())
     }
 
-    fn on_msg_received<'a, R>(
-        &mut self,
-        addr_id: AddrId<A>,
-        kind: &Ty<'a>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
+    fn on_msg_received<'a>(&mut self, addr_id: AddrId<A>, kind: &Ty<'a>, now: Instant)
     where
         A: PartialEq + Clone,
-        R: rand::Rng,
     {
         if let Some(node) = self
             .nodes
@@ -221,24 +185,12 @@ where
             match kind {
                 Ty::Response | Ty::Query => {
                     self.sort_node_ids(&now);
-                    self.ping_least_recently_seen_questionable_node(
-                        config,
-                        tx_manager,
-                        msg_buffer,
-                        rng,
-                        now.clone(),
-                    )?;
+
                     self.update_expected_change_deadline(now);
                 }
                 Ty::Error | Ty::Unknown(_) => match node.state_with_now(&now) {
-                    NodeState::Good => {
+                    NodeState::Good | NodeState::Questionable => {
                         self.sort_node_ids(&now);
-                    }
-                    NodeState::Questionable => {
-                        self.sort_node_ids(&now);
-                        self.ping_least_recently_seen_questionable_node(
-                            config, tx_manager, msg_buffer, rng, now,
-                        )?;
                     }
                     NodeState::Bad => {
                         if let Some(replacement_node) =
@@ -259,7 +211,7 @@ where
         } else {
             match kind {
                 Ty::Response | Ty::Query | Ty::Error => {}
-                Ty::Unknown(_) => return Ok(()),
+                Ty::Unknown(_) => return,
                 _ => {
                     todo!()
                 }
@@ -284,26 +236,13 @@ where
                 node.on_msg_received(kind, now.clone());
                 self.replacement_nodes[pos] = Some(node);
                 self.sort_node_ids(&now);
-                self.ping_least_recently_seen_questionable_node(
-                    config, tx_manager, msg_buffer, rng, now,
-                )?;
             }
         }
-        Ok(())
     }
 
-    fn on_resp_timeout<R>(
-        &mut self,
-        addr_id: &AddrId<A>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
+    fn on_resp_timeout(&mut self, addr_id: &AddrId<A>, now: &Instant)
     where
         A: PartialEq + Clone,
-        R: rand::Rng,
     {
         if let Some(node) = self
             .nodes
@@ -312,15 +251,12 @@ where
             .find(|n| n.addr_id == *addr_id)
         {
             node.on_ping_timeout();
-            match node.state_with_now(&now) {
+            match node.state_with_now(now) {
                 NodeState::Good => {
                     // The sort order will not change if the state is still good
                 }
                 NodeState::Questionable => {
-                    self.sort_node_ids(&now);
-                    self.ping_least_recently_seen_questionable_node(
-                        config, tx_manager, msg_buffer, rng, now,
-                    )?;
+                    self.sort_node_ids(now);
                 }
                 NodeState::Bad => {
                     if let Some(replacement_node) =
@@ -331,11 +267,10 @@ where
                             self.update_expected_change_deadline(now.clone());
                         }
                     }
-                    self.sort_node_ids(&now);
+                    self.sort_node_ids(now);
                 }
             }
         }
-        Ok(())
     }
 
     fn split_insert(&mut self, node: Node<A, TxId, Instant>) {
@@ -698,7 +633,7 @@ where
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         bootstrap_addrs: I,
         rng: &mut R,
-        now: Instant,
+        now: &Instant,
     ) -> Result<FindNodeOp, Error>
     where
         I: IntoIterator<Item = A>,
@@ -706,7 +641,7 @@ where
         R: rand::Rng,
     {
         let neighbors = self
-            .find_neighbors(target_id, &now)
+            .find_neighbors(target_id, now)
             .take(8)
             .map(|a| AddrOptId::new((*a.addr()).clone(), Some(a.id())))
             .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
@@ -764,24 +699,14 @@ where
         nodes.into_iter()
     }
 
-    pub(crate) fn on_msg_received<'a, R>(
-        &mut self,
-        addr_id: AddrId<A>,
-        kind: &Ty<'a>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
+    pub(crate) fn on_msg_received<'a>(&mut self, addr_id: AddrId<A>, kind: &Ty<'a>, now: Instant)
     where
         A: Clone + PartialEq,
         TxId: Clone,
-        R: rand::Rng,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
-            return Ok(());
+            return;
         }
 
         let bucket = self
@@ -793,11 +718,9 @@ where
             let bucket = self.buckets.pop().expect("last bucket should always exist");
             let (mut first_bucket, mut second_bucket) = bucket.split(now.clone());
             if first_bucket.range.contains(&node_id) {
-                first_bucket
-                    .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, rng, now)?;
+                first_bucket.on_msg_received(addr_id, kind, now);
             } else {
-                second_bucket
-                    .on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, rng, now)?;
+                second_bucket.on_msg_received(addr_id, kind, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -808,23 +731,13 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.on_msg_received(addr_id, kind, config, tx_manager, msg_buffer, rng, now)?;
+            bucket.on_msg_received(addr_id, kind, now);
         }
-        Ok(())
     }
 
-    pub(crate) fn on_resp_timeout<R>(
-        &mut self,
-        addr_id: AddrId<A>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
+    pub(crate) fn on_resp_timeout(&mut self, addr_id: AddrId<A>, now: &Instant)
     where
         A: PartialEq + Copy,
-        R: rand::Rng,
     {
         let node_id = addr_id.id();
         let bucket = self
@@ -832,8 +745,7 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        bucket.on_resp_timeout(&addr_id, config, tx_manager, msg_buffer, rng, now)?;
-        Ok(())
+        bucket.on_resp_timeout(&addr_id, now);
     }
 
     pub(crate) fn timeout(&self) -> Option<Instant> {
@@ -851,13 +763,13 @@ where
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         find_node_ops: &mut Vec<FindNodeOp>,
         rng: &mut R,
-        now: Instant,
+        now: &Instant,
     ) -> Result<(), Error>
     where
         R: rand::Rng,
         A: Clone,
     {
-        if self.find_pivot_id_deadline <= now {
+        if self.find_pivot_id_deadline <= *now {
             find_node_ops.push(self.find_node(
                 self.pivot,
                 config,
@@ -865,7 +777,7 @@ where
                 msg_buffer,
                 std::iter::empty(),
                 rng,
-                now.clone(),
+                now,
             )?);
             self.find_pivot_id_deadline = now.clone() + FIND_LOCAL_ID_INTERVAL;
         }
@@ -888,7 +800,7 @@ where
                 msg_buffer,
                 std::iter::empty(),
                 rng,
-                now.clone(),
+                now,
             )?);
             debug!(
                 "starting to find target_id={:?} find_node_ops.len={}",
@@ -897,6 +809,15 @@ where
             );
         }
         Ok(())
+    }
+
+    pub(crate) fn find_node_to_ping(
+        &mut self,
+        now: &Instant,
+    ) -> Option<&mut Node<A, TxId, Instant>> {
+        self.buckets
+            .iter_mut()
+            .find_map(|b| b.find_node_to_ping(now))
     }
 }
 
@@ -914,7 +835,7 @@ impl<TxId, Instant> RoutingTable<TxId, Instant>
 where
     Instant: cloudburst::time::Instant,
 {
-    pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: Instant)
+    pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: &Instant)
     where
         I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         TxId: Clone,
@@ -948,7 +869,7 @@ where
         find_node_ops: &mut Vec<FindNodeOp>,
         bootstrap_addrs: I,
         rng: &mut R,
-        now: Instant,
+        now: &Instant,
     ) -> Result<(), Error>
     where
         I: IntoIterator<Item = SocketAddr>,
@@ -993,7 +914,7 @@ where
                     msg_buffer,
                     ipv4_socket_addrs,
                     rng,
-                    now.clone(),
+                    now,
                 )?);
                 find_node_ops.push(routing_table_v6.find_node(
                     target_id,
@@ -1009,94 +930,45 @@ where
         Ok(())
     }
 
-    pub(crate) fn on_msg_received<'a, R>(
+    pub(crate) fn on_msg_received<'a>(
         &mut self,
         addr_id: AddrId<SocketAddr>,
         kind: &Ty<'a>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
         now: Instant,
-    ) -> Result<(), Error>
-    where
+    ) where
         TxId: Clone,
-        R: rand::Rng,
     {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                    routing_table.on_msg_received(
-                        AddrId::new(*addr, addr_id.id()),
-                        kind,
-                        config,
-                        tx_manager,
-                        msg_buffer,
-                        rng,
-                        now,
-                    )?;
+                    routing_table.on_msg_received(AddrId::new(*addr, addr_id.id()), kind, now);
                 }
                 RoutingTable::Ipv6(_) => {}
             },
             SocketAddr::V6(addr) => match self {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                    routing_table.on_msg_received(
-                        AddrId::new(*addr, addr_id.id()),
-                        kind,
-                        config,
-                        tx_manager,
-                        msg_buffer,
-                        rng,
-                        now,
-                    )?;
+                    routing_table.on_msg_received(AddrId::new(*addr, addr_id.id()), kind, now);
                 }
             },
         }
-        Ok(())
     }
 
-    pub(crate) fn on_resp_timeout<R>(
-        &mut self,
-        addr_id: AddrId<SocketAddr>,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        rng: &mut R,
-        now: Instant,
-    ) -> Result<(), Error>
-    where
-        R: rand::Rng,
-    {
+    pub(crate) fn on_resp_timeout(&mut self, addr_id: AddrId<SocketAddr>, now: &Instant) {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                    routing_table.on_resp_timeout(
-                        AddrId::new(*addr, addr_id.id()),
-                        config,
-                        tx_manager,
-                        msg_buffer,
-                        rng,
-                        now,
-                    )?;
+                    routing_table.on_resp_timeout(AddrId::new(*addr, addr_id.id()), now);
                 }
                 RoutingTable::Ipv6(_) => {}
             },
             SocketAddr::V6(addr) => match self {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                    routing_table.on_resp_timeout(
-                        AddrId::new(*addr, addr_id.id()),
-                        config,
-                        tx_manager,
-                        msg_buffer,
-                        rng,
-                        now,
-                    )?;
+                    routing_table.on_resp_timeout(AddrId::new(*addr, addr_id.id()), now);
                 }
             },
         }
-        Ok(())
     }
 
     pub(crate) fn timeout(&self) -> Option<Instant> {
@@ -1120,7 +992,7 @@ where
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         find_node_ops: &mut Vec<FindNodeOp>,
         rng: &mut R,
-        now: Instant,
+        now: &Instant,
     ) -> Result<(), Error>
     where
         R: rand::Rng,
@@ -1139,7 +1011,7 @@ where
                     msg_buffer,
                     find_node_ops,
                     rng,
-                    now.clone(),
+                    now,
                 )?;
                 routing_table_v6.on_timeout(
                     config,
@@ -1169,6 +1041,30 @@ where
                 routing_table.find_neighbors(id, &Instant::now())
             }
             RoutingTable::Ipv4(_) => Vec::new().into_iter(),
+        }
+    }
+
+    pub fn find_node_to_ping_ipv4(
+        &mut self,
+        now: &Instant,
+    ) -> Option<&mut Node<std::net::SocketAddrV4, TxId, Instant>> {
+        match self {
+            RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
+                routing_table.find_node_to_ping(now)
+            }
+            RoutingTable::Ipv6(_) => None,
+        }
+    }
+
+    pub fn find_node_to_ping_ipv6(
+        &mut self,
+        now: &Instant,
+    ) -> Option<&mut Node<std::net::SocketAddrV6, TxId, Instant>> {
+        match self {
+            RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
+                routing_table.find_node_to_ping(now)
+            }
+            RoutingTable::Ipv4(_) => None,
         }
     }
 }
