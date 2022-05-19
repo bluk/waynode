@@ -24,7 +24,7 @@ enum NodeState {
 ///
 /// Used to store a node's information for routing queries to. Contains
 /// "liveliness" information to determine if the `Node` is still likely valid.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Node<Addr, TxId, Instant> {
     addr_id: AddrId<Addr>,
     karma: i8,
@@ -80,11 +80,11 @@ where
         NodeState::Questionable
     }
 
-    fn max_msg_recv_deadline(&self) -> &Instant {
+    pub fn max_msg_recv_deadline(&self) -> &Instant {
         core::cmp::max(&self.next_response_deadline, &self.next_query_deadline)
     }
 
-    fn on_msg_received(&mut self, kind: &Ty, tx_id: Option<&TxId>, now: Instant)
+    pub fn on_msg_received(&mut self, kind: &Ty, tx_id: Option<&TxId>, now: Instant)
     where
         TxId: PartialEq,
     {
@@ -128,12 +128,12 @@ where
                 self.karma = self.karma.saturating_sub(1);
             }
             _ => {
-                todo!()
+                unreachable!()
             }
         }
     }
 
-    fn on_resp_timeout(&mut self, tx_id: &TxId)
+    pub fn on_resp_timeout(&mut self, tx_id: &TxId)
     where
         TxId: PartialEq,
     {
@@ -199,15 +199,9 @@ where
         internal::rand_in_inclusive_range(&self.range, rng)
     }
 
-    #[inline]
-    fn is_full(&self) -> bool {
-        self.nodes.iter().all(std::option::Option::is_some)
-    }
-
-    /// Updates the refresh deadline.
-    #[inline]
-    pub fn set_refresh_deadline(&mut self, refresh_deadline: Instant) {
-        self.refresh_deadline = refresh_deadline;
+    /// Returns an `Iterator` for the nodes.
+    pub fn iter_nodes(&self) -> impl Iterator<Item = Option<&'_ Node<A, TxId, Instant>>> {
+        self.nodes.iter().map(std::option::Option::as_ref)
     }
 
     /// Returns the deadline which a `Node` from within the bucket's range should be pinged or found.
@@ -216,10 +210,25 @@ where
         &self.refresh_deadline
     }
 
-    fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant) {
-        self.nodes[self.nodes.len() - 1] = Some(Node::new(addr_id, now.clone()));
-        self.sort_node_ids(now);
-        self.set_refresh_deadline(refresh_deadline);
+    /// Updates the refresh deadline.
+    #[inline]
+    pub fn set_refresh_deadline(&mut self, refresh_deadline: Instant) {
+        self.refresh_deadline = refresh_deadline;
+    }
+
+    pub fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
+    where
+        A: PartialEq,
+    {
+        if self
+            .nodes
+            .iter()
+            .all(|node| node.as_ref().map_or(true, |node| node.addr_id != addr_id))
+        {
+            self.nodes[self.nodes.len() - 1] = Some(Node::new(addr_id, now.clone()));
+            self.sort_node_ids(now);
+            self.set_refresh_deadline(refresh_deadline);
+        }
     }
 
     pub fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
@@ -298,7 +307,7 @@ where
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
                 n.as_ref()
-                    .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
+                    .map_or(true, |n| n.state_with_now(now) == NodeState::Bad)
             }) {
                 let mut node = Node::new(addr_id, now.clone());
                 node.on_msg_received(kind, tx_id, now.clone());
@@ -403,6 +412,7 @@ where
             }
         }
 
+        // TODO: Insert into regular slots, not just as replacement nodes if there are available slots
         for node in self.replacement_nodes.iter().flatten() {
             let node_id = node.addr_id.id();
             if lower_bucket.range.contains(&node_id) {
@@ -445,6 +455,11 @@ where
             (None, Some(_)) => Ordering::Greater,
             (None, None) => Ordering::Equal,
         });
+    }
+
+    #[inline]
+    fn is_full(&self) -> bool {
+        self.nodes.iter().all(std::option::Option::is_some)
     }
 }
 
@@ -727,7 +742,7 @@ where
 
     fn try_insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
     where
-        A: Clone,
+        A: Clone + PartialEq,
         TxId: Clone,
     {
         let node_id = addr_id.id();
