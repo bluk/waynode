@@ -6,13 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::{find_node_op::FindNodeOp, msg_buffer};
 use cloudburst::dht::{
-    krpc::{
-        transaction::{self, Transactions},
-        Error, Ty,
-    },
-    node::{AddrId, AddrOptId, Id},
+    krpc::Ty,
+    node::{AddrId, Id},
 };
 use core::{cmp::Ordering, ops::RangeInclusive, time::Duration};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -111,7 +107,7 @@ const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const BUCKET_SIZE: usize = 8;
 
 #[derive(Debug)]
-struct Bucket<A, TxId, Instant> {
+pub struct Bucket<A, TxId, Instant> {
     range: RangeInclusive<Id>,
     nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
     replacement_nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
@@ -140,7 +136,7 @@ where
     }
 
     #[inline]
-    fn update_expected_change_deadline(&mut self, now: Instant) {
+    pub fn update_expected_change_deadline(&mut self, now: Instant) {
         self.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
     }
 
@@ -355,15 +351,22 @@ where
             (None, None) => Ordering::Equal,
         });
     }
+
+    pub fn rand_id<R>(&self, rng: &mut R) -> Result<Id, rand::Error>
+    where
+        R: rand::RngCore,
+    {
+        r::rand_in_inclusive_range(&self.range, rng)
+    }
 }
 
 mod r {
-    use cloudburst::dht::{krpc::Error, node::Id};
+    use cloudburst::dht::node::Id;
 
     pub(super) fn rand_in_inclusive_range<R>(
         range: &std::ops::RangeInclusive<Id>,
         rng: &mut R,
-    ) -> Result<Id, Error>
+    ) -> Result<Id, rand::Error>
     where
         R: rand::Rng,
     {
@@ -441,7 +444,7 @@ mod r {
         /// Shifts the bits right by 1.
         fn shift_right(&mut self);
 
-        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, Error>
+        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, rand::Error>
         where
             R: rand::Rng,
             Self: Sized;
@@ -487,7 +490,7 @@ mod r {
         }
 
         /// An inclusive randomize up to.
-        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, Error>
+        fn randomize_up_to<R>(end: Self, rng: &mut R) -> Result<Self, rand::Error>
         where
             R: rand::Rng,
         {
@@ -603,13 +606,10 @@ mod r {
     }
 }
 
-const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(15 * 60);
-
 #[derive(Debug)]
 pub struct Table<A, TxId, Instant> {
-    pivot: Id,
+    pub pivot: Id,
     buckets: Vec<Bucket<A, TxId, Instant>>,
-    find_pivot_id_deadline: Instant,
 }
 
 impl<A, TxId, Instant> Table<A, TxId, Instant>
@@ -620,34 +620,8 @@ where
     pub fn new(pivot: Id, now: Instant) -> Self {
         Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max(), now.clone())],
-            find_pivot_id_deadline: now,
+            buckets: vec![Bucket::new(Id::min()..=Id::max(), now)],
         }
-    }
-
-    pub(crate) fn find_node<I, R>(
-        &mut self,
-        target_id: Id,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        bootstrap_addrs: I,
-        rng: &mut R,
-        now: &Instant,
-    ) -> Result<FindNodeOp, Error>
-    where
-        I: IntoIterator<Item = A>,
-        A: Clone,
-        R: rand::Rng,
-    {
-        let neighbors = self
-            .find_neighbors(target_id, now)
-            .take(8)
-            .map(|a| AddrOptId::new((*a.addr()).clone(), Some(a.id())))
-            .chain(bootstrap_addrs.into_iter().map(AddrOptId::with_addr));
-        let mut find_node_op = FindNodeOp::new(config.supported_addr, target_id, neighbors);
-        find_node_op.start(config, tx_manager, msg_buffer, rng)?;
-        Ok(find_node_op)
     }
 
     fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant)
@@ -748,67 +722,20 @@ where
         bucket.on_resp_timeout(&addr_id, now);
     }
 
-    pub(crate) fn timeout(&self) -> Option<Instant> {
+    pub fn timeout(&self) -> Option<Instant> {
         self.buckets
             .iter()
             .map(|b| b.expected_change_deadline.clone())
-            .chain(std::iter::once(self.find_pivot_id_deadline.clone()))
             .min()
     }
 
-    pub(crate) fn on_timeout<R>(
+    pub fn find_refreshable_bucket(
         &mut self,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        find_node_ops: &mut Vec<FindNodeOp>,
-        rng: &mut R,
         now: &Instant,
-    ) -> Result<(), Error>
-    where
-        R: rand::Rng,
-        A: Clone,
-    {
-        if self.find_pivot_id_deadline <= *now {
-            find_node_ops.push(self.find_node(
-                self.pivot,
-                config,
-                tx_manager,
-                msg_buffer,
-                std::iter::empty(),
-                rng,
-                now,
-            )?);
-            self.find_pivot_id_deadline = now.clone() + FIND_LOCAL_ID_INTERVAL;
-        }
-
-        let target_ids = self
-            .buckets
+    ) -> Option<&mut Bucket<A, TxId, Instant>> {
+        self.buckets
             .iter_mut()
-            .filter(|b| b.expected_change_deadline <= now.clone())
-            .map(|b| {
-                b.expected_change_deadline = now.clone() + EXPECT_CHANGE_INTERVAL;
-                r::rand_in_inclusive_range(&b.range, rng)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        debug!("routing table on_timeout()");
-        for target_id in target_ids {
-            find_node_ops.push(self.find_node(
-                target_id,
-                config,
-                tx_manager,
-                msg_buffer,
-                std::iter::empty(),
-                rng,
-                now,
-            )?);
-            debug!(
-                "starting to find target_id={:?} find_node_ops.len={}",
-                target_id,
-                find_node_ops.len()
-            );
-        }
-        Ok(())
+            .find(|b| b.expected_change_deadline <= *now)
     }
 
     pub(crate) fn find_node_to_ping(
@@ -858,76 +785,6 @@ where
                 },
             }
         }
-    }
-
-    pub(crate) fn find_node<I, R>(
-        &mut self,
-        target_id: Id,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        find_node_ops: &mut Vec<FindNodeOp>,
-        bootstrap_addrs: I,
-        rng: &mut R,
-        now: &Instant,
-    ) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = SocketAddr>,
-        R: rand::Rng,
-    {
-        let mut ipv4_socket_addrs = Vec::new();
-        let mut ipv6_socket_addrs = Vec::new();
-        for socket_addr in bootstrap_addrs {
-            match socket_addr {
-                SocketAddr::V4(addr) => {
-                    ipv4_socket_addrs.push(addr);
-                }
-                SocketAddr::V6(addr) => {
-                    ipv6_socket_addrs.push(addr);
-                }
-            }
-        }
-        match self {
-            RoutingTable::Ipv4(routing_table) => find_node_ops.push(routing_table.find_node(
-                target_id,
-                config,
-                tx_manager,
-                msg_buffer,
-                ipv4_socket_addrs,
-                rng,
-                now,
-            )?),
-            RoutingTable::Ipv6(routing_table) => find_node_ops.push(routing_table.find_node(
-                target_id,
-                config,
-                tx_manager,
-                msg_buffer,
-                ipv6_socket_addrs,
-                rng,
-                now,
-            )?),
-            RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
-                find_node_ops.push(routing_table_v4.find_node(
-                    target_id,
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    ipv4_socket_addrs,
-                    rng,
-                    now,
-                )?);
-                find_node_ops.push(routing_table_v6.find_node(
-                    target_id,
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    ipv6_socket_addrs,
-                    rng,
-                    now,
-                )?);
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn on_msg_received<'a>(
@@ -985,60 +842,27 @@ where
         }
     }
 
-    pub(crate) fn on_timeout<R>(
-        &mut self,
-        config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
-        msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
-        find_node_ops: &mut Vec<FindNodeOp>,
-        rng: &mut R,
+    pub fn find_neighbors_ipv4(
+        &self,
+        id: Id,
         now: &Instant,
-    ) -> Result<(), Error>
-    where
-        R: rand::Rng,
-    {
-        match self {
-            RoutingTable::Ipv4(routing_table) => {
-                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, rng, now)
-            }
-            RoutingTable::Ipv6(routing_table) => {
-                routing_table.on_timeout(config, tx_manager, msg_buffer, find_node_ops, rng, now)
-            }
-            RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
-                routing_table_v4.on_timeout(
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    find_node_ops,
-                    rng,
-                    now,
-                )?;
-                routing_table_v6.on_timeout(
-                    config,
-                    tx_manager,
-                    msg_buffer,
-                    find_node_ops,
-                    rng,
-                    now,
-                )?;
-                Ok(())
-            }
-        }
-    }
-
-    pub fn find_neighbors_ipv4(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
+    ) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
         match self {
             RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                routing_table.find_neighbors(id, &Instant::now())
+                routing_table.find_neighbors(id, now)
             }
             RoutingTable::Ipv6(_) => Vec::new().into_iter(),
         }
     }
 
-    pub fn find_neighbors_ipv6(&self, id: Id) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
+    pub fn find_neighbors_ipv6(
+        &self,
+        id: Id,
+        now: &Instant,
+    ) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
         match self {
             RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                routing_table.find_neighbors(id, &Instant::now())
+                routing_table.find_neighbors(id, now)
             }
             RoutingTable::Ipv4(_) => Vec::new().into_iter(),
         }
