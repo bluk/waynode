@@ -104,17 +104,17 @@ where
 }
 
 const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const BUCKET_SIZE: usize = 8;
 
 #[derive(Debug)]
-pub struct Bucket<A, TxId, Instant> {
+pub struct Bucket<A, TxId, Instant, const SIZE: usize = 8, const REPLACEMENT_SIZE: usize = 8> {
     range: RangeInclusive<Id>,
-    nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
-    replacement_nodes: [Option<Node<A, TxId, Instant>>; BUCKET_SIZE],
+    nodes: [Option<Node<A, TxId, Instant>>; SIZE],
+    replacement_nodes: [Option<Node<A, TxId, Instant>>; REPLACEMENT_SIZE],
     expected_change_deadline: Instant,
 }
 
-impl<A, TxId, Instant> Bucket<A, TxId, Instant>
+impl<A, TxId, Instant, const SIZE: usize, const REPLACEMENT_SIZE: usize>
+    Bucket<A, TxId, Instant, SIZE, REPLACEMENT_SIZE>
 where
     A: Into<SocketAddr>,
     Instant: cloudburst::time::Instant,
@@ -124,8 +124,8 @@ where
     fn new(range: RangeInclusive<Id>, now: Instant) -> Self {
         Bucket {
             range,
-            nodes: [Self::NODES_NONE; BUCKET_SIZE],
-            replacement_nodes: [Self::NODES_NONE; BUCKET_SIZE],
+            nodes: [Self::NODES_NONE; SIZE],
+            replacement_nodes: [Self::NODES_NONE; REPLACEMENT_SIZE],
             expected_change_deadline: now + Duration::from_secs(5 * 60),
         }
     }
@@ -294,9 +294,10 @@ where
         A: Clone,
         TxId: Clone,
     {
-        let middle = r::middle(*self.range.end(), *self.range.start());
+        let middle = internal::middle(*self.range.end(), *self.range.start());
 
-        let mut lower_bucket = Bucket::new(*self.range.start()..=r::prev(middle), now.clone());
+        let mut lower_bucket =
+            Bucket::new(*self.range.start()..=internal::prev(middle), now.clone());
         let mut upper_bucket = Bucket::new(middle..=*self.range.end(), now);
 
         for node in self.nodes.iter().flatten() {
@@ -356,11 +357,11 @@ where
     where
         R: rand::RngCore,
     {
-        r::rand_in_inclusive_range(&self.range, rng)
+        internal::rand_in_inclusive_range(&self.range, rng)
     }
 }
 
-mod r {
+mod internal {
     use cloudburst::dht::node::Id;
 
     pub(super) fn rand_in_inclusive_range<R>(
@@ -572,14 +573,14 @@ mod r {
             let mut node_ids = vec![
                 Id::from([0xff; 20]),
                 Id::from([0x00; 20]),
-                super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
             ];
             node_ids.sort();
             assert_eq!(
                 node_ids,
                 vec![
                     Id::from([0x00; 20]),
-                    super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                    middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
                     Id::from([0xff; 20]),
                 ]
             );
@@ -589,7 +590,7 @@ mod r {
         fn test_id_distance_ord() {
             let mut node_ids = vec![
                 Id::from([0x00; 20]),
-                super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
                 Id::from([0xff; 20]),
             ];
             let pivot_id = super::middle(Id::from([0xef; 20]), Id::from([0x00; 20]));
@@ -597,7 +598,7 @@ mod r {
             assert_eq!(
                 node_ids,
                 vec![
-                    super::middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
+                    middle(Id::from([0xff; 20]), Id::from([0x00; 20])),
                     Id::from([0x00; 20]),
                     Id::from([0xff; 20]),
                 ]
