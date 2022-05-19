@@ -40,7 +40,7 @@ extern crate log;
 pub(crate) mod find_node_op;
 pub mod krpc;
 pub(crate) mod msg_buffer;
-pub(crate) mod routing;
+pub mod routing;
 
 use crate::find_node_op::FindNodeOp;
 
@@ -58,6 +58,8 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
 };
+
+const BUCKET_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// Events related to KRPC messages including responses, errors, queries, and timeouts.
 #[derive(Clone, Debug, PartialEq)]
@@ -262,7 +264,7 @@ impl Node {
                 routing::Table::new(local_id, now),
             ),
         };
-        routing_table.try_insert_addr_ids(addr_ids, &now);
+        routing_table.try_insert_addr_ids(addr_ids, &(now + BUCKET_REFRESH_INTERVAL), &now);
 
         let mut dht = Self {
             config,
@@ -326,7 +328,8 @@ impl Node {
                                     self.routing_table.on_msg_received(
                                         AddrId::new(addr, node_id),
                                         &kind,
-                                        now,
+                                        now + BUCKET_REFRESH_INTERVAL,
+                                        &now,
                                     );
                                     self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                                 }
@@ -356,7 +359,8 @@ impl Node {
                             self.routing_table.on_msg_received(
                                 AddrId::new(*tx.addr_opt_id.addr(), node_id),
                                 &kind,
-                                now,
+                                now + BUCKET_REFRESH_INTERVAL,
+                                &now,
                             );
                             self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
@@ -393,7 +397,7 @@ impl Node {
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::new(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
-                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, now);
+                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, now + BUCKET_REFRESH_INTERVAL, &now);
                             self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
 
@@ -535,8 +539,11 @@ impl Node {
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(&now) {
             for tx in timed_out_txs {
                 if let Some(node_id) = tx.addr_opt_id.id() {
-                    self.routing_table
-                        .on_resp_timeout(AddrId::new(*tx.addr_opt_id.addr(), node_id), &now);
+                    self.routing_table.on_resp_timeout(
+                        AddrId::new(*tx.addr_opt_id.addr(), node_id),
+                        now + BUCKET_REFRESH_INTERVAL,
+                        &now,
+                    );
 
                     self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                 }
@@ -568,7 +575,7 @@ impl Node {
         match &mut self.routing_table {
             RoutingTable::Ipv4(routing_table) => {
                 while let Some(bucket) = routing_table.find_refreshable_bucket(&now) {
-                    bucket.update_expected_change_deadline(now);
+                    bucket.set_refresh_deadline(now + BUCKET_REFRESH_INTERVAL);
                     let target_id = bucket.rand_id(rng).unwrap();
                     let neighbors = routing_table
                         .find_neighbors(target_id, &now)
@@ -587,7 +594,7 @@ impl Node {
             }
             RoutingTable::Ipv6(routing_table) => {
                 while let Some(bucket) = routing_table.find_refreshable_bucket(&now) {
-                    bucket.update_expected_change_deadline(now);
+                    bucket.set_refresh_deadline(now + BUCKET_REFRESH_INTERVAL);
                     let target_id = bucket.rand_id(rng).unwrap();
                     let neighbors = routing_table
                         .find_neighbors(target_id, &now)
@@ -606,7 +613,7 @@ impl Node {
             }
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
                 while let Some(bucket) = routing_table_v4.find_refreshable_bucket(&now) {
-                    bucket.update_expected_change_deadline(now);
+                    bucket.set_refresh_deadline(now + BUCKET_REFRESH_INTERVAL);
                     let target_id = bucket.rand_id(rng).unwrap();
                     let neighbors = routing_table_v4
                         .find_neighbors(target_id, &now)
@@ -624,7 +631,7 @@ impl Node {
                 }
 
                 while let Some(bucket) = routing_table_v6.find_refreshable_bucket(&now) {
-                    bucket.update_expected_change_deadline(now);
+                    bucket.set_refresh_deadline(now + BUCKET_REFRESH_INTERVAL);
                     let target_id = bucket.rand_id(rng).unwrap();
                     let neighbors = routing_table_v6
                         .find_neighbors(target_id, &now)
@@ -783,18 +790,18 @@ impl Node {
         }
         match &self.routing_table {
             RoutingTable::Ipv4(routing_table) => {
-                let pivot = routing_table.pivot;
+                let pivot = routing_table.pivot();
                 let op = self.find_node_ipv4(pivot, ipv4_socket_addrs, rng, now)?;
                 self.find_node_ops.push(op);
             }
             RoutingTable::Ipv6(routing_table) => {
-                let pivot = routing_table.pivot;
+                let pivot = routing_table.pivot();
                 let op = self.find_node_ipv6(pivot, ipv6_socket_addrs, rng, now)?;
                 self.find_node_ops.push(op);
             }
             RoutingTable::Ipv4AndIpv6(routing_table_v4, routing_table_v6) => {
-                let pivot_ipv4 = routing_table_v4.pivot;
-                let pivot_ipv6 = routing_table_v6.pivot;
+                let pivot_ipv4 = routing_table_v4.pivot();
+                let pivot_ipv6 = routing_table_v6.pivot();
                 let op = self.find_node_ipv4(pivot_ipv4, ipv4_socket_addrs, rng, now)?;
                 self.find_node_ops.push(op);
                 let op = self.find_node_ipv6(pivot_ipv6, ipv6_socket_addrs, rng, now)?;

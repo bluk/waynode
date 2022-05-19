@@ -103,14 +103,12 @@ where
     }
 }
 
-const EXPECT_CHANGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
-
 #[derive(Debug)]
 pub struct Bucket<A, TxId, Instant, const SIZE: usize = 8, const REPLACEMENT_SIZE: usize = 8> {
     range: RangeInclusive<Id>,
     nodes: [Option<Node<A, TxId, Instant>>; SIZE],
     replacement_nodes: [Option<Node<A, TxId, Instant>>; REPLACEMENT_SIZE],
-    expected_change_deadline: Instant,
+    refresh_deadline: Instant,
 }
 
 impl<A, TxId, Instant, const SIZE: usize, const REPLACEMENT_SIZE: usize>
@@ -121,13 +119,34 @@ where
 {
     const NODES_NONE: Option<Node<A, TxId, Instant>> = None;
 
-    fn new(range: RangeInclusive<Id>, now: Instant) -> Self {
+    /// Creates a new `Bucket` for nodes which are within the inclusive `Id` range.
+    pub fn new(range: RangeInclusive<Id>, refresh_deadline: Instant) -> Self {
         Bucket {
             range,
             nodes: [Self::NODES_NONE; SIZE],
             replacement_nodes: [Self::NODES_NONE; REPLACEMENT_SIZE],
-            expected_change_deadline: now + Duration::from_secs(5 * 60),
+            refresh_deadline,
         }
+    }
+
+    /// Returns the bucket's `Id` range.
+    #[must_use]
+    #[inline]
+    pub fn range(&self) -> &RangeInclusive<Id> {
+        &self.range
+    }
+
+    /// Returns a random `Id` which would be in the bucket's range.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`rand::Error`] if the random number generator cannot generate a random `Id`.
+    #[inline]
+    pub fn rand_id<R>(&self, rng: &mut R) -> Result<Id, rand::Error>
+    where
+        R: rand::RngCore,
+    {
+        internal::rand_in_inclusive_range(&self.range, rng)
     }
 
     #[inline]
@@ -135,15 +154,22 @@ where
         self.nodes.iter().all(std::option::Option::is_some)
     }
 
+    /// Updates the refresh deadline.
     #[inline]
-    pub fn update_expected_change_deadline(&mut self, now: Instant) {
-        self.expected_change_deadline = now + EXPECT_CHANGE_INTERVAL;
+    pub fn set_refresh_deadline(&mut self, refresh_deadline: Instant) {
+        self.refresh_deadline = refresh_deadline;
     }
 
-    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant) {
+    /// Returns the deadline which a `Node` from within the bucket's range should be pinged or found.
+    #[inline]
+    pub fn refresh_deadline(&self) -> &Instant {
+        &self.refresh_deadline
+    }
+
+    fn try_insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant) {
         self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now.clone()));
-        self.sort_node_ids(&now);
-        self.update_expected_change_deadline(now);
+        self.sort_node_ids(now);
+        self.set_refresh_deadline(refresh_deadline);
     }
 
     fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
@@ -167,8 +193,13 @@ where
         }
     }
 
-    fn on_msg_received<'a>(&mut self, addr_id: AddrId<A>, kind: &Ty<'a>, now: Instant)
-    where
+    fn on_msg_received<'a>(
+        &mut self,
+        addr_id: AddrId<A>,
+        kind: &Ty<'a>,
+        refresh_deadline: Instant,
+        now: &Instant,
+    ) where
         A: PartialEq + Clone,
     {
         if let Some(node) = self
@@ -180,13 +211,13 @@ where
             node.on_msg_received(kind, now.clone());
             match kind {
                 Ty::Response | Ty::Query => {
-                    self.sort_node_ids(&now);
+                    self.sort_node_ids(now);
 
-                    self.update_expected_change_deadline(now);
+                    self.set_refresh_deadline(refresh_deadline);
                 }
-                Ty::Error | Ty::Unknown(_) => match node.state_with_now(&now) {
+                Ty::Error | Ty::Unknown(_) => match node.state_with_now(now) {
                     NodeState::Good | NodeState::Questionable => {
-                        self.sort_node_ids(&now);
+                        self.sort_node_ids(now);
                     }
                     NodeState::Bad => {
                         if let Some(replacement_node) =
@@ -194,10 +225,10 @@ where
                         {
                             if let Some(replacement_node) = replacement_node.take() {
                                 *node = replacement_node;
-                                self.update_expected_change_deadline(now.clone());
+                                self.set_refresh_deadline(refresh_deadline);
                             }
                         }
-                        self.sort_node_ids(&now);
+                        self.sort_node_ids(now);
                     }
                 },
                 _ => {
@@ -215,13 +246,13 @@ where
 
             if let Some(pos) = self.nodes.iter().rev().position(|n| {
                 n.as_ref()
-                    .map_or(false, |n| n.state_with_now(&now) == NodeState::Bad)
+                    .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
             }) {
                 let mut node = Node::with_addr_id(addr_id, now.clone());
                 node.on_msg_received(kind, now.clone());
                 self.nodes[pos] = Some(node);
-                self.sort_node_ids(&now);
-                self.update_expected_change_deadline(now);
+                self.sort_node_ids(now);
+                self.set_refresh_deadline(refresh_deadline);
             } else if let Some(pos) = self
                 .replacement_nodes
                 .iter_mut()
@@ -231,12 +262,12 @@ where
                 let mut node = Node::with_addr_id(addr_id, now.clone());
                 node.on_msg_received(kind, now.clone());
                 self.replacement_nodes[pos] = Some(node);
-                self.sort_node_ids(&now);
+                self.sort_node_ids(now);
             }
         }
     }
 
-    fn on_resp_timeout(&mut self, addr_id: &AddrId<A>, now: &Instant)
+    fn on_resp_timeout(&mut self, addr_id: &AddrId<A>, refresh_deadline: Instant, now: &Instant)
     where
         A: PartialEq + Clone,
     {
@@ -260,7 +291,7 @@ where
                     {
                         if let Some(replacement_node) = replacement_node.take() {
                             *node = replacement_node;
-                            self.update_expected_change_deadline(now.clone());
+                            self.set_refresh_deadline(refresh_deadline);
                         }
                     }
                     self.sort_node_ids(now);
@@ -289,16 +320,21 @@ where
         }
     }
 
-    fn split(self, now: Instant) -> (Bucket<A, TxId, Instant>, Bucket<A, TxId, Instant>)
+    fn split(
+        self,
+        refresh_deadline: Instant,
+    ) -> (Bucket<A, TxId, Instant>, Bucket<A, TxId, Instant>)
     where
         A: Clone,
         TxId: Clone,
     {
         let middle = internal::middle(*self.range.end(), *self.range.start());
 
-        let mut lower_bucket =
-            Bucket::new(*self.range.start()..=internal::prev(middle), now.clone());
-        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), now);
+        let mut lower_bucket = Bucket::new(
+            *self.range.start()..=internal::prev(middle),
+            refresh_deadline.clone(),
+        );
+        let mut upper_bucket = Bucket::new(middle..=*self.range.end(), refresh_deadline);
 
         for node in self.nodes.iter().flatten() {
             let node_id = node.addr_id.id();
@@ -351,13 +387,6 @@ where
             (None, Some(_)) => Ordering::Greater,
             (None, None) => Ordering::Equal,
         });
-    }
-
-    pub fn rand_id<R>(&self, rng: &mut R) -> Result<Id, rand::Error>
-    where
-        R: rand::RngCore,
-    {
-        internal::rand_in_inclusive_range(&self.range, rng)
     }
 }
 
@@ -609,7 +638,7 @@ mod internal {
 
 #[derive(Debug)]
 pub struct Table<A, TxId, Instant> {
-    pub pivot: Id,
+    pivot: Id,
     buckets: Vec<Bucket<A, TxId, Instant>>,
 }
 
@@ -618,14 +647,27 @@ where
     A: Into<SocketAddr>,
     Instant: cloudburst::time::Instant,
 {
-    pub fn new(pivot: Id, now: Instant) -> Self {
+    /// Creates a new table based on the given pivot.
+    ///
+    /// The `refresh_deadline` is the `Instant` which the initial bucket(s) should be refreshed at.
+    pub fn new(pivot: Id, refresh_deadline: Instant) -> Self {
         Self {
             pivot,
-            buckets: vec![Bucket::new(Id::min()..=Id::max(), now)],
+            buckets: vec![Bucket::new(Id::min()..=Id::max(), refresh_deadline)],
         }
     }
 
-    fn try_insert(&mut self, addr_id: AddrId<A>, now: Instant)
+    /// Returns the local ID which serves as the pivot around which the table is
+    /// based on.
+    ///
+    /// More nodes which have an `Id` closer to the pivot `Id` are kept in the
+    /// routing table compared to nodes which have an `Id` further away.
+    #[must_use]
+    pub fn pivot(&self) -> Id {
+        self.pivot
+    }
+
+    fn try_insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
     where
         A: Clone,
         TxId: Clone,
@@ -642,11 +684,11 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(now.clone());
+            let (mut first_bucket, mut second_bucket) = bucket.split(refresh_deadline.clone());
             if first_bucket.range.contains(&node_id) {
-                first_bucket.try_insert(addr_id, now);
+                first_bucket.try_insert(addr_id, refresh_deadline, now);
             } else {
-                second_bucket.try_insert(addr_id, now);
+                second_bucket.try_insert(addr_id, refresh_deadline, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -657,7 +699,7 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.try_insert(addr_id, now);
+            bucket.try_insert(addr_id, refresh_deadline, now);
         }
     }
 
@@ -674,8 +716,13 @@ where
         nodes.into_iter()
     }
 
-    pub(crate) fn on_msg_received<'a>(&mut self, addr_id: AddrId<A>, kind: &Ty<'a>, now: Instant)
-    where
+    pub(crate) fn on_msg_received<'a>(
+        &mut self,
+        addr_id: AddrId<A>,
+        kind: &Ty<'a>,
+        refresh_deadline: Instant,
+        now: &Instant,
+    ) where
         A: Clone + PartialEq,
         TxId: Clone,
     {
@@ -691,11 +738,11 @@ where
             .expect("bucket should always exist for a node");
         if bucket.range.contains(&self.pivot) && bucket.is_full() {
             let bucket = self.buckets.pop().expect("last bucket should always exist");
-            let (mut first_bucket, mut second_bucket) = bucket.split(now.clone());
+            let (mut first_bucket, mut second_bucket) = bucket.split(refresh_deadline.clone());
             if first_bucket.range.contains(&node_id) {
-                first_bucket.on_msg_received(addr_id, kind, now);
+                first_bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
             } else {
-                second_bucket.on_msg_received(addr_id, kind, now);
+                second_bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -706,12 +753,16 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.on_msg_received(addr_id, kind, now);
+            bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
         }
     }
 
-    pub(crate) fn on_resp_timeout(&mut self, addr_id: AddrId<A>, now: &Instant)
-    where
+    pub(crate) fn on_resp_timeout(
+        &mut self,
+        addr_id: AddrId<A>,
+        refresh_deadline: Instant,
+        now: &Instant,
+    ) where
         A: PartialEq + Copy,
     {
         let node_id = addr_id.id();
@@ -720,23 +771,27 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        bucket.on_resp_timeout(&addr_id, now);
+        bucket.on_resp_timeout(&addr_id, refresh_deadline, now);
     }
 
+    /// The earliest deadline when at least one of the buckets in the routing table should be refreshed.
+    #[must_use]
     pub fn timeout(&self) -> Option<Instant> {
         self.buckets
             .iter()
-            .map(|b| b.expected_change_deadline.clone())
+            .map(Bucket::refresh_deadline)
             .min()
+            .cloned()
     }
 
+    /// Finds a bucket which needs to be refreshed.
     pub fn find_refreshable_bucket(
         &mut self,
         now: &Instant,
     ) -> Option<&mut Bucket<A, TxId, Instant>> {
         self.buckets
             .iter_mut()
-            .find(|b| b.expected_change_deadline <= *now)
+            .find(|b| *b.refresh_deadline() <= *now)
     }
 
     pub(crate) fn find_node_to_ping(
@@ -763,8 +818,12 @@ impl<TxId, Instant> RoutingTable<TxId, Instant>
 where
     Instant: cloudburst::time::Instant,
 {
-    pub(crate) fn try_insert_addr_ids<'a, I>(&mut self, addrs: I, now: &Instant)
-    where
+    pub(crate) fn try_insert_addr_ids<'a, I>(
+        &mut self,
+        addrs: I,
+        refresh_deadline: &Instant,
+        now: &Instant,
+    ) where
         I: IntoIterator<Item = &'a AddrId<SocketAddr>>,
         TxId: Clone,
     {
@@ -773,7 +832,11 @@ where
                 SocketAddr::V4(addr) => match self {
                     RoutingTable::Ipv4(routing_table)
                     | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now.clone());
+                        routing_table.try_insert(
+                            AddrId::new(*addr, addr_id.id()),
+                            refresh_deadline.clone(),
+                            now,
+                        );
                     }
                     RoutingTable::Ipv6(_) => {}
                 },
@@ -781,7 +844,11 @@ where
                     RoutingTable::Ipv4(_) => {}
                     RoutingTable::Ipv6(routing_table)
                     | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                        routing_table.try_insert(AddrId::new(*addr, addr_id.id()), now.clone());
+                        routing_table.try_insert(
+                            AddrId::new(*addr, addr_id.id()),
+                            refresh_deadline.clone(),
+                            now,
+                        );
                     }
                 },
             }
@@ -792,38 +859,62 @@ where
         &mut self,
         addr_id: AddrId<SocketAddr>,
         kind: &Ty<'a>,
-        now: Instant,
+        refresh_deadline: Instant,
+        now: &Instant,
     ) where
         TxId: Clone,
     {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                    routing_table.on_msg_received(AddrId::new(*addr, addr_id.id()), kind, now);
+                    routing_table.on_msg_received(
+                        AddrId::new(*addr, addr_id.id()),
+                        kind,
+                        refresh_deadline,
+                        now,
+                    );
                 }
                 RoutingTable::Ipv6(_) => {}
             },
             SocketAddr::V6(addr) => match self {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                    routing_table.on_msg_received(AddrId::new(*addr, addr_id.id()), kind, now);
+                    routing_table.on_msg_received(
+                        AddrId::new(*addr, addr_id.id()),
+                        kind,
+                        refresh_deadline,
+                        now,
+                    );
                 }
             },
         }
     }
 
-    pub(crate) fn on_resp_timeout(&mut self, addr_id: AddrId<SocketAddr>, now: &Instant) {
+    pub(crate) fn on_resp_timeout(
+        &mut self,
+        addr_id: AddrId<SocketAddr>,
+        refresh_deadline: Instant,
+        now: &Instant,
+    ) {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                    routing_table.on_resp_timeout(AddrId::new(*addr, addr_id.id()), now);
+                    routing_table.on_resp_timeout(
+                        AddrId::new(*addr, addr_id.id()),
+                        refresh_deadline,
+                        now,
+                    );
                 }
                 RoutingTable::Ipv6(_) => {}
             },
             SocketAddr::V6(addr) => match self {
                 RoutingTable::Ipv4(_) => {}
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                    routing_table.on_resp_timeout(AddrId::new(*addr, addr_id.id()), now);
+                    routing_table.on_resp_timeout(
+                        AddrId::new(*addr, addr_id.id()),
+                        refresh_deadline,
+                        now,
+                    );
                 }
             },
         }
