@@ -294,7 +294,7 @@ impl FindNodeOp {
     pub(crate) fn start<R>(
         &mut self,
         config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
+        tx_manager: &mut Transactions<std::net::SocketAddr, transaction::Id, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
     ) -> Result<(), Error>
@@ -324,26 +324,26 @@ impl FindNodeOp {
 
     pub(crate) fn handle<'a, R>(
         &mut self,
-        tx: &Transaction<transaction::Id, std::net::SocketAddr, std::time::Instant>,
+        tx: &Transaction<std::net::SocketAddr, transaction::Id, std::time::Instant>,
         resp: Response<'a>,
         config: &crate::Config,
-        tx_manager: &mut Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
+        tx_manager: &mut Transactions<std::net::SocketAddr, transaction::Id, std::time::Instant>,
         msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
         rng: &mut R,
     ) -> Result<(), Error>
     where
         R: rand::Rng,
     {
-        if !self.tx_ids.contains(&tx.tx_id) {
+        if !self.tx_ids.contains(tx.tx_id()) {
             return Ok(());
         }
-        self.tx_ids.remove(&tx.tx_id);
+        self.tx_ids.remove(tx.tx_id());
 
         match resp {
             Response::Resp(resp) => {
-                if let Some(node_id) = tx.addr_opt_id.id() {
+                if let Some(node_id) = tx.addr_opt_id().id() {
                     self.addr_space.replace_closest_queried_nodes(
-                        *tx.addr_opt_id.addr(),
+                        *tx.addr_opt_id().addr(),
                         self.target_id,
                         node_id,
                     );

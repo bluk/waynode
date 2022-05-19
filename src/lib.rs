@@ -234,7 +234,7 @@ pub struct Node {
     config: Config,
     routing_table: routing::RoutingTable<transaction::Id, std::time::Instant>,
     find_pivot_id_deadline: Instant,
-    tx_manager: Transactions<transaction::Id, std::net::SocketAddr, std::time::Instant>,
+    tx_manager: Transactions<std::net::SocketAddr, transaction::Id, std::time::Instant>,
     msg_buffer: msg_buffer::Buffer<transaction::Id>,
 
     find_node_ops: Vec<FindNodeOp>,
@@ -310,13 +310,13 @@ impl Node {
             if let Some(tx) = value
                 .tx_id()
                 .and_then(|tx_id| transaction::Id::try_from(tx_id).ok())
-                .and_then(|tx_id| self.tx_manager.remove(&tx_id, &addr))
+                .and_then(|tx_id| self.tx_manager.remove(&addr, &tx_id))
             {
                 match kind {
                     Ty::Response => {
                         let queried_node_id = RespMsg::queried_node_id(&value);
                         let is_response_queried_id_valid =
-                            tx.addr_opt_id.id().map_or(true, |expected_node_id| {
+                            tx.addr_opt_id().id().map_or(true, |expected_node_id| {
                                 queried_node_id == Some(expected_node_id)
                             });
                         if is_response_queried_id_valid
@@ -324,11 +324,11 @@ impl Node {
                                 && queried_node_id == Some(Id::from(self.config.local_id)))
                         {
                             if is_response_queried_id_valid {
-                                if let Some(node_id) = tx.addr_opt_id.id().or(queried_node_id) {
+                                if let Some(node_id) = tx.addr_opt_id().id().or(queried_node_id) {
                                     self.routing_table.on_msg_received(
                                         AddrId::new(addr, node_id),
                                         &kind,
-                                        Some(&tx.tx_id),
+                                        Some(tx.tx_id()),
                                         now + BUCKET_REFRESH_INTERVAL,
                                         &now,
                                     );
@@ -347,8 +347,8 @@ impl Node {
                             }
                             self.find_node_ops.retain(|op| !op.is_done());
                             self.msg_buffer.push_inbound(ReadEvent {
-                                addr_opt_id: tx.addr_opt_id,
-                                tx_id: Some(tx.tx_id),
+                                addr_opt_id: *tx.addr_opt_id(),
+                                tx_id: Some(*tx.tx_id()),
                                 msg: MsgEvent::Resp(value),
                             });
                         } else {
@@ -356,17 +356,17 @@ impl Node {
                         }
                     }
                     Ty::Error => {
-                        if let Some(node_id) = tx.addr_opt_id.id() {
+                        if let Some(node_id) = tx.addr_opt_id().id() {
                             self.routing_table.on_msg_received(
-                                AddrId::new(*tx.addr_opt_id.addr(), node_id),
+                                AddrId::new(*tx.addr_opt_id().addr(), node_id),
                                 &kind,
-                                Some(&tx.tx_id),
+                                Some(tx.tx_id()),
                                 now + BUCKET_REFRESH_INTERVAL,
                                 &now,
                             );
                             self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
-                        debug!("Received error for tx_local_id={:?}", tx.tx_id);
+                        debug!("Received error for tx_local_id={:?}", tx.tx_id());
                         for op in &mut self.find_node_ops {
                             op.handle(
                                 &tx,
@@ -379,8 +379,8 @@ impl Node {
                         }
                         self.find_node_ops.retain(|op| !op.is_done());
                         self.msg_buffer.push_inbound(ReadEvent {
-                            addr_opt_id: tx.addr_opt_id,
-                            tx_id: Some(tx.tx_id),
+                            addr_opt_id: *tx.addr_opt_id(),
+                            tx_id: Some(*tx.tx_id()),
                             msg: MsgEvent::Error(value),
                         });
                     }
@@ -540,10 +540,10 @@ impl Node {
         debug!("on_timeout_with_now now={:?}", now);
         if let Some(timed_out_txs) = self.tx_manager.timed_out_txs(&now) {
             for tx in timed_out_txs {
-                if let Some(node_id) = tx.addr_opt_id.id() {
+                if let Some(node_id) = tx.addr_opt_id().id() {
                     self.routing_table.on_resp_timeout(
-                        AddrId::new(*tx.addr_opt_id.addr(), node_id),
-                        &tx.tx_id,
+                        AddrId::new(*tx.addr_opt_id().addr(), node_id),
+                        tx.tx_id(),
                         now + BUCKET_REFRESH_INTERVAL,
                         &now,
                     );
@@ -563,8 +563,8 @@ impl Node {
                 }
                 self.find_node_ops.retain(|op| !op.is_done());
                 self.msg_buffer.push_inbound(ReadEvent {
-                    addr_opt_id: tx.addr_opt_id,
-                    tx_id: Some(tx.tx_id),
+                    addr_opt_id: *tx.addr_opt_id(),
+                    tx_id: Some(*tx.tx_id()),
                     msg: MsgEvent::Timeout,
                 });
             }
@@ -932,7 +932,7 @@ fn make_find_node_op<A, I, R>(
     target_id: Id,
     neighbors: I,
     config: &Config,
-    transactions: &mut Transactions<transaction::Id, SocketAddr, std::time::Instant>,
+    transactions: &mut Transactions<SocketAddr, transaction::Id, std::time::Instant>,
     msg_buffer: &mut msg_buffer::Buffer<transaction::Id>,
     rng: &mut R,
 ) -> Result<FindNodeOp, Error>

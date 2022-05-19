@@ -216,10 +216,11 @@ where
         self.refresh_deadline = refresh_deadline;
     }
 
-    pub fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
+    fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
     where
         A: PartialEq,
     {
+        // TODO: Insert to replacement list if regular list is full
         if self
             .nodes
             .iter()

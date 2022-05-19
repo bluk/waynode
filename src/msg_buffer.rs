@@ -27,14 +27,11 @@ pub(crate) struct OutboundMsg<TxId> {
 }
 
 impl<TxId> OutboundMsg<TxId> {
-    pub(crate) fn into_transaction(self) -> Option<Transaction<TxId, SocketAddr, Instant>> {
+    pub(crate) fn into_transaction(self) -> Option<Transaction<SocketAddr, TxId, Instant>> {
         let addr_opt_id = self.addr_opt_id;
         let timeout = self.timeout;
-        self.tx_id.map(|tx_id| Transaction {
-            tx_id,
-            addr_opt_id,
-            timeout_deadline: Instant::now() + timeout,
-        })
+        self.tx_id
+            .map(|tx_id| Transaction::new(addr_opt_id, tx_id, Instant::now() + timeout))
     }
 }
 

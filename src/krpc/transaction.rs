@@ -12,7 +12,7 @@ use cloudburst::dht::krpc::transaction::{Id, Transactions};
 
 #[inline]
 pub(crate) fn next_tx_id<R, A, I>(
-    active_txs: &Transactions<Id, A, I>,
+    active_txs: &Transactions<A, Id, I>,
     rng: &mut R,
 ) -> Result<Id, rand::Error>
 where
