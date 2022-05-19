@@ -328,6 +328,7 @@ impl Node {
                                     self.routing_table.on_msg_received(
                                         AddrId::new(addr, node_id),
                                         &kind,
+                                        Some(&tx.tx_id),
                                         now + BUCKET_REFRESH_INTERVAL,
                                         &now,
                                     );
@@ -359,6 +360,7 @@ impl Node {
                             self.routing_table.on_msg_received(
                                 AddrId::new(*tx.addr_opt_id.addr(), node_id),
                                 &kind,
+                                Some(&tx.tx_id),
                                 now + BUCKET_REFRESH_INTERVAL,
                                 &now,
                             );
@@ -397,7 +399,7 @@ impl Node {
                         let querying_node_id = QueryMsg::querying_node_id(&value);
                         let addr_opt_id = AddrOptId::new(addr, querying_node_id);
                         if let Some(node_id) = querying_node_id {
-                            self.routing_table.on_msg_received(AddrId::new(addr, node_id), &kind, now + BUCKET_REFRESH_INTERVAL, &now);
+                            self.routing_table.on_msg_received( AddrId::new(addr, node_id), &kind, None,now + BUCKET_REFRESH_INTERVAL, &now);
                             self.ping_least_recently_seen_questionable_nodes(rng, now)?;
                         }
 
@@ -541,6 +543,7 @@ impl Node {
                 if let Some(node_id) = tx.addr_opt_id.id() {
                     self.routing_table.on_resp_timeout(
                         AddrId::new(*tx.addr_opt_id.addr(), node_id),
+                        &tx.tx_id,
                         now + BUCKET_REFRESH_INTERVAL,
                         &now,
                     );
@@ -685,13 +688,13 @@ impl Node {
                 tx_id,
                 &ping::QueryArgs::new(self.config.local_id),
                 AddrOptId::new(
-                    *node_to_ping.addr_id.addr(),
-                    Some(node_to_ping.addr_id.id()),
+                    *node_to_ping.addr_id().addr(),
+                    Some(node_to_ping.addr_id().id()),
                 ),
                 self.config.default_query_timeout,
                 self.config.client_version(),
             )?;
-            node_to_ping.on_ping(now);
+            node_to_ping.on_ping(tx_id);
         }
 
         while let Some(node_to_ping) = self.routing_table.find_node_to_ping_ipv6(&now) {
@@ -700,13 +703,13 @@ impl Node {
                 tx_id,
                 &ping::QueryArgs::new(self.config.local_id),
                 AddrOptId::new(
-                    *node_to_ping.addr_id.addr(),
-                    Some(node_to_ping.addr_id.id()),
+                    *node_to_ping.addr_id().addr(),
+                    Some(node_to_ping.addr_id().id()),
                 ),
                 self.config.default_query_timeout,
                 self.config.client_version(),
             )?;
-            node_to_ping.on_ping(now);
+            node_to_ping.on_ping(tx_id);
         }
 
         Ok(())

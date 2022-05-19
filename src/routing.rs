@@ -20,14 +20,17 @@ enum NodeState {
     Bad,
 }
 
+/// Contains the address and [`Id`] for a node with metadata about the last response.
+///
+/// Used to store a node's information for routing queries to. Contains
+/// "liveliness" information to determine if the `Node` is still likely valid.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Node<Addr, TxId, Instant> {
-    pub(crate) addr_id: AddrId<Addr>,
+pub struct Node<Addr, TxId, Instant> {
+    addr_id: AddrId<Addr>,
     karma: i8,
     next_response_deadline: Instant,
     next_query_deadline: Instant,
-    tx_id: Option<TxId>,
-    last_pinged: Option<Instant>,
+    ping_tx_id: Option<TxId>,
 }
 
 impl<A, TxId, Instant> Node<A, TxId, Instant>
@@ -36,15 +39,29 @@ where
 {
     const TIMEOUT_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-    fn with_addr_id(addr_id: AddrId<A>, now: Instant) -> Self {
+    fn new(addr_id: AddrId<A>, now: Instant) -> Self {
         Self {
             addr_id,
             karma: 0,
             next_response_deadline: now.clone() + Self::TIMEOUT_INTERVAL,
             next_query_deadline: now + Self::TIMEOUT_INTERVAL,
-            tx_id: None,
-            last_pinged: None,
+            ping_tx_id: None,
         }
+    }
+
+    /// Returns the address.
+    pub fn addr_id(&self) -> &AddrId<A> {
+        &self.addr_id
+    }
+
+    /// Returns a ping's transaction Id, if the ping is still active.
+    pub fn ping_tx_id(&self) -> Option<&TxId> {
+        self.ping_tx_id.as_ref()
+    }
+
+    /// When pinged, sets the transaction Id to identify the response or time out later.
+    pub fn on_ping(&mut self, tx_id: TxId) {
+        self.ping_tx_id = Some(tx_id);
     }
 
     fn state_with_now(&self, now: &Instant) -> NodeState {
@@ -63,14 +80,23 @@ where
         NodeState::Questionable
     }
 
-    fn next_msg_deadline(&self) -> Instant {
-        core::cmp::max(&self.next_response_deadline, &self.next_query_deadline).clone()
+    fn max_msg_recv_deadline(&self) -> &Instant {
+        core::cmp::max(&self.next_response_deadline, &self.next_query_deadline)
     }
 
-    fn on_msg_received(&mut self, kind: &Ty, now: Instant) {
-        self.last_pinged = None;
+    fn on_msg_received(&mut self, kind: &Ty, tx_id: Option<&TxId>, now: Instant)
+    where
+        TxId: PartialEq,
+    {
         match kind {
             Ty::Response => {
+                if let Some(tx_id) = tx_id {
+                    if let Some(ping_tx_id) = &self.ping_tx_id {
+                        if *ping_tx_id == *tx_id {
+                            self.ping_tx_id = None;
+                        }
+                    }
+                }
                 self.next_response_deadline = now + Self::TIMEOUT_INTERVAL;
                 self.karma = self.karma.saturating_add(1);
                 if self.karma > 3 {
@@ -81,10 +107,24 @@ where
                 self.next_query_deadline = now + Self::TIMEOUT_INTERVAL;
             }
             Ty::Error => {
+                if let Some(tx_id) = tx_id {
+                    if let Some(ping_tx_id) = &self.ping_tx_id {
+                        if *ping_tx_id == *tx_id {
+                            self.ping_tx_id = None;
+                        }
+                    }
+                }
                 self.next_response_deadline = now + Self::TIMEOUT_INTERVAL;
                 self.karma = self.karma.saturating_sub(1);
             }
             Ty::Unknown(_) => {
+                if let Some(tx_id) = tx_id {
+                    if let Some(ping_tx_id) = &self.ping_tx_id {
+                        if *ping_tx_id == *tx_id {
+                            self.ping_tx_id = None;
+                        }
+                    }
+                }
                 self.karma = self.karma.saturating_sub(1);
             }
             _ => {
@@ -93,16 +133,26 @@ where
         }
     }
 
-    pub(crate) fn on_ping_timeout(&mut self) {
-        self.last_pinged = None;
+    fn on_resp_timeout(&mut self, tx_id: &TxId)
+    where
+        TxId: PartialEq,
+    {
         self.karma = self.karma.saturating_sub(1);
-    }
 
-    pub(crate) fn on_ping(&mut self, now: Instant) {
-        self.last_pinged = Some(now);
+        if let Some(ping_tx_id) = &self.ping_tx_id {
+            if *ping_tx_id == *tx_id {
+                self.ping_tx_id = None;
+            }
+        }
     }
 }
 
+/// A bucket contains information about [`Node`]s which have an [`Id`] within a specific range.
+///
+/// Individual nodes may need to be pinged to ensure the node is still active.
+///
+/// Buckets may occassionally need to be refreshed if there is no activity for
+/// the nodes within the bucket.
 #[derive(Debug)]
 pub struct Bucket<A, TxId, Instant, const SIZE: usize = 8, const REPLACEMENT_SIZE: usize = 8> {
     range: RangeInclusive<Id>,
@@ -166,18 +216,18 @@ where
         &self.refresh_deadline
     }
 
-    fn try_insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant) {
-        self.nodes[self.nodes.len() - 1] = Some(Node::with_addr_id(addr_id, now.clone()));
+    fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant) {
+        self.nodes[self.nodes.len() - 1] = Some(Node::new(addr_id, now.clone()));
         self.sort_node_ids(now);
         self.set_refresh_deadline(refresh_deadline);
     }
 
-    fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
+    pub fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
         let pinged_nodes_count = self
             .nodes
             .iter()
             .flatten()
-            .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_some())
+            .filter(|n| n.state_with_now(now) == NodeState::Questionable && n.ping_tx_id.is_some())
             .count();
         let replacement_nodes_count = self
             .replacement_nodes
@@ -186,7 +236,7 @@ where
             .count();
         if pinged_nodes_count < replacement_nodes_count {
             self.nodes.iter_mut().rev().flatten().find(|n| {
-                n.state_with_now(now) == NodeState::Questionable && n.last_pinged.is_none()
+                n.state_with_now(now) == NodeState::Questionable && n.ping_tx_id.is_none()
             })
         } else {
             None
@@ -197,10 +247,12 @@ where
         &mut self,
         addr_id: AddrId<A>,
         kind: &Ty<'a>,
+        tx_id: Option<&TxId>,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
         A: PartialEq + Clone,
+        TxId: PartialEq,
     {
         if let Some(node) = self
             .nodes
@@ -208,7 +260,7 @@ where
             .flatten()
             .find(|n| n.addr_id == addr_id)
         {
-            node.on_msg_received(kind, now.clone());
+            node.on_msg_received(kind, tx_id, now.clone());
             match kind {
                 Ty::Response | Ty::Query => {
                     self.sort_node_ids(now);
@@ -248,8 +300,8 @@ where
                 n.as_ref()
                     .map_or(false, |n| n.state_with_now(now) == NodeState::Bad)
             }) {
-                let mut node = Node::with_addr_id(addr_id, now.clone());
-                node.on_msg_received(kind, now.clone());
+                let mut node = Node::new(addr_id, now.clone());
+                node.on_msg_received(kind, tx_id, now.clone());
                 self.nodes[pos] = Some(node);
                 self.sort_node_ids(now);
                 self.set_refresh_deadline(refresh_deadline);
@@ -259,17 +311,23 @@ where
                 .rev()
                 .position(|n| n.is_none())
             {
-                let mut node = Node::with_addr_id(addr_id, now.clone());
-                node.on_msg_received(kind, now.clone());
+                let mut node = Node::new(addr_id, now.clone());
+                node.on_msg_received(kind, tx_id, now.clone());
                 self.replacement_nodes[pos] = Some(node);
                 self.sort_node_ids(now);
             }
         }
     }
 
-    fn on_resp_timeout(&mut self, addr_id: &AddrId<A>, refresh_deadline: Instant, now: &Instant)
-    where
+    fn on_resp_timeout(
+        &mut self,
+        addr_id: &AddrId<A>,
+        tx_id: &TxId,
+        refresh_deadline: Instant,
+        now: &Instant,
+    ) where
         A: PartialEq + Clone,
+        TxId: PartialEq,
     {
         if let Some(node) = self
             .nodes
@@ -277,7 +335,7 @@ where
             .flatten()
             .find(|n| n.addr_id == *addr_id)
         {
-            node.on_ping_timeout();
+            node.on_resp_timeout(tx_id);
             match node.state_with_now(now) {
                 NodeState::Good => {
                     // The sort order will not change if the state is still good
@@ -381,7 +439,7 @@ where
                     | (NodeState::Bad, NodeState::Bad) => {}
                 }
 
-                b.next_msg_deadline().cmp(&a.next_msg_deadline())
+                b.max_msg_recv_deadline().cmp(a.max_msg_recv_deadline())
             }
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -686,9 +744,9 @@ where
             let bucket = self.buckets.pop().expect("last bucket should always exist");
             let (mut first_bucket, mut second_bucket) = bucket.split(refresh_deadline.clone());
             if first_bucket.range.contains(&node_id) {
-                first_bucket.try_insert(addr_id, refresh_deadline, now);
+                first_bucket.insert(addr_id, refresh_deadline, now);
             } else {
-                second_bucket.try_insert(addr_id, refresh_deadline, now);
+                second_bucket.insert(addr_id, refresh_deadline, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -699,7 +757,7 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.try_insert(addr_id, refresh_deadline, now);
+            bucket.insert(addr_id, refresh_deadline, now);
         }
     }
 
@@ -720,11 +778,12 @@ where
         &mut self,
         addr_id: AddrId<A>,
         kind: &Ty<'a>,
+        tx_id: Option<&TxId>,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
         A: Clone + PartialEq,
-        TxId: Clone,
+        TxId: Clone + PartialEq,
     {
         let node_id = addr_id.id();
         if node_id == self.pivot {
@@ -740,9 +799,9 @@ where
             let bucket = self.buckets.pop().expect("last bucket should always exist");
             let (mut first_bucket, mut second_bucket) = bucket.split(refresh_deadline.clone());
             if first_bucket.range.contains(&node_id) {
-                first_bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
+                first_bucket.on_msg_received(addr_id, kind, tx_id, refresh_deadline, now);
             } else {
-                second_bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
+                second_bucket.on_msg_received(addr_id, kind, tx_id, refresh_deadline, now);
             }
 
             if first_bucket.range.contains(&self.pivot) {
@@ -753,17 +812,19 @@ where
                 self.buckets.push(second_bucket);
             }
         } else {
-            bucket.on_msg_received(addr_id, kind, refresh_deadline, now);
+            bucket.on_msg_received(addr_id, kind, tx_id, refresh_deadline, now);
         }
     }
 
     pub(crate) fn on_resp_timeout(
         &mut self,
         addr_id: AddrId<A>,
+        tx_id: &TxId,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
         A: PartialEq + Copy,
+        TxId: PartialEq,
     {
         let node_id = addr_id.id();
         let bucket = self
@@ -771,7 +832,7 @@ where
             .iter_mut()
             .find(|n| n.range.contains(&node_id))
             .expect("bucket should always exist for a node");
-        bucket.on_resp_timeout(&addr_id, refresh_deadline, now);
+        bucket.on_resp_timeout(&addr_id, tx_id, refresh_deadline, now);
     }
 
     /// The earliest deadline when at least one of the buckets in the routing table should be refreshed.
@@ -859,10 +920,11 @@ where
         &mut self,
         addr_id: AddrId<SocketAddr>,
         kind: &Ty<'a>,
+        tx_id: Option<&TxId>,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
-        TxId: Clone,
+        TxId: Clone + PartialEq,
     {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
@@ -870,6 +932,7 @@ where
                     routing_table.on_msg_received(
                         AddrId::new(*addr, addr_id.id()),
                         kind,
+                        tx_id,
                         refresh_deadline,
                         now,
                     );
@@ -882,6 +945,7 @@ where
                     routing_table.on_msg_received(
                         AddrId::new(*addr, addr_id.id()),
                         kind,
+                        tx_id,
                         refresh_deadline,
                         now,
                     );
@@ -893,14 +957,18 @@ where
     pub(crate) fn on_resp_timeout(
         &mut self,
         addr_id: AddrId<SocketAddr>,
+        tx_id: &TxId,
         refresh_deadline: Instant,
         now: &Instant,
-    ) {
+    ) where
+        TxId: PartialEq,
+    {
         match addr_id.addr() {
             SocketAddr::V4(addr) => match self {
                 RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
                     routing_table.on_resp_timeout(
                         AddrId::new(*addr, addr_id.id()),
+                        tx_id,
                         refresh_deadline,
                         now,
                     );
@@ -912,6 +980,7 @@ where
                 RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
                     routing_table.on_resp_timeout(
                         AddrId::new(*addr, addr_id.id()),
+                        tx_id,
                         refresh_deadline,
                         now,
                     );
