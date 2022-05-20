@@ -76,6 +76,12 @@ where
         &self.next_query_deadline
     }
 
+    /// Returns the timeout deadline when the node should be pinged.
+    #[must_use]
+    pub fn timeout(&self) -> &Instant {
+        core::cmp::max(&self.next_response_deadline, &self.next_query_deadline)
+    }
+
     fn state_with_now(&self, now: &Instant) -> NodeState {
         if *now < self.next_response_deadline {
             return NodeState::Good;
@@ -92,10 +98,18 @@ where
         NodeState::Questionable
     }
 
-    fn max_msg_recv_deadline(&self) -> &Instant {
-        core::cmp::max(&self.next_response_deadline, &self.next_query_deadline)
-    }
-
+    /// Called when a message is received from the node,
+    ///
+    /// # Important
+    ///
+    /// In most situations, this method should not be directly called. The
+    /// method is called from [`Bucket::on_msg_received()`].
+    ///
+    /// The callback modifies the internal state based on the message type and
+    /// transaction ID. If the message is a response or a query, the node is
+    /// considered to still be active. If the message is an error or has an
+    /// unknown message type, the node's is considered to be increasingly
+    /// questionable.
     pub fn on_msg_received(&mut self, kind: &Ty, tx_id: Option<&TxId>, now: Instant)
     where
         TxId: PartialEq,
@@ -145,6 +159,14 @@ where
         }
     }
 
+    /// Called when an outbound transaction has timed out.
+    ///
+    /// # Important
+    ///
+    /// In most situations, this method should not be directly called. The
+    /// method is called from [`Bucket::on_resp_timeout()`].
+    ///
+    /// The node is considered to be in an increasingly questionable state.
     pub fn on_resp_timeout(&mut self, tx_id: &TxId)
     where
         TxId: PartialEq,
@@ -161,25 +183,25 @@ where
 
 /// A bucket contains information about [`Node`]s which have an [`Id`] within a specific range.
 ///
-/// Individual nodes may need to be pinged to ensure the node is still active.
+/// Individual nodes should be pinged to ensure the node is still active.
 ///
-/// Buckets may occassionally need to be refreshed if there is no activity for
+/// Buckets may occasionally need to be refreshed if there is no activity for
 /// the nodes within the bucket.
 #[derive(Debug)]
-pub struct Bucket<A, TxId, Instant, const SIZE: usize = 8, const REPLACEMENT_SIZE: usize = 8> {
+pub struct Bucket<Addr, TxId, Instant, const SIZE: usize = 8, const REPLACEMENT_SIZE: usize = 8> {
     range: RangeInclusive<Id>,
-    nodes: [Option<Node<A, TxId, Instant>>; SIZE],
-    replacement_nodes: [Option<Node<A, TxId, Instant>>; REPLACEMENT_SIZE],
+    nodes: [Option<Node<Addr, TxId, Instant>>; SIZE],
+    replacement_nodes: [Option<Node<Addr, TxId, Instant>>; REPLACEMENT_SIZE],
     refresh_deadline: Instant,
 }
 
-impl<A, TxId, Instant, const SIZE: usize, const REPLACEMENT_SIZE: usize>
-    Bucket<A, TxId, Instant, SIZE, REPLACEMENT_SIZE>
+impl<Addr, TxId, Instant, const SIZE: usize, const REPLACEMENT_SIZE: usize>
+    Bucket<Addr, TxId, Instant, SIZE, REPLACEMENT_SIZE>
 where
-    A: Into<SocketAddr>,
+    Addr: Into<SocketAddr>,
     Instant: cloudburst::time::Instant,
 {
-    const NODES_NONE: Option<Node<A, TxId, Instant>> = None;
+    const NODES_NONE: Option<Node<Addr, TxId, Instant>> = None;
 
     /// Creates a new `Bucket` for nodes which are within the inclusive `Id` range.
     pub fn new(range: RangeInclusive<Id>, refresh_deadline: Instant) -> Self {
@@ -212,7 +234,7 @@ where
     }
 
     /// Returns an `Iterator` for the nodes.
-    pub fn iter_nodes(&self) -> impl Iterator<Item = Option<&'_ Node<A, TxId, Instant>>> {
+    pub fn iter_nodes(&self) -> impl Iterator<Item = Option<&'_ Node<Addr, TxId, Instant>>> {
         self.nodes.iter().map(std::option::Option::as_ref)
     }
 
@@ -229,10 +251,11 @@ where
         self.refresh_deadline = refresh_deadline;
     }
 
+    /// Determines if the bucket contains the given address.
     #[must_use]
-    pub fn contains_addr_id(&self, addr_id: &AddrId<A>) -> bool
+    pub fn contains_addr_id(&self, addr_id: &AddrId<Addr>) -> bool
     where
-        A: PartialEq,
+        Addr: PartialEq,
     {
         self.nodes
             .iter()
@@ -243,28 +266,43 @@ where
                 .all(|node| node.as_ref().map_or(true, |node| node.addr_id != *addr_id))
     }
 
-    fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
+    /// Called to insert a node into the bucket if there is free space.
+    ///
+    /// Returns true if the `addr_id` was inserted. The method could return
+    /// false if the `addr_id` is already in the bucket. See [`Bucket::contains_addr_id()`].
+    fn insert(&mut self, addr_id: AddrId<Addr>, refresh_deadline: Instant, now: &Instant) -> bool
     where
-        A: PartialEq,
+        Addr: PartialEq,
     {
         if self.contains_addr_id(&addr_id) {
-            return;
+            return false;
         }
 
         if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
             self.nodes[pos] = Some(Node::new(addr_id, now.clone()));
             self.sort_node_ids(now);
             self.set_refresh_deadline(refresh_deadline);
+            true
         } else if let Some(pos) = self
             .replacement_nodes
             .iter()
             .position(std::option::Option::is_none)
         {
             self.replacement_nodes[pos] = Some(Node::new(addr_id, now.clone()));
+            true
+        } else {
+            false
         }
     }
 
-    pub fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
+    /// Finds a node which should be pinged.
+    ///
+    /// Nodes should have be pinged occasionally in order to determine if they are still active.
+    ///
+    /// When a node is pinged, the [`Node::on_ping()`] method should be called
+    /// on the found `Node` to store the transaction ID of the ping (and to
+    /// indicate the node was recently pinged).
+    pub fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<Addr, TxId, Instant>> {
         let pinged_nodes_count = self
             .nodes
             .iter()
@@ -285,15 +323,49 @@ where
         }
     }
 
-    fn on_msg_received<'a>(
+    /// Returns the timeout for the bucket.
+    ///
+    /// Nodes may need to be pinged to ensure they are still active. See [`Bucket::find_node_to_ping()`].
+    ///
+    /// The bucket may also need to be refreshed.
+    ///
+    /// A bucket is refreshed by attempting to find a random node `Id` in the
+    /// bucket. See [`Bucket::rand_id()`] to find a random ID.
+    ///
+    /// Set the new refresh deadline by calling [`Bucket::set_refresh_deadline()`] if refreshed.
+    pub fn timeout(&self) -> &Instant {
+        if !self.replacement_nodes.is_empty() {
+            if let Some(non_pinged_node_timeout) = self
+                .nodes
+                .iter()
+                .flatten()
+                .filter(|n| n.ping_tx_id.is_none())
+                .map(Node::timeout)
+                .min()
+            {
+                return core::cmp::min(&self.refresh_deadline, non_pinged_node_timeout);
+            }
+        }
+
+        &self.refresh_deadline
+    }
+
+    /// Called when a message is received from a node with an `Id` which falls
+    /// within this bucket's `Id` range.
+    ///
+    /// # Important
+    ///
+    /// In most situations, this method should not be directly called. The
+    /// method is called from [`Table::on_msg_received()`].
+    pub fn on_msg_received<'a>(
         &mut self,
-        addr_id: AddrId<A>,
+        addr_id: AddrId<Addr>,
         kind: &Ty<'a>,
         tx_id: Option<&TxId>,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
-        A: PartialEq + Clone,
+        Addr: PartialEq + Clone,
         TxId: PartialEq,
     {
         if let Some(node) = self
@@ -326,7 +398,7 @@ where
                     }
                 },
                 _ => {
-                    todo!()
+                    unreachable!()
                 }
             }
         } else {
@@ -334,7 +406,7 @@ where
                 Ty::Response | Ty::Query | Ty::Error => {}
                 Ty::Unknown(_) => return,
                 _ => {
-                    todo!()
+                    unreachable!()
                 }
             }
 
@@ -361,14 +433,22 @@ where
         }
     }
 
-    fn on_resp_timeout(
+    /// Called when an outbound transaction has timed out.
+    ///
+    /// # Important
+    ///
+    /// In most situations, this method should not be directly called. The
+    /// method is called from [`Table::on_resp_timeout()`].
+    ///
+    /// The node is considered to be in an increasingly questionable state.
+    pub fn on_resp_timeout(
         &mut self,
-        addr_id: &AddrId<A>,
+        addr_id: &AddrId<Addr>,
         tx_id: &TxId,
         refresh_deadline: Instant,
         now: &Instant,
     ) where
-        A: PartialEq + Clone,
+        Addr: PartialEq + Clone,
         TxId: PartialEq,
     {
         if let Some(node) = self
@@ -400,9 +480,9 @@ where
         }
     }
 
-    fn split_insert_node(&mut self, node: Node<A, TxId, Instant>)
+    fn split_insert_node(&mut self, node: Node<Addr, TxId, Instant>)
     where
-        A: PartialEq,
+        Addr: PartialEq,
     {
         if self.contains_addr_id(node.addr_id()) {
             return;
@@ -419,12 +499,17 @@ where
         }
     }
 
+    /// Splits a bucket into two by dividing using the middle of the `Id` range.
+    ///
+    /// The `Node`s previously stored in this `Bucket` may not be evenly split
+    /// between the two new buckets because their `Id`s may be unevenly
+    /// distributed between the two new `Id` ranges.
     pub fn split(
         self,
         refresh_deadline: Instant,
-    ) -> (Bucket<A, TxId, Instant>, Bucket<A, TxId, Instant>)
+    ) -> (Bucket<Addr, TxId, Instant>, Bucket<Addr, TxId, Instant>)
     where
-        A: Clone + PartialEq,
+        Addr: Clone + PartialEq,
         TxId: Clone,
     {
         let middle = internal::middle(*self.range.end(), *self.range.start());
@@ -441,6 +526,7 @@ where
             ..
         } = self;
 
+        #[allow(clippy::manual_flatten)]
         for node in nodes {
             if let Some(node) = node {
                 let node_id = node.addr_id.id();
@@ -452,7 +538,7 @@ where
             }
         }
 
-        // TODO: Insert into regular slots, not just as replacement nodes if there are available slots
+        #[allow(clippy::manual_flatten)]
         for node in replacement_nodes {
             if let Some(node) = node {
                 let node_id = node.addr_id.id();
@@ -467,7 +553,7 @@ where
         (lower_bucket, upper_bucket)
     }
 
-    fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &AddrId<A>> {
+    fn prioritized_nodes(&self, now: Instant) -> impl Iterator<Item = &AddrId<Addr>> {
         self.nodes
             .iter()
             .flatten()
@@ -491,7 +577,7 @@ where
                     | (NodeState::Bad, NodeState::Bad) => {}
                 }
 
-                b.max_msg_recv_deadline().cmp(a.max_msg_recv_deadline())
+                b.timeout().cmp(a.timeout())
             }
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -751,10 +837,14 @@ mod internal {
     }
 }
 
+/// A routing table based around a pivot `Id`.
+///
+/// More data for nodes which are "closer" to the pivot is stored compared to
+/// data which is "farther" from the pivot `Id`.
 #[derive(Debug)]
-pub struct Table<A, TxId, Instant> {
+pub struct Table<Addr, TxId, Instant> {
     pivot: Id,
-    buckets: Vec<Bucket<A, TxId, Instant>>,
+    buckets: Vec<Bucket<Addr, TxId, Instant>>,
 }
 
 impl<A, TxId, Instant> Table<A, TxId, Instant>
@@ -818,6 +908,9 @@ where
         }
     }
 
+    /// Finds close neighbors for the given `Id` parameter.
+    ///
+    /// Useful to find nodes which a query should be sent to.
     pub fn find_neighbors(&self, id: Id, now: &Instant) -> impl Iterator<Item = AddrId<A>>
     where
         A: Clone,
@@ -831,7 +924,14 @@ where
         nodes.into_iter()
     }
 
-    pub(crate) fn on_msg_received<'a>(
+    /// Called when a message is received from any node,
+    ///
+    /// If the `addr_id` is previously known to the routing table, the node's
+    /// metadata is updated.
+    ///
+    /// If the `addr_id` is previously unknown to the routing table and the
+    /// `addr_id` could be useful, it is added to a bucket in the routing table.
+    pub fn on_msg_received<'a>(
         &mut self,
         addr_id: AddrId<A>,
         kind: &Ty<'a>,
@@ -873,7 +973,8 @@ where
         }
     }
 
-    pub(crate) fn on_resp_timeout(
+    /// Called when an outbound transaction has timed out.
+    pub fn on_resp_timeout(
         &mut self,
         addr_id: AddrId<A>,
         tx_id: &TxId,
@@ -892,17 +993,22 @@ where
         bucket.on_resp_timeout(&addr_id, tx_id, refresh_deadline, now);
     }
 
-    /// The earliest deadline when at least one of the buckets in the routing table should be refreshed.
+    /// The earliest deadline when at least one of the buckets in the routing
+    /// table should be refreshed.
+    ///
+    /// Once a timeout is reached, call [`Table::find_refreshable_bucket()`] to
+    /// find a bucket to refresh.
     #[must_use]
     pub fn timeout(&self) -> Option<Instant> {
-        self.buckets
-            .iter()
-            .map(Bucket::refresh_deadline)
-            .min()
-            .cloned()
+        self.buckets.iter().map(Bucket::timeout).min().cloned()
     }
 
     /// Finds a bucket which needs to be refreshed.
+    ///
+    /// A bucket is refreshed by attempting to find a random node `Id` in the
+    /// bucket. See [`Bucket::rand_id()`] to find a random ID.
+    ///
+    /// Set the new refresh deadline by calling [`Bucket::set_refresh_deadline()`].
     pub fn find_refreshable_bucket(
         &mut self,
         now: &Instant,
@@ -912,10 +1018,8 @@ where
             .find(|b| *b.refresh_deadline() <= *now)
     }
 
-    pub(crate) fn find_node_to_ping(
-        &mut self,
-        now: &Instant,
-    ) -> Option<&mut Node<A, TxId, Instant>> {
+    /// Finds a node which should be pinged to determine if the node is still active.
+    pub fn find_node_to_ping(&mut self, now: &Instant) -> Option<&mut Node<A, TxId, Instant>> {
         self.buckets
             .iter_mut()
             .find_map(|b| b.find_node_to_ping(now))
@@ -923,7 +1027,7 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) enum RoutingTable<TxId, Instant> {
+pub enum RoutingTable<TxId, Instant> {
     Ipv4(Table<SocketAddrV4, TxId, Instant>),
     Ipv6(Table<SocketAddrV6, TxId, Instant>),
     Ipv4AndIpv6(
