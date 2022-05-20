@@ -52,6 +52,7 @@ use cloudburst::dht::{
         Error, ErrorVal, QueryArgs, QueryMsg, RespMsg, RespVal, Ty,
     },
     node::{AddrId, AddrOptId, Id, LocalId},
+    routing::Table,
 };
 use routing::RoutingTable;
 use std::{
@@ -257,11 +258,11 @@ impl Node {
         let now = Instant::now();
 
         let mut routing_table = match config.supported_addr {
-            SupportedAddr::Ipv4 => routing::RoutingTable::Ipv4(routing::Table::new(local_id, now)),
-            SupportedAddr::Ipv6 => routing::RoutingTable::Ipv6(routing::Table::new(local_id, now)),
+            SupportedAddr::Ipv4 => routing::RoutingTable::Ipv4(Table::new(local_id, now)),
+            SupportedAddr::Ipv6 => routing::RoutingTable::Ipv6(Table::new(local_id, now)),
             SupportedAddr::Ipv4AndIpv6 => routing::RoutingTable::Ipv4AndIpv6(
-                routing::Table::new(local_id, now),
-                routing::Table::new(local_id, now),
+                Table::new(local_id, now),
+                Table::new(local_id, now),
             ),
         };
         routing_table.try_insert_addr_ids(addr_ids, &(now + BUCKET_REFRESH_INTERVAL), &now);
