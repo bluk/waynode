@@ -64,6 +64,18 @@ where
         self.ping_tx_id = Some(tx_id);
     }
 
+    /// Returns the next response deadline.
+    #[must_use]
+    pub fn next_response_deadline(&self) -> &Instant {
+        &self.next_response_deadline
+    }
+
+    /// Returns the next query deadline.
+    #[must_use]
+    pub fn next_query_deadline(&self) -> &Instant {
+        &self.next_query_deadline
+    }
+
     fn state_with_now(&self, now: &Instant) -> NodeState {
         if *now < self.next_response_deadline {
             return NodeState::Good;
@@ -80,7 +92,7 @@ where
         NodeState::Questionable
     }
 
-    pub fn max_msg_recv_deadline(&self) -> &Instant {
+    fn max_msg_recv_deadline(&self) -> &Instant {
         core::cmp::max(&self.next_response_deadline, &self.next_query_deadline)
     }
 
@@ -206,6 +218,7 @@ where
 
     /// Returns the deadline which a `Node` from within the bucket's range should be pinged or found.
     #[inline]
+    #[must_use]
     pub fn refresh_deadline(&self) -> &Instant {
         &self.refresh_deadline
     }
@@ -216,19 +229,38 @@ where
         self.refresh_deadline = refresh_deadline;
     }
 
+    #[must_use]
+    pub fn contains_addr_id(&self, addr_id: &AddrId<A>) -> bool
+    where
+        A: PartialEq,
+    {
+        self.nodes
+            .iter()
+            .all(|node| node.as_ref().map_or(true, |node| node.addr_id != *addr_id))
+            && self
+                .replacement_nodes
+                .iter()
+                .all(|node| node.as_ref().map_or(true, |node| node.addr_id != *addr_id))
+    }
+
     fn insert(&mut self, addr_id: AddrId<A>, refresh_deadline: Instant, now: &Instant)
     where
         A: PartialEq,
     {
-        // TODO: Insert to replacement list if regular list is full
-        if self
-            .nodes
-            .iter()
-            .all(|node| node.as_ref().map_or(true, |node| node.addr_id != addr_id))
-        {
-            self.nodes[self.nodes.len() - 1] = Some(Node::new(addr_id, now.clone()));
+        if self.contains_addr_id(&addr_id) {
+            return;
+        }
+
+        if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
+            self.nodes[pos] = Some(Node::new(addr_id, now.clone()));
             self.sort_node_ids(now);
             self.set_refresh_deadline(refresh_deadline);
+        } else if let Some(pos) = self
+            .replacement_nodes
+            .iter()
+            .position(std::option::Option::is_none)
+        {
+            self.replacement_nodes[pos] = Some(Node::new(addr_id, now.clone()));
         }
     }
 
@@ -368,32 +400,31 @@ where
         }
     }
 
-    fn split_insert(&mut self, node: Node<A, TxId, Instant>) {
+    fn split_insert_node(&mut self, node: Node<A, TxId, Instant>)
+    where
+        A: PartialEq,
+    {
+        if self.contains_addr_id(node.addr_id()) {
+            return;
+        }
+
         if let Some(pos) = self.nodes.iter().position(std::option::Option::is_none) {
             self.nodes[pos] = Some(node);
-        } else {
-            unreachable!()
-        }
-    }
-
-    fn split_replacement_insert(&mut self, node: Node<A, TxId, Instant>) {
-        if let Some(pos) = self
+        } else if let Some(pos) = self
             .replacement_nodes
             .iter()
             .position(std::option::Option::is_none)
         {
             self.replacement_nodes[pos] = Some(node);
-        } else {
-            unreachable!()
         }
     }
 
-    fn split(
+    pub fn split(
         self,
         refresh_deadline: Instant,
     ) -> (Bucket<A, TxId, Instant>, Bucket<A, TxId, Instant>)
     where
-        A: Clone,
+        A: Clone + PartialEq,
         TxId: Clone,
     {
         let middle = internal::middle(*self.range.end(), *self.range.start());
@@ -404,22 +435,32 @@ where
         );
         let mut upper_bucket = Bucket::new(middle..=*self.range.end(), refresh_deadline);
 
-        for node in self.nodes.iter().flatten() {
-            let node_id = node.addr_id.id();
-            if lower_bucket.range.contains(&node_id) {
-                lower_bucket.split_insert(node.clone());
-            } else {
-                upper_bucket.split_insert(node.clone());
+        let Bucket {
+            nodes,
+            replacement_nodes,
+            ..
+        } = self;
+
+        for node in nodes {
+            if let Some(node) = node {
+                let node_id = node.addr_id.id();
+                if lower_bucket.range.contains(&node_id) {
+                    lower_bucket.split_insert_node(node);
+                } else {
+                    upper_bucket.split_insert_node(node);
+                }
             }
         }
 
         // TODO: Insert into regular slots, not just as replacement nodes if there are available slots
-        for node in self.replacement_nodes.iter().flatten() {
-            let node_id = node.addr_id.id();
-            if lower_bucket.range.contains(&node_id) {
-                lower_bucket.split_replacement_insert(node.clone());
-            } else {
-                upper_bucket.split_replacement_insert(node.clone());
+        for node in replacement_nodes {
+            if let Some(node) = node {
+                let node_id = node.addr_id.id();
+                if lower_bucket.range.contains(&node_id) {
+                    lower_bucket.split_insert_node(node);
+                } else {
+                    upper_bucket.split_insert_node(node);
+                }
             }
         }
 
@@ -777,7 +818,7 @@ where
         }
     }
 
-    pub(crate) fn find_neighbors(&self, id: Id, now: &Instant) -> std::vec::IntoIter<AddrId<A>>
+    pub fn find_neighbors(&self, id: Id, now: &Instant) -> impl Iterator<Item = AddrId<A>>
     where
         A: Clone,
     {
@@ -1024,12 +1065,13 @@ where
         id: Id,
         now: &Instant,
     ) -> impl Iterator<Item = AddrId<SocketAddrV4>> {
-        match self {
+        let mut iter = match self {
             RoutingTable::Ipv4(routing_table) | RoutingTable::Ipv4AndIpv6(routing_table, _) => {
-                routing_table.find_neighbors(id, now)
+                Some(routing_table.find_neighbors(id, now))
             }
-            RoutingTable::Ipv6(_) => Vec::new().into_iter(),
-        }
+            RoutingTable::Ipv6(_) => None,
+        };
+        core::iter::from_fn(move || iter.as_mut().and_then(std::iter::Iterator::next))
     }
 
     pub fn find_neighbors_ipv6(
@@ -1037,12 +1079,13 @@ where
         id: Id,
         now: &Instant,
     ) -> impl Iterator<Item = AddrId<SocketAddrV6>> {
-        match self {
+        let mut iter = match self {
             RoutingTable::Ipv6(routing_table) | RoutingTable::Ipv4AndIpv6(_, routing_table) => {
-                routing_table.find_neighbors(id, now)
+                Some(routing_table.find_neighbors(id, now))
             }
-            RoutingTable::Ipv4(_) => Vec::new().into_iter(),
-        }
+            RoutingTable::Ipv4(_) => None,
+        };
+        core::iter::from_fn(move || iter.as_mut().and_then(std::iter::Iterator::next))
     }
 
     pub fn find_node_to_ping_ipv4(
