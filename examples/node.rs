@@ -16,17 +16,20 @@ extern crate log;
 
 use std::io;
 use std::net;
-use std::time::Duration;
+
+use std::time::Instant;
 
 use clap::Arg;
 use clap::Command;
 
+use cloudburst::dht::krpc;
 use cloudburst::dht::{
-    krpc::{ping, ErrorCode, Msg, QueryMsg},
+    krpc::{ping, ErrorCode, ErrorVal, Msg, QueryArgs, QueryMsg, RespVal},
     node::{Id, LocalId},
 };
 use mio::{Events, Interest, Poll, Token};
 
+use serde_bytes::Bytes;
 use sloppy::Node;
 
 fn main() -> io::Result<()> {
@@ -83,8 +86,7 @@ fn main() -> io::Result<()> {
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
 
-    let mut node: Node = Node::new(config, &[], bootstrap_addrs, &mut rand::thread_rng())
-        .expect("dht to bootstrap successfully");
+    let mut node: Node = Node::new(config, &[], bootstrap_addrs);
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -97,15 +99,17 @@ fn main() -> io::Result<()> {
     let mut events = Events::with_capacity(1024);
 
     let mut buf = [0; 65535];
-    let mut out = [0; 65535];
 
-    // let stdout = io::stdout();
-    // let mut buf_writer = BufWriter::new(stdout.lock());
+    loop {
+        let timeout_deadline: Option<Instant> = node.timeout();
 
-    'event: loop {
-        let timeout: Option<Duration> = node.timeout();
-
-        poll.poll(&mut events, timeout)?;
+        poll.poll(
+            &mut events,
+            timeout_deadline.map(|deadline| {
+                let now = Instant::now();
+                deadline.saturating_duration_since(now)
+            }),
+        )?;
 
         'recv: loop {
             if events.is_empty() {
@@ -114,6 +118,72 @@ fn main() -> io::Result<()> {
                     Ok(()) => {}
                     Err(e) => error!("on_timeout error: {:?}", e),
                 };
+
+                let now = Instant::now();
+
+                while let Some(_read_evt) = node.find_timed_out_tx(now) {
+                    // normally, look at any locally initiated transactions and
+                    // considered them timed out if they match the read event
+                }
+
+                loop {
+                    let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
+                    if let Some(node_to_ping) = node.find_node_to_ping_ipv4(now) {
+                        let addr = (*node_to_ping.addr_id().addr()).into();
+                        node_to_ping.on_ping(tx_id);
+
+                        let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
+                            a: Some(&ping::QueryArgs::new(node.config().local_id()).to_value()),
+                            q: Bytes::new(ping::METHOD_PING),
+                            t: Bytes::new(tx_id.as_ref()),
+                            v: node.config().client_version().map(Bytes::new),
+                        })?;
+
+                        match socket.send_to(&out, addr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                if e.kind() == io::ErrorKind::WouldBlock {
+                                    todo!();
+                                }
+
+                                error!("send_to io error: {}", e);
+                                continue;
+                            }
+                        };
+                    } else {
+                        break;
+                    }
+                }
+
+                loop {
+                    let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
+                    if let Some(node_to_ping) = node.find_node_to_ping_ipv6(now) {
+                        let addr = (*node_to_ping.addr_id().addr()).into();
+                        node_to_ping.on_ping(tx_id);
+
+                        let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
+                            a: Some(&ping::QueryArgs::new(node.config().local_id()).to_value()),
+                            q: Bytes::new(ping::METHOD_PING),
+                            t: Bytes::new(tx_id.as_ref()),
+                            v: node.config().client_version().map(Bytes::new),
+                        })?;
+
+                        match socket.send_to(&out, addr) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                if e.kind() == io::ErrorKind::WouldBlock {
+                                    todo!();
+                                }
+
+                                error!("send_to io error: {}", e);
+                                continue;
+                            }
+                        };
+                    } else {
+                        break;
+                    }
+                }
+
                 break 'recv;
             }
 
@@ -131,28 +201,31 @@ fn main() -> io::Result<()> {
 
             let filled_buf = &buf[..bytes_read];
 
-            match node.on_recv(filled_buf, src_addr, &mut rng) {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("on_recv error: {:?}", e);
-                }
-            }
-
-            'read: loop {
-                if let Some(inbound_msg) = node.read() {
+            match node.on_recv(filled_buf, src_addr) {
+                Ok(inbound_msg) => {
                     // debug!("Read message: {:?}", inbound_msg);
                     match inbound_msg.msg() {
                         sloppy::MsgEvent::Query(msg) => match msg.method_name() {
                             Some(ping::METHOD_PING) => {
-                                let ping_resp = ping::RespValues::new(node.config().local_id());
                                 if let Some(tx_id) = msg.tx_id() {
-                                    match node.write_resp(
-                                        tx_id,
-                                        Some(ping_resp),
-                                        inbound_msg.addr_opt_id(),
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(e) => error!("ping write_resp error: {:?}", e),
+                                    let ping_resp = ping::RespValues::new(node.config().local_id());
+                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                        r: Some(&ping_resp.to_value()),
+                                        t: Bytes::new(tx_id),
+                                        v: node.config().client_version().map(Bytes::new),
+                                    })?;
+
+                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            if e.kind() == io::ErrorKind::WouldBlock {
+                                                // return Ok(false);
+                                                todo!();
+                                            }
+
+                                            error!("send_to io error: {}", e);
+                                            continue;
+                                        }
                                     };
                                 }
                             }
@@ -162,9 +235,23 @@ fn main() -> io::Result<()> {
                                         ErrorCode::MethodUnknown,
                                         core::str::from_utf8(method_name).unwrap_or("").to_string(),
                                     );
-                                    match node.write_err(tx_id, &error, inbound_msg.addr_opt_id()) {
-                                        Ok(()) => {}
-                                        Err(e) => error!("write_err error: {:?}", e),
+                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                        r: Some(&error.to_value()),
+                                        t: Bytes::new(tx_id),
+                                        v: node.config().client_version().map(Bytes::new),
+                                    })?;
+
+                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            if e.kind() == io::ErrorKind::WouldBlock {
+                                                // return Ok(false);
+                                                todo!();
+                                            }
+
+                                            error!("send_to io error: {}", e);
+                                            continue;
+                                        }
                                     };
                                 }
                             }
@@ -174,9 +261,23 @@ fn main() -> io::Result<()> {
                                         ErrorCode::ProtocolError,
                                         String::from("method name not listed"),
                                     );
-                                    match node.write_err(tx_id, &error, inbound_msg.addr_opt_id()) {
-                                        Ok(()) => {}
-                                        Err(e) => error!("write_err error: {:?}", e),
+                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                        r: Some(&error.to_value()),
+                                        t: Bytes::new(tx_id),
+                                        v: node.config().client_version().map(Bytes::new),
+                                    })?;
+
+                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            if e.kind() == io::ErrorKind::WouldBlock {
+                                                // return Ok(false);
+                                                todo!();
+                                            }
+
+                                            error!("send_to io error: {}", e);
+                                            continue;
+                                        }
                                     };
                                 }
                             }
@@ -185,72 +286,41 @@ fn main() -> io::Result<()> {
                         | sloppy::MsgEvent::Error(_)
                         | sloppy::MsgEvent::Timeout => {}
                     }
-                } else {
-                    break 'read;
+                }
+                Err(e) => {
+                    error!("on_recv error: {:?}", e);
                 }
             }
 
             debug!("Sending after read");
 
-            match send_packets(&mut node, &socket, &mut out) {
-                Ok(break_event) => {
-                    if break_event {
-                        break 'event;
-                    }
-                }
-                Err(e) => {
-                    error!("send_packets error: {:?}", e);
-                    return Err(e);
-                }
-            }
+            // match send_packets(&mut node, &socket, &mut out) {
+            //     Ok(break_event) => {
+            //         if break_event {
+            //             break 'event;
+            //         }
+            //     }
+            //     Err(e) => {
+            //         error!("send_packets error: {:?}", e);
+            //         return Err(e);
+            //     }
+            // }
         }
 
         debug!("Sending after recv");
 
-        match send_packets(&mut node, &socket, &mut out) {
-            Ok(break_event) => {
-                if break_event {
-                    break 'event;
-                }
-            }
-            Err(e) => {
-                error!("send_packets error: {:?}", e);
-                return Err(e);
-            }
-        }
+        // match send_packets(&mut node, &socket, &mut out) {
+        //     Ok(break_event) => {
+        //         if break_event {
+        //             break 'event;
+        //         }
+        //     }
+        //     Err(e) => {
+        //         error!("send_packets error: {:?}", e);
+        //         return Err(e);
+        //     }
+        // }
     }
 
     Ok(())
-}
-
-fn send_packets(node: &mut Node, socket: &mio::net::UdpSocket, out: &mut [u8]) -> io::Result<bool> {
-    loop {
-        match node.send_to(out) {
-            Ok(v) => {
-                if let Some(send_info) = v {
-                    if send_info.len == 0 {
-                        return Ok(false);
-                    }
-
-                    match socket.send_to(&out[..send_info.len], send_info.addr) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            if e.kind() == io::ErrorKind::WouldBlock {
-                                return Ok(false);
-                            }
-
-                            error!("send_to io error: {}", e);
-                            continue;
-                        }
-                    };
-                } else {
-                    return Ok(false);
-                }
-            }
-            Err(e) => {
-                error!("send_to error: {:?}", e);
-                return Ok(true);
-            }
-        };
-    }
 }

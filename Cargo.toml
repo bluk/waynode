@@ -16,6 +16,7 @@ include = [
 ]
 
 [dependencies]
+thiserror = "1.0"
 bt_bencode = "0.6"
 cloudburst = { git = "https://github.com/bluk/cloudburst", branch = "next" }
 serde = { version = "1", features=["derive"] }
