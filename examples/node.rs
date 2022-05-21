@@ -17,6 +17,8 @@ extern crate log;
 use std::io;
 use std::net;
 
+use std::net::SocketAddr;
+use std::net::SocketAddrV4;
 use std::time::Instant;
 
 use clap::Arg;
@@ -73,20 +75,22 @@ fn main() -> io::Result<()> {
         "dht.transmissionbt.com:6881",
     ]
     .iter()
-    .map(|&s| {
+    .filter_map(|&s| {
         use std::net::ToSocketAddrs;
-        s.to_socket_addrs()
+        s.to_socket_addrs().ok()
     })
-    .collect::<Result<Vec<_>, std::io::Error>>()
-    .map(|v| v.into_iter().flatten().collect::<Vec<_>>())
-    .expect("addresses to resolve");
+    .flatten()
+    .filter_map(|socket_addr| match socket_addr {
+        SocketAddr::V4(socket_addr) => Some(socket_addr),
+        SocketAddr::V6(_) => None,
+    });
 
     let mut config = sloppy::Config::new(LocalId::new(Id::rand(&mut rng).unwrap()));
     config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
     config.set_supported_addr(sloppy::SupportedAddr::Ipv4AndIpv6);
 
-    let mut node: Node = Node::new(config, &[], bootstrap_addrs);
+    let mut node: Node<SocketAddrV4> = Node::new(config, std::iter::empty(), bootstrap_addrs);
     let dht_token = Token(0);
 
     let mut poll = Poll::new()?;
@@ -128,36 +132,7 @@ fn main() -> io::Result<()> {
 
                 loop {
                     let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
-                    if let Some(node_to_ping) = node.find_node_to_ping_ipv4(now) {
-                        let addr = (*node_to_ping.addr_id().addr()).into();
-                        node_to_ping.on_ping(tx_id);
-
-                        let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
-                            a: Some(&ping::QueryArgs::new(node.config().local_id()).to_value()),
-                            q: Bytes::new(ping::METHOD_PING),
-                            t: Bytes::new(tx_id.as_ref()),
-                            v: node.config().client_version().map(Bytes::new),
-                        })?;
-
-                        match socket.send_to(&out, addr) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                if e.kind() == io::ErrorKind::WouldBlock {
-                                    todo!();
-                                }
-
-                                error!("send_to io error: {}", e);
-                                continue;
-                            }
-                        };
-                    } else {
-                        break;
-                    }
-                }
-
-                loop {
-                    let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
-                    if let Some(node_to_ping) = node.find_node_to_ping_ipv6(now) {
+                    if let Some(node_to_ping) = node.find_node_to_ping(now) {
                         let addr = (*node_to_ping.addr_id().addr()).into();
                         node_to_ping.on_ping(tx_id);
 
@@ -201,94 +176,111 @@ fn main() -> io::Result<()> {
 
             let filled_buf = &buf[..bytes_read];
 
-            match node.on_recv(filled_buf, src_addr) {
-                Ok(inbound_msg) => {
-                    // debug!("Read message: {:?}", inbound_msg);
-                    match inbound_msg.msg() {
-                        sloppy::MsgEvent::Query(msg) => match msg.method_name() {
-                            Some(ping::METHOD_PING) => {
-                                if let Some(tx_id) = msg.tx_id() {
-                                    let ping_resp = ping::RespValues::new(node.config().local_id());
-                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                                        r: Some(&ping_resp.to_value()),
-                                        t: Bytes::new(tx_id),
-                                        v: node.config().client_version().map(Bytes::new),
-                                    })?;
+            match src_addr {
+                SocketAddr::V6(_) => {}
+                SocketAddr::V4(src_addr) => {
+                    match node.on_recv(filled_buf, src_addr) {
+                        Ok(inbound_msg) => {
+                            // debug!("Read message: {:?}", inbound_msg);
+                            match inbound_msg.msg() {
+                                sloppy::MsgEvent::Query(msg) => match msg.method_name() {
+                                    Some(ping::METHOD_PING) => {
+                                        if let Some(tx_id) = msg.tx_id() {
+                                            let ping_resp =
+                                                ping::RespValues::new(node.config().local_id());
+                                            let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                                r: Some(&ping_resp.to_value()),
+                                                t: Bytes::new(tx_id),
+                                                v: node.config().client_version().map(Bytes::new),
+                                            })?;
 
-                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
-                                        Ok(v) => v,
-                                        Err(e) => {
-                                            if e.kind() == io::ErrorKind::WouldBlock {
-                                                // return Ok(false);
-                                                todo!();
-                                            }
+                                            match socket.send_to(
+                                                &out,
+                                                (*inbound_msg.addr_opt_id().addr()).into(),
+                                            ) {
+                                                Ok(v) => v,
+                                                Err(e) => {
+                                                    if e.kind() == io::ErrorKind::WouldBlock {
+                                                        // return Ok(false);
+                                                        todo!();
+                                                    }
 
-                                            error!("send_to io error: {}", e);
-                                            continue;
+                                                    error!("send_to io error: {}", e);
+                                                    continue;
+                                                }
+                                            };
                                         }
-                                    };
-                                }
-                            }
-                            Some(method_name) => {
-                                if let Some(tx_id) = msg.tx_id() {
-                                    let error = cloudburst::dht::krpc::error::Values::new(
-                                        ErrorCode::MethodUnknown,
-                                        core::str::from_utf8(method_name).unwrap_or("").to_string(),
-                                    );
-                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                                        r: Some(&error.to_value()),
-                                        t: Bytes::new(tx_id),
-                                        v: node.config().client_version().map(Bytes::new),
-                                    })?;
+                                    }
+                                    Some(method_name) => {
+                                        if let Some(tx_id) = msg.tx_id() {
+                                            let error = cloudburst::dht::krpc::error::Values::new(
+                                                ErrorCode::MethodUnknown,
+                                                core::str::from_utf8(method_name)
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                            );
+                                            let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                                r: Some(&error.to_value()),
+                                                t: Bytes::new(tx_id),
+                                                v: node.config().client_version().map(Bytes::new),
+                                            })?;
 
-                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
-                                        Ok(v) => v,
-                                        Err(e) => {
-                                            if e.kind() == io::ErrorKind::WouldBlock {
-                                                // return Ok(false);
-                                                todo!();
-                                            }
+                                            match socket.send_to(
+                                                &out,
+                                                (*inbound_msg.addr_opt_id().addr()).into(),
+                                            ) {
+                                                Ok(v) => v,
+                                                Err(e) => {
+                                                    if e.kind() == io::ErrorKind::WouldBlock {
+                                                        // return Ok(false);
+                                                        todo!();
+                                                    }
 
-                                            error!("send_to io error: {}", e);
-                                            continue;
+                                                    error!("send_to io error: {}", e);
+                                                    continue;
+                                                }
+                                            };
                                         }
-                                    };
-                                }
-                            }
-                            None => {
-                                if let Some(tx_id) = msg.tx_id() {
-                                    let error = cloudburst::dht::krpc::error::Values::new(
-                                        ErrorCode::ProtocolError,
-                                        String::from("method name not listed"),
-                                    );
-                                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                                        r: Some(&error.to_value()),
-                                        t: Bytes::new(tx_id),
-                                        v: node.config().client_version().map(Bytes::new),
-                                    })?;
+                                    }
+                                    None => {
+                                        if let Some(tx_id) = msg.tx_id() {
+                                            let error = cloudburst::dht::krpc::error::Values::new(
+                                                ErrorCode::ProtocolError,
+                                                String::from("method name not listed"),
+                                            );
+                                            let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
+                                                r: Some(&error.to_value()),
+                                                t: Bytes::new(tx_id),
+                                                v: node.config().client_version().map(Bytes::new),
+                                            })?;
 
-                                    match socket.send_to(&out, *inbound_msg.addr_opt_id().addr()) {
-                                        Ok(v) => v,
-                                        Err(e) => {
-                                            if e.kind() == io::ErrorKind::WouldBlock {
-                                                // return Ok(false);
-                                                todo!();
-                                            }
+                                            match socket.send_to(
+                                                &out,
+                                                (*inbound_msg.addr_opt_id().addr()).into(),
+                                            ) {
+                                                Ok(v) => v,
+                                                Err(e) => {
+                                                    if e.kind() == io::ErrorKind::WouldBlock {
+                                                        // return Ok(false);
+                                                        todo!();
+                                                    }
 
-                                            error!("send_to io error: {}", e);
-                                            continue;
+                                                    error!("send_to io error: {}", e);
+                                                    continue;
+                                                }
+                                            };
                                         }
-                                    };
-                                }
+                                    }
+                                },
+                                sloppy::MsgEvent::Resp(_)
+                                | sloppy::MsgEvent::Error(_)
+                                | sloppy::MsgEvent::Timeout => {}
                             }
-                        },
-                        sloppy::MsgEvent::Resp(_)
-                        | sloppy::MsgEvent::Error(_)
-                        | sloppy::MsgEvent::Timeout => {}
+                        }
+                        Err(e) => {
+                            error!("on_recv error: {:?}", e);
+                        }
                     }
-                }
-                Err(e) => {
-                    error!("on_recv error: {:?}", e);
                 }
             }
 

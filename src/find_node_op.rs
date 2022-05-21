@@ -17,7 +17,7 @@ use cloudburst::dht::{
     },
     node::{self, AddrOptId, Id},
 };
-use std::{collections::BTreeSet, convert::TryFrom, net::SocketAddr};
+use std::{collections::BTreeSet, convert::TryFrom};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Response<'a> {
@@ -30,16 +30,19 @@ const CLOSEST_DISTANCES_LEN: usize = 16;
 const MAX_CONCURRENT_REQUESTS: usize = 8;
 
 #[derive(Debug)]
-struct AddrInfo {
+struct AddrInfo<Addr> {
     closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
-    potential_addr_opt_ids: Vec<AddrOptId<SocketAddr>>,
-    queried_addrs: BTreeSet<SocketAddr>,
+    potential_addr_opt_ids: Vec<AddrOptId<Addr>>,
+    queried_addrs: BTreeSet<Addr>,
 }
 
-impl AddrInfo {
+impl<Addr> AddrInfo<Addr>
+where
+    Addr: Clone + Ord,
+{
     fn new<I>(potential_addr_opt_ids: I) -> Self
     where
-        I: IntoIterator<Item = AddrOptId<SocketAddr>>,
+        I: IntoIterator<Item = AddrOptId<Addr>>,
     {
         Self {
             closest_distances: [node::Id::max(); CLOSEST_DISTANCES_LEN],
@@ -72,7 +75,7 @@ impl AddrInfo {
 
     fn extend_potential_addrs<I>(&mut self, target_id: Id, potential_addr_opt_ids: I)
     where
-        I: IntoIterator<Item = AddrOptId<SocketAddr>>,
+        I: IntoIterator<Item = AddrOptId<Addr>>,
     {
         let max_distance = self.max_distance();
 
@@ -88,9 +91,12 @@ impl AddrInfo {
         }
     }
 
-    fn pop_potential_addr(&mut self) -> Option<AddrOptId<SocketAddr>> {
+    fn pop_potential_addr(&mut self) -> Option<AddrOptId<Addr>> {
         while let Some(potential_addr_opt_id) = self.potential_addr_opt_ids.pop() {
-            if !self.queried_addrs.insert(*potential_addr_opt_id.addr()) {
+            if !self
+                .queried_addrs
+                .insert(potential_addr_opt_id.addr().clone())
+            {
                 return Some(potential_addr_opt_id);
             }
         }
@@ -100,21 +106,24 @@ impl AddrInfo {
 }
 
 #[derive(Debug)]
-pub struct FindNodeOp {
+pub struct FindNodeOp<Addr> {
     target_id: node::Id,
     supported_addr: SupportedAddr,
-    addr_space: AddrInfo,
+    addr_space: AddrInfo<Addr>,
     tx_ids: BTreeSet<transaction::Id>,
 }
 
-impl FindNodeOp {
+impl<Addr> FindNodeOp<Addr>
+where
+    Addr: Clone + Ord,
+{
     pub fn new<T>(
         target_id: node::Id,
         supported_addr: SupportedAddr,
         potential_addr_opt_ids: T,
     ) -> Self
     where
-        T: IntoIterator<Item = AddrOptId<SocketAddr>>,
+        T: IntoIterator<Item = AddrOptId<Addr>>,
     {
         let addr_space = AddrInfo::new(potential_addr_opt_ids);
 
@@ -122,7 +131,7 @@ impl FindNodeOp {
             target_id,
             supported_addr,
             addr_space,
-            tx_ids: BTreeSet::new(),
+            tx_ids: BTreeSet::default(),
         }
     }
 
@@ -144,7 +153,7 @@ impl FindNodeOp {
         self.tx_ids.is_empty() && self.addr_space.is_done()
     }
 
-    pub fn next_addr_id(&mut self) -> Option<AddrOptId<SocketAddr>> {
+    pub fn next_addr_id(&mut self) -> Option<AddrOptId<Addr>> {
         self.addr_space.pop_potential_addr()
     }
 
@@ -181,7 +190,7 @@ impl FindNodeOp {
 
     pub(crate) fn handle<'a>(
         &mut self,
-        tx: &Transaction<std::net::SocketAddr, transaction::Id, std::time::Instant>,
+        tx: &Transaction<Addr, transaction::Id, std::time::Instant>,
         resp: Response<'a>,
     ) {
         if !self.tx_ids.contains(tx.tx_id()) {
@@ -200,23 +209,23 @@ impl FindNodeOp {
                     .values()
                     .and_then(|values| RespValues::try_from(values).ok())
                 {
-                    if let Some(nodes) = find_node_resp.nodes() {
-                        self.addr_space.extend_potential_addrs(
-                            self.target_id,
-                            nodes.iter().map(|addr_id| {
-                                AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
-                            }),
-                        );
-                    }
+                    // if let Some(nodes) = find_node_resp.nodes() {
+                    //     self.addr_space.extend_potential_addrs(
+                    //         self.target_id,
+                    //         nodes.iter().map(|addr_id| {
+                    //             AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
+                    //         }),
+                    //     );
+                    // }
 
-                    if let Some(nodes6) = find_node_resp.nodes6() {
-                        self.addr_space.extend_potential_addrs(
-                            self.target_id,
-                            nodes6.iter().map(|addr_id| {
-                                AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
-                            }),
-                        );
-                    }
+                    // if let Some(nodes6) = find_node_resp.nodes6() {
+                    //     self.addr_space.extend_potential_addrs(
+                    //         self.target_id,
+                    //         nodes6.iter().map(|addr_id| {
+                    //             AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
+                    //         }),
+                    //     );
+                    // }
                 }
             }
             Response::Error(_) | Response::Timeout => {}
