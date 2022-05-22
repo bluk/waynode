@@ -48,7 +48,7 @@ use cloudburst::dht::{
         Msg as KrpcMsg, QueryMsg, RespMsg, Ty,
     },
     node::{AddrId, AddrOptId, Id, LocalId},
-    routing::Table,
+    routing::{Bucket, Table},
 };
 use core::time::Duration;
 
@@ -118,7 +118,6 @@ pub enum MsgEvent {
     Resp(Value),
     Error(Value),
     Query(Value),
-    Timeout,
 }
 
 /// A deserialized message event with the relevant node information and local
@@ -329,12 +328,18 @@ where
     where
         R: rand::Rng,
     {
-        // TODO: Fix this so it generates a random number a lot better
+        if self.tx_manager.len() == usize::from(u16::MAX) {
+            // Outbound transactions are full.
+            return Err(rand::Error::new("all transaction IDs are used"));
+        }
+
+        let mut num: u16 = rng.gen();
         loop {
-            let tx_id = transaction::Id::rand(rng)?;
-            if !self.tx_manager.contains_tx_id(&tx_id) {
+            let tx_id = transaction::Id::from(num);
+            if !self.tx_manager.contains(&tx_id) {
                 return Ok(tx_id);
             }
+            num = num.wrapping_add(1);
         }
     }
 
@@ -349,6 +354,10 @@ where
     /// the message is considered to be valid.
     pub fn insert_tx(&mut self, tx: Transaction<Addr, transaction::Id, Instant>) {
         self.tx_manager.insert(tx);
+    }
+
+    pub fn insert_find_node_op(&mut self, op: FindNodeOp<Addr>) {
+        self.find_node_ops.push(op);
     }
 
     /// Processes a received message.
@@ -384,7 +393,6 @@ where
             match kind {
                 Ty::Response => {
                     if let Ok(tx) = self.tx_manager.on_recv_resp(
-                        &addr,
                         &value,
                         self.config.is_response_queried_node_id_strictly_checked,
                         self.config.local_id,
@@ -415,7 +423,7 @@ where
                     }
                 }
                 Ty::Error => {
-                    if let Ok(tx) = self.tx_manager.on_recv_error(&addr, &value) {
+                    if let Ok(tx) = self.tx_manager.on_recv_error(&value) {
                         if let Some(node_id) = tx.addr_opt_id().id() {
                             self.routing_table.on_msg_received(
                                 AddrId::new(*tx.addr_opt_id().addr(), node_id),
@@ -473,9 +481,9 @@ where
     /// When the timeout deadline has passed, the following methods should be called:
     ///
     /// * [`Node::on_timeout()`]
-    /// * [`Node::find_timed_out_tx()`]
-    /// * [`Node::find_node_to_ping_ipv4()`]
-    /// * [`Node::find_node_to_ping_ipv6()`]
+    /// * [`Node::pop_timed_out_tx()`]
+    /// * [`Node::find_node_to_ping()`]
+    /// * [`Node::find_bucket_to_refresh()`]
     ///
     /// The timeout deadline may change if other methods are called on this
     /// instance.
@@ -494,42 +502,53 @@ where
     /// # Errors
     ///
     /// An error is returned in the random number generator cannot generate random data.
-    pub fn on_timeout<R>(&mut self, rng: &mut R) -> Result<(), rand::Error>
-    where
-        R: rand::Rng,
-    {
-        self.on_timeout_with_now(rng, Instant::now())
+    pub fn on_timeout(&mut self) {
+        self.on_timeout_with_now(Instant::now());
     }
 
-    fn on_timeout_with_now<R>(&mut self, rng: &mut R, now: Instant) -> Result<(), rand::Error>
-    where
-        R: rand::Rng,
-    {
+    fn on_timeout_with_now(&mut self, now: Instant) {
         debug!("on_timeout_with_now now={:?}", now);
         if self.find_pivot_id_deadline <= now {
             self.find_node_pivot(std::iter::empty(), now);
             self.find_pivot_id_deadline = now + FIND_LOCAL_ID_INTERVAL;
         }
+    }
 
-        while let Some(bucket) = self.routing_table.find_refreshable_bucket(&now) {
-            bucket.set_refresh_deadline(now + BUCKET_REFRESH_INTERVAL);
-            let target_id = bucket.rand_id(rng)?;
-            let neighbors = self
-                .routing_table
-                .find_neighbors(target_id, &now)
-                .take(8)
-                .map(|a| AddrOptId::new(*a.addr(), Some(a.id())));
-            let op = make_find_node_op(target_id, neighbors, self.config.supported_addr);
-            self.find_node_ops.push(op);
-        }
-
-        Ok(())
+    /// Finds a bucket to refresh.
+    ///
+    /// To refresh a bucket, find a random node with an `Id` in the bucket's range.
+    ///
+    /// ```no_run
+    /// # use sloppy::{Node, SupportedAddr, find_node_op::FindNodeOp};
+    /// # use std::{time::{Duration, Instant}, net::SocketAddr};
+    /// #
+    /// # let node: Node<SocketAddr> = todo!();
+    /// # let now = Instant::now();
+    /// if let Some(bucket) = node.find_bucket_to_refresh(now) {
+    ///     bucket.set_refresh_deadline(now + Duration::from_secs(15 * 60));
+    ///     let target_id = bucket.rand_id(&mut rand::thread_rng()).unwrap();
+    ///     let neighbors = node.find_neighbors(target_id, &now).take(8).map(|a| a.into());
+    ///     let find_node_op = FindNodeOp::new(
+    ///          target_id,
+    ///          SupportedAddr::Ipv4,
+    ///          neighbors
+    ///    );
+    /// }
+    /// ```
+    pub fn find_bucket_to_refresh(
+        &mut self,
+        now: Instant,
+    ) -> Option<&mut Bucket<Addr, transaction::Id, Instant>> {
+        self.routing_table.find_refreshable_bucket(&now)
     }
 
     /// Finds and processes a transaction which has timed out.
     ///
     /// Returns information about the transaction which has timed out.
-    pub fn find_timed_out_tx(&mut self, now: Instant) -> Option<ReadEvent<Addr>> {
+    pub fn pop_timed_out_tx(
+        &mut self,
+        now: Instant,
+    ) -> Option<Transaction<Addr, transaction::Id, Instant>> {
         if let Some(tx) = self.tx_manager.pop_timed_out_tx(&now) {
             if let Some(node_id) = tx.addr_opt_id().id() {
                 self.routing_table.on_resp_timeout(
@@ -545,11 +564,7 @@ where
             }
 
             self.find_node_ops.retain(|op| !op.is_done());
-            Some(ReadEvent {
-                addr_opt_id: *tx.addr_opt_id(),
-                tx_id: Some(*tx.tx_id()),
-                msg: MsgEvent::Timeout,
-            })
+            Some(tx)
         } else {
             None
         }
@@ -652,13 +667,13 @@ mod tests {
 
     #[test]
     fn test_bootstrap() -> Result<(), Error> {
-        let bootstrap_remote_addr = bootstrap_remote_addr();
-        let node: Node<SocketAddr> = Node::new(
-            new_config().unwrap(),
-            std::iter::empty(),
-            vec![bootstrap_remote_addr],
-        );
-        todo!()
+        // let bootstrap_remote_addr = bootstrap_remote_addr();
+        // let node: Node<SocketAddr> = Node::new(
+        //     new_config().unwrap(),
+        //     std::iter::empty(),
+        //     vec![bootstrap_remote_addr],
+        // );
+        // todo!()
 
         // let mut out: [u8; 65535] = [0; 65535];
         // match node.send_to(&mut out).unwrap() {
@@ -685,6 +700,7 @@ mod tests {
         //     }
         //     None => panic!(),
         // }
+        Ok(())
     }
 }
 

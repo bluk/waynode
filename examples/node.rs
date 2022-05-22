@@ -19,12 +19,14 @@ use std::net;
 
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
+use std::time::Duration;
 use std::time::Instant;
 
 use clap::Arg;
 use clap::Command;
 
 use cloudburst::dht::krpc;
+use cloudburst::dht::node::AddrOptId;
 use cloudburst::dht::{
     krpc::{ping, ErrorCode, ErrorVal, Msg, QueryArgs, QueryMsg, RespVal},
     node::{Id, LocalId},
@@ -32,7 +34,9 @@ use cloudburst::dht::{
 use mio::{Events, Interest, Poll, Token};
 
 use serde_bytes::Bytes;
+use sloppy::find_node_op::FindNodeOp;
 use sloppy::Node;
+use sloppy::SupportedAddr;
 
 fn main() -> io::Result<()> {
     env_logger::init();
@@ -118,14 +122,11 @@ fn main() -> io::Result<()> {
         'recv: loop {
             if events.is_empty() {
                 debug!("Timed out");
-                match node.on_timeout(&mut rng) {
-                    Ok(()) => {}
-                    Err(e) => error!("on_timeout error: {:?}", e),
-                };
+                node.on_timeout();
 
                 let now = Instant::now();
 
-                while let Some(_read_evt) = node.find_timed_out_tx(now) {
+                while let Some(_read_evt) = node.pop_timed_out_tx(now) {
                     // normally, look at any locally initiated transactions and
                     // considered them timed out if they match the read event
                 }
@@ -157,6 +158,17 @@ fn main() -> io::Result<()> {
                     } else {
                         break;
                     }
+                }
+
+                while let Some(bucket) = node.find_bucket_to_refresh(now) {
+                    bucket.set_refresh_deadline(now + Duration::from_secs(15 * 60));
+                    let target_id = bucket.rand_id(&mut rng)?;
+                    let neighbors = node
+                        .find_neighbors(target_id, &now)
+                        .take(8)
+                        .map(|a| AddrOptId::new(*a.addr(), Some(a.id())));
+                    let find_node_op = FindNodeOp::new(target_id, SupportedAddr::Ipv4, neighbors);
+                    node.insert_find_node_op(find_node_op);
                 }
 
                 break 'recv;
@@ -272,9 +284,7 @@ fn main() -> io::Result<()> {
                                         }
                                     }
                                 },
-                                sloppy::MsgEvent::Resp(_)
-                                | sloppy::MsgEvent::Error(_)
-                                | sloppy::MsgEvent::Timeout => {}
+                                sloppy::MsgEvent::Resp(_) | sloppy::MsgEvent::Error(_) => {}
                             }
                         }
                         Err(e) => {
