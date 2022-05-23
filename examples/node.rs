@@ -162,9 +162,9 @@ fn main() -> io::Result<()> {
 
                 while let Some(bucket) = node.find_bucket_to_refresh(now) {
                     bucket.set_refresh_deadline(now + Duration::from_secs(15 * 60));
-                    let target_id = bucket.rand_id(&mut rng)?;
+                    let target_id = bucket.rand_id(&mut rng);
                     let neighbors = node
-                        .find_neighbors(target_id, &now)
+                        .find_neighbors(target_id, now)
                         .take(8)
                         .map(|a| AddrOptId::new(*a.addr(), Some(a.id())));
                     let find_node_op = FindNodeOp::new(target_id, SupportedAddr::Ipv4, neighbors);
