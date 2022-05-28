@@ -11,150 +11,108 @@ use crate::SupportedAddr;
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
-        find_node::RespValues,
-        transaction::{self, Transaction},
-        RespMsg,
+        find_node::{self, RespValues},
+        transaction, CompactAddr, RespMsg,
     },
-    node::{self, AddrOptId, Id},
+    node::{self, AddrId, AddrOptId, Id},
 };
-use std::{collections::BTreeSet, convert::TryFrom};
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Response<'a> {
-    Resp(&'a Value),
-    Error(&'a Value),
-    Timeout,
-}
-
-const CLOSEST_DISTANCES_LEN: usize = 16;
-const MAX_CONCURRENT_REQUESTS: usize = 8;
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+};
+use tracing::{error, trace};
 
 #[derive(Debug)]
-struct AddrInfo<Addr> {
-    closest_distances: [node::Id; CLOSEST_DISTANCES_LEN],
-    potential_addr_opt_ids: Vec<AddrOptId<Addr>>,
-    queried_addrs: BTreeSet<Addr>,
-}
-
-impl<Addr> AddrInfo<Addr>
-where
-    Addr: Clone + Ord,
-{
-    fn new<I>(potential_addr_opt_ids: I) -> Self
-    where
-        I: IntoIterator<Item = AddrOptId<Addr>>,
-    {
-        Self {
-            closest_distances: [node::Id::max(); CLOSEST_DISTANCES_LEN],
-            potential_addr_opt_ids: potential_addr_opt_ids.into_iter().collect(),
-            queried_addrs: BTreeSet::new(),
-        }
-    }
-
-    fn max_distance(&self) -> node::Id {
-        self.closest_distances[CLOSEST_DISTANCES_LEN - 1]
-    }
-
-    fn is_done(&self) -> bool {
-        self.potential_addr_opt_ids.is_empty()
-    }
-
-    fn replace_closest_queried_nodes(&mut self, target_id: node::Id, new_node_id: node::Id) {
-        let new_distance = new_node_id.distance(target_id);
-        let max_distance = self.max_distance();
-        if new_distance < max_distance {
-            self.closest_distances[CLOSEST_DISTANCES_LEN - 1] = new_distance;
-            self.closest_distances.sort_unstable();
-            self.potential_addr_opt_ids.retain(|potential_addr_opt_id| {
-                potential_addr_opt_id
-                    .id()
-                    .map_or(true, |id| id.distance(target_id) < max_distance)
-            });
-        }
-    }
-
-    fn extend_potential_addrs<I>(&mut self, target_id: Id, potential_addr_opt_ids: I)
-    where
-        I: IntoIterator<Item = AddrOptId<Addr>>,
-    {
-        let max_distance = self.max_distance();
-
-        for potential_addr in potential_addr_opt_ids.into_iter().filter(|n| {
-            n.id()
-                .map_or(true, |id| id.distance(target_id) <= max_distance)
-        }) {
-            if !self.queried_addrs.contains(potential_addr.addr())
-                && !self.potential_addr_opt_ids.contains(&potential_addr)
-            {
-                self.potential_addr_opt_ids.push(potential_addr);
-            }
-        }
-    }
-
-    fn pop_potential_addr(&mut self) -> Option<AddrOptId<Addr>> {
-        while let Some(potential_addr_opt_id) = self.potential_addr_opt_ids.pop() {
-            if !self
-                .queried_addrs
-                .insert(potential_addr_opt_id.addr().clone())
-            {
-                return Some(potential_addr_opt_id);
-            }
-        }
-
-        None
-    }
-}
-
-#[derive(Debug)]
-pub struct FindNodeOp<Addr> {
+pub struct FindNodeOp {
     target_id: node::Id,
     supported_addr: SupportedAddr,
-    addr_space: AddrInfo<Addr>,
-    tx_ids: BTreeSet<transaction::Id>,
+
+    closest_nodes: Vec<AddrId<CompactAddr>>,
+    max_found_nodes: usize,
+
+    nodes_to_query: HashSet<AddrOptId<CompactAddr>>,
+    queried_addrs: HashSet<CompactAddr>,
 }
 
-impl<Addr> FindNodeOp<Addr>
-where
-    Addr: Clone + Ord,
-{
+impl FindNodeOp {
     pub fn new<T>(
         target_id: node::Id,
+        max_found_nodes: usize,
         supported_addr: SupportedAddr,
-        potential_addr_opt_ids: T,
+        nodes_to_query: T,
     ) -> Self
     where
-        T: IntoIterator<Item = AddrOptId<Addr>>,
+        T: IntoIterator<Item = AddrOptId<CompactAddr>>,
     {
-        let addr_space = AddrInfo::new(potential_addr_opt_ids);
-
         Self {
             target_id,
             supported_addr,
-            addr_space,
-            tx_ids: BTreeSet::default(),
+            closest_nodes: Vec::new(),
+            max_found_nodes,
+            nodes_to_query: nodes_to_query.into_iter().collect(),
+            queried_addrs: HashSet::new(),
         }
     }
 
     /// Returns the target ID.
     #[must_use]
+    #[inline]
     pub fn target_id(&self) -> node::Id {
         self.target_id
     }
 
     /// Returns the supported address space.
     #[must_use]
+    #[inline]
     pub fn supported_addr(&self) -> SupportedAddr {
         self.supported_addr
     }
 
-    /// Returns if the space is done.
+    /// Returns the supported address space.
     #[must_use]
-    pub fn is_done(&self) -> bool {
-        self.tx_ids.is_empty() && self.addr_space.is_done()
+    #[inline]
+    pub fn closest_nodes(&self) -> &[AddrId<CompactAddr>] {
+        &self.closest_nodes
     }
 
-    pub fn next_addr_id(&mut self) -> Option<AddrOptId<Addr>> {
-        self.addr_space.pop_potential_addr()
+    /// Returns if the space is done.
+    #[must_use]
+    #[inline]
+    pub fn is_done(&self) -> bool {
+        self.nodes_to_query.is_empty()
+    }
+
+    pub fn next_addr_opt_id(&mut self) -> Option<AddrOptId<CompactAddr>> {
+        loop {
+            if let Some(potential_addr_opt_id) = self.nodes_to_query.iter().next() {
+                if self.queried_addrs.contains(potential_addr_opt_id.addr()) {
+                    let addr_opt_id = *potential_addr_opt_id;
+                    self.nodes_to_query.remove(&addr_opt_id);
+                } else {
+                    return Some(*potential_addr_opt_id);
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+
+    pub fn queried_node(&mut self, addr_opt_id: AddrOptId<CompactAddr>) {
+        self.nodes_to_query.remove(&addr_opt_id);
+        let AddrOptId { addr, .. } = addr_opt_id;
+        self.queried_addrs.insert(addr);
+    }
+
+    #[must_use]
+    #[inline]
+    fn max_distance(&self) -> node::Id {
+        if self.closest_nodes.len() < self.max_found_nodes {
+            Id::max()
+        } else {
+            self.closest_nodes
+                .last()
+                .map_or(Id::max(), |addr_id| addr_id.id().distance(self.target_id))
+        }
     }
 
     // pub(crate) fn start<R>(
@@ -188,47 +146,235 @@ where
     //     Ok(())
     // }
 
-    pub(crate) fn handle<'a>(
+    pub(crate) fn on_resp(
         &mut self,
-        tx: &Transaction<Addr, transaction::Id, std::time::Instant>,
-        resp: Response<'a>,
+        addr_opt_id: AddrOptId<CompactAddr>,
+        resp: &find_node::RespValues,
     ) {
-        if !self.tx_ids.contains(tx.tx_id()) {
-            return;
+        if let Some(node_id) = addr_opt_id.id() {
+            self.replace_closest_nodes(AddrId::new(*addr_opt_id.addr(), node_id));
         }
-        self.tx_ids.remove(tx.tx_id());
 
-        match resp {
-            Response::Resp(resp) => {
-                if let Some(node_id) = tx.addr_opt_id().id() {
-                    self.addr_space
-                        .replace_closest_queried_nodes(self.target_id, node_id);
-                }
+        let max_distance = self.max_distance();
 
-                if let Some(find_node_resp) = resp
-                    .values()
-                    .and_then(|values| RespValues::try_from(values).ok())
-                {
-                    // if let Some(nodes) = find_node_resp.nodes() {
-                    //     self.addr_space.extend_potential_addrs(
-                    //         self.target_id,
-                    //         nodes.iter().map(|addr_id| {
-                    //             AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
-                    //         }),
-                    //     );
-                    // }
+        if matches!(
+            self.supported_addr,
+            SupportedAddr::Ipv4 | SupportedAddr::Ipv4AndIpv6
+        ) {
+            if let Some(nodes) = resp.nodes() {
+                for node in nodes {
+                    let node_id = node.id();
+                    let node_distance = node.id().distance(self.target_id);
+                    if node_distance >= max_distance {
+                        trace!(
+                            ?node_id,
+                            ?node_distance,
+                            ?max_distance,
+                            "distance is greater than maximum distance"
+                        );
+                        continue;
+                    }
 
-                    // if let Some(nodes6) = find_node_resp.nodes6() {
-                    //     self.addr_space.extend_potential_addrs(
-                    //         self.target_id,
-                    //         nodes6.iter().map(|addr_id| {
-                    //             AddrOptId::new((*addr_id.addr()).into(), Some(addr_id.id()))
-                    //         }),
-                    //     );
-                    // }
+                    let addr = CompactAddr::from(*node.addr());
+                    if self.queried_addrs.contains(&addr) {
+                        trace!(?addr, ?node_id, "already saw address");
+                        continue;
+                    }
+                    self.nodes_to_query
+                        .insert(AddrOptId::new(addr, Some(node.id())));
                 }
             }
-            Response::Error(_) | Response::Timeout => {}
-        };
+        }
+
+        if matches!(
+            self.supported_addr,
+            SupportedAddr::Ipv6 | SupportedAddr::Ipv4AndIpv6
+        ) {
+            if let Some(nodes) = resp.nodes6() {
+                for node in nodes {
+                    let node_id = node.id();
+                    let node_distance = node.id().distance(self.target_id);
+                    if node_distance >= max_distance {
+                        trace!(
+                            ?node_id,
+                            ?node_distance,
+                            ?max_distance,
+                            "distance is greater than maximum distance"
+                        );
+                        continue;
+                    }
+
+                    let addr = CompactAddr::from(*node.addr());
+                    if self.queried_addrs.contains(&addr) {
+                        trace!(?addr, ?node_id, "already saw address");
+                        continue;
+                    }
+                    self.nodes_to_query
+                        .insert(AddrOptId::new(addr, Some(node.id())));
+                }
+            }
+        }
+    }
+
+    fn replace_closest_nodes(&mut self, addr_id: AddrId<CompactAddr>) {
+        let new_distance = addr_id.id().distance(self.target_id);
+        let is_max_found_nodes = self.closest_nodes.len() == self.max_found_nodes;
+        if is_max_found_nodes {
+            let max_distance = self.max_distance();
+            if new_distance < max_distance {
+                self.closest_nodes.pop();
+            } else {
+                return;
+            }
+        }
+
+        self.closest_nodes.push(addr_id);
+        let target_id = self.target_id;
+        self.closest_nodes
+            .sort_by_key(|a| a.id().distance(target_id));
+
+        if is_max_found_nodes {
+            let max_distance = self.max_distance();
+            self.nodes_to_query.retain(|potential_addr_opt_id| {
+                potential_addr_opt_id
+                    .id()
+                    .map_or(true, |id| id.distance(target_id) < max_distance)
+            });
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct OpsManager {
+    ops: Vec<(FindNodeOp, usize)>,
+    tx_to_op: HashMap<transaction::Id, node::Id>,
+}
+
+impl OpsManager {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            ops: Vec::new(),
+            tx_to_op: HashMap::new(),
+        }
+    }
+    pub fn insert_op(&mut self, new_op: FindNodeOp) {
+        let target_id = new_op.target_id();
+        if self.ops.iter().any(|v| v.0.target_id == target_id) {
+            return;
+        }
+        self.ops.push((new_op, 0));
+    }
+
+    pub fn insert_tx(&mut self, tx_id: transaction::Id, target_id: node::Id) {
+        if let Some(pos) = self.ops.iter().position(|v| v.0.target_id == target_id) {
+            if let Some((_op, count)) = self.ops.get_mut(pos) {
+                *count += 1;
+                self.tx_to_op.insert(tx_id, target_id);
+            } else {
+                unreachable!();
+            }
+        } else {
+            debug_assert!(false);
+        }
+    }
+
+    pub fn queried_node_for_target(
+        &mut self,
+        addr_opt_id: AddrOptId<CompactAddr>,
+        target_id: node::Id,
+    ) {
+        if let Some(pos) = self.ops.iter().position(|v| v.0.target_id == target_id) {
+            if let Some((op, _count)) = self.ops.get_mut(pos) {
+                op.queried_node(addr_opt_id);
+            } else {
+                unreachable!()
+            }
+        } else {
+            debug_assert!(false);
+        }
+    }
+
+    pub fn next_addr_to_query(&mut self) -> Option<(node::Id, AddrOptId<CompactAddr>)> {
+        let txs_count: usize = self.ops.iter().map(|v| v.1).sum();
+        if txs_count >= 20 {
+            return None;
+        }
+
+        self.ops.iter_mut().find_map(|(op, count)| {
+            if let Some(addr_opt_id) = op.next_addr_opt_id() {
+                trace!(addr_opt_id = ?addr_opt_id, target_id = ?op.target_id, tx_count = *count, "returning address to send find node query to");
+                Some((op.target_id, addr_opt_id))
+            } else {
+                trace!(target_id = ?op.target_id, tx_count = *count, "no more addresses to send find node query to");
+                None
+            }
+        })
+    }
+
+    pub fn on_recv(
+        &mut self,
+        addr_opt_id: AddrOptId<CompactAddr>,
+        tx_id: transaction::Id,
+        value: &Value,
+    ) {
+        if let Some(target_id) = self.tx_to_op.remove(&tx_id) {
+            if let Some(pos) = self.ops.iter().position(|v| v.0.target_id == target_id) {
+                if let Some((op, count)) = self.ops.get_mut(pos) {
+                    *count -= 1;
+                    if let Some(resp) = value
+                        .values()
+                        .and_then(|values| RespValues::try_from(values).ok())
+                    {
+                        op.on_resp(addr_opt_id, &resp);
+                        trace!(?tx_id, ?target_id, nodes = ?resp.nodes(), nodes6 = ?resp.nodes6(), "processed find node response");
+                    } else {
+                        error!(?op, "Could not try_from response message");
+                    }
+
+                    if *count == 0 && op.is_done() {
+                        self.ops.remove(pos);
+                        trace!(?target_id, "Removed op");
+                    }
+                }
+            } else {
+                error!(?tx_id, ?target_id, "Could not find op for target_id");
+            }
+        } else {
+            trace!(?tx_id, "Could not find target id for tx");
+        }
+    }
+
+    pub fn on_error(&mut self, _addr_opt_id: AddrOptId<CompactAddr>, tx_id: transaction::Id) {
+        if let Some(target_id) = self.tx_to_op.remove(&tx_id) {
+            if let Some(pos) = self.ops.iter().position(|v| v.0.target_id == target_id) {
+                if let Some((op, count)) = self.ops.get_mut(pos) {
+                    *count -= 1;
+                    if *count == 0 && op.is_done() {
+                        self.ops.remove(pos);
+                        trace!(?target_id, "removed find node op");
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn on_tx_timeout(&mut self, _addr_opt_id: AddrOptId<CompactAddr>, tx_id: transaction::Id) {
+        if let Some(target_id) = self.tx_to_op.remove(&tx_id) {
+            if let Some(pos) = self.ops.iter().position(|v| v.0.target_id == target_id) {
+                if let Some((op, count)) = self.ops.get_mut(pos) {
+                    *count -= 1;
+                    if *count == 0 && op.is_done() {
+                        self.ops.remove(pos);
+                        trace!(?target_id, "removed find node op");
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn cleanup(&mut self) {
+        self.ops
+            .retain(|(op, tx_count)| *tx_count != 0 || !op.is_done());
     }
 }
