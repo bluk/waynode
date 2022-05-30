@@ -6,37 +6,36 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Demonstrates code to run a DHT node.
-//!
-//! Run the example.
-//! $ cargo run --example node
+#![warn(
+    rust_2018_idioms,
+    missing_docs,
+    missing_debug_implementations,
+    unused_lifetimes,
+    unused_qualifications
+)]
 
-mod dht;
-
-use crate::dht::{Config, Node};
 use bt_bencode::Value;
-use clap::Arg;
-use clap::Command;
-use cloudburst::dht::krpc::CompactAddrV4;
-use cloudburst::dht::node::AddrId;
+use clap::{Arg, Command};
 use cloudburst::dht::{
     krpc::{
-        self, find_node, ping, transaction::Transaction, CompactAddr, ErrorCode, ErrorVal, Msg,
-        QueryArgs, QueryMsg, RespVal,
+        self, find_node, ping, transaction::Transaction, CompactAddr, CompactAddrV4, ErrorCode,
+        ErrorVal, Msg, QueryArgs, QueryMsg, RespVal,
     },
-    node::{AddrOptId, Id, LocalId},
+    node::{AddrId, AddrOptId, Id, LocalId},
 };
-use core::convert::TryFrom;
+use core::{convert::TryFrom, time::Duration};
 use serde_bytes::Bytes;
-use std::time::Duration;
 use std::{
     io,
     net::{SocketAddr, SocketAddrV4},
     time::Instant,
 };
-use tokio::net::UdpSocket;
-use tokio::time;
+use tokio::{net::UdpSocket, time};
 use tracing::{debug, error, info, trace};
+
+mod dht;
+
+use dht::Node;
 
 struct Args {
     dht_bind_socket: SocketAddr,
@@ -95,8 +94,8 @@ fn get_args() -> Args {
     }
 }
 
-fn get_config(local_id: LocalId) -> Config {
-    let mut config = Config::new(local_id);
+fn get_config(local_id: LocalId) -> dht::Config {
+    let mut config = dht::Config::new(local_id);
     config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
     config.set_supported_addr(dht::SupportedAddr::Ipv4);
@@ -118,7 +117,7 @@ async fn main() -> io::Result<()> {
 
     let config = get_config(LocalId::from(local_id));
 
-    let mut node: Node<SocketAddrV4> = Node::new(
+    let mut node: Node<SocketAddrV4> = dht::Node::new(
         config,
         std::iter::empty(),
         vec![

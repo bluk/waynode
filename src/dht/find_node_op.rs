@@ -8,11 +8,8 @@
 
 use bt_bencode::Value;
 use cloudburst::dht::{
-    krpc::{
-        find_node::{self, RespValues},
-        transaction, CompactAddr, RespMsg,
-    },
-    node::{self, AddrId, AddrOptId, Id},
+    krpc::{find_node::RespValues, transaction, CompactAddr, RespMsg},
+    node::{self, AddrId, AddrOptId},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -61,20 +58,6 @@ impl FindNodeOp {
         self.target_id
     }
 
-    /// Returns the supported address space.
-    #[must_use]
-    #[inline]
-    pub fn supported_addr(&self) -> SupportedAddr {
-        self.supported_addr
-    }
-
-    /// Returns the supported address space.
-    #[must_use]
-    #[inline]
-    pub fn closest_nodes(&self) -> &[AddrId<CompactAddr>] {
-        &self.closest_nodes
-    }
-
     /// Returns if the space is done.
     #[must_use]
     #[inline]
@@ -107,11 +90,13 @@ impl FindNodeOp {
     #[inline]
     fn max_distance(&self) -> node::Id {
         if self.closest_nodes.len() < self.max_found_nodes {
-            Id::max()
+            node::Id::max()
         } else {
             self.closest_nodes
                 .last()
-                .map_or(Id::max(), |addr_id| addr_id.id().distance(self.target_id))
+                .map_or(node::Id::max(), |addr_id| {
+                    addr_id.id().distance(self.target_id)
+                })
         }
     }
 
@@ -146,11 +131,7 @@ impl FindNodeOp {
     //     Ok(())
     // }
 
-    pub(crate) fn on_resp(
-        &mut self,
-        addr_opt_id: AddrOptId<CompactAddr>,
-        resp: &find_node::RespValues,
-    ) {
+    pub(crate) fn on_resp(&mut self, addr_opt_id: AddrOptId<CompactAddr>, resp: &RespValues) {
         if let Some(node_id) = addr_opt_id.id() {
             self.replace_closest_nodes(AddrId::new(*addr_opt_id.addr(), node_id));
         }
@@ -251,13 +232,6 @@ pub struct OpsManager {
 }
 
 impl OpsManager {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            ops: Vec::new(),
-            tx_to_op: HashMap::new(),
-        }
-    }
     pub fn insert_op(&mut self, new_op: FindNodeOp) {
         let target_id = new_op.target_id();
         if self.ops.iter().any(|v| v.0.target_id == target_id) {

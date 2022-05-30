@@ -44,7 +44,7 @@ use cloudburst::dht::{
         transaction::{self, Transaction, Transactions},
         CompactAddr, Msg as KrpcMsg, QueryMsg, RespMsg, Ty,
     },
-    node::{self, AddrId, AddrOptId, Id, LocalId},
+    node::{self, AddrId, AddrOptId, LocalId},
     routing::{Bucket, Table},
 };
 use core::{fmt, time::Duration};
@@ -197,14 +197,6 @@ impl Config {
         self.local_id
     }
 
-    /// Sets the node's local Id.
-    pub fn set_local_id<I>(&mut self, id: I)
-    where
-        I: Into<LocalId>,
-    {
-        self.local_id = id.into();
-    }
-
     /// Returns the client version.
     #[must_use]
     pub fn client_version(&self) -> Option<&[u8]> {
@@ -225,41 +217,9 @@ impl Config {
         self.default_query_timeout
     }
 
-    /// Sets the default query timeout.
-    pub fn set_default_query_timeout(&mut self, default_query_timeout: Duration) {
-        self.default_query_timeout = default_query_timeout;
-    }
-
-    /// Returns true if the node is read only, false otherwise.
-    #[must_use]
-    pub fn is_read_only_node(&self) -> bool {
-        self.is_read_only_node
-    }
-
     /// Set to true if the node is read only, false otherwise.
     pub fn set_is_read_only_node(&mut self, is_read_only_node: bool) {
         self.is_read_only_node = is_read_only_node;
-    }
-
-    /// Returns true if responses from queried nodes are strictly checked for the expected node Id, false otherwise.
-    #[must_use]
-    pub fn is_response_queried_node_id_strictly_checked(&self) -> bool {
-        self.is_response_queried_node_id_strictly_checked
-    }
-
-    /// Set to true if the responses from queried nodes are strictly checked for the expected node Id.
-    pub fn set_is_response_queried_node_id_strictly_checked(
-        &mut self,
-        is_response_queried_node_id_strictly_checked: bool,
-    ) {
-        self.is_response_queried_node_id_strictly_checked =
-            is_response_queried_node_id_strictly_checked;
-    }
-
-    /// Returns the supported address types.
-    #[must_use]
-    pub fn supported_addr(&self) -> SupportedAddr {
-        self.supported_addr
     }
 
     /// Sets the supported address types.
@@ -276,9 +236,9 @@ use routing::MyTable;
 #[derive(Debug)]
 pub struct Node<Addr> {
     config: Config,
-    pub routing_table: Table<routing::Node<Addr, transaction::Id, std::time::Instant>, Instant>,
+    pub routing_table: Table<routing::Node<Addr, transaction::Id, Instant>, Instant>,
     find_pivot_deadline: Instant,
-    tx_manager: Transactions<Addr, transaction::Id, std::time::Instant>,
+    tx_manager: Transactions<Addr, transaction::Id, Instant>,
     ops_manager: OpsManager,
     bootstrap_addrs: Vec<String>,
 }
@@ -294,7 +254,7 @@ where
         A: IntoIterator<Item = AddrId<Addr>>,
         B: IntoIterator<Item = String>,
     {
-        let pivot_id = Id::from(config.local_id);
+        let pivot_id = node::Id::from(config.local_id);
         let routing_table = routing::new_routing_table(
             pivot_id,
             addr_ids,
@@ -674,7 +634,7 @@ where
     /// Usually a query is directed towards a target hash value. Nodes with
     /// `Id`s which are "closer" to the target value are more likely to have the
     /// data than other nodes.
-    pub fn find_neighbors(&self, id: Id, now: Instant) -> impl Iterator<Item = AddrId<Addr>>
+    pub fn find_neighbors(&self, id: node::Id, now: Instant) -> impl Iterator<Item = AddrId<Addr>>
     where
         Addr: Clone,
     {
@@ -682,7 +642,7 @@ where
     }
 
     #[must_use]
-    fn find_node(&mut self, target_id: Id, now: Instant) -> FindNodeOp
+    fn find_node(&mut self, target_id: node::Id, now: Instant) -> FindNodeOp
     where
         Addr: Into<CompactAddr>,
     {
@@ -726,7 +686,7 @@ mod tests {
 
     fn new_config() -> Result<Config, rand::Error> {
         Ok(Config {
-            local_id: LocalId::from(Id::rand(&mut rand::thread_rng())?),
+            local_id: LocalId::from(node::Id::rand(&mut rand::thread_rng())?),
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -741,8 +701,8 @@ mod tests {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6532))
     }
 
-    fn node_id() -> Id {
-        Id::rand(&mut rand::thread_rng()).unwrap()
+    fn node_id() -> node::Id {
+        node::Id::rand(&mut rand::thread_rng()).unwrap()
     }
 
     #[test]
@@ -775,14 +735,14 @@ mod routing {
 
     use cloudburst::dht::{
         krpc::{transaction, Ty},
-        node::{AddrId, Id},
+        node::{self, AddrId},
         routing::{Bucket, Table},
     };
 
     pub(super) const BUCKET_REFRESH_INTERVAL: Duration = Duration::from_secs(3 * 60);
 
     pub(super) fn new_routing_table<A, Addr, TxId>(
-        pivot_id: Id,
+        pivot_id: node::Id,
         addr_ids: A,
         next_response_deadline: Instant,
         next_query_deadline: Instant,
@@ -916,7 +876,7 @@ mod routing {
     }
 
     impl<Addr, TxId, Instant> cloudburst::dht::routing::Node for Node<Addr, TxId, Instant> {
-        fn id(&self) -> cloudburst::dht::node::Id {
+        fn id(&self) -> node::Id {
             self.addr_id.id()
         }
     }
@@ -945,26 +905,9 @@ mod routing {
             &self.addr_id
         }
 
-        /// Returns a ping's transaction Id, if the ping is still active.
-        pub fn ping_tx_id(&self) -> Option<&TxId> {
-            self.ping_tx_id.as_ref()
-        }
-
         /// When pinged, sets the transaction Id to identify the response or time out later.
         pub fn on_ping(&mut self, tx_id: TxId) {
             self.ping_tx_id = Some(tx_id);
-        }
-
-        /// Returns the next response deadline.
-        #[must_use]
-        pub fn next_response_deadline(&self) -> &Instant {
-            &self.next_response_deadline
-        }
-
-        /// Returns the next query deadline.
-        #[must_use]
-        pub fn next_query_deadline(&self) -> &Instant {
-            &self.next_query_deadline
         }
 
         /// Returns the timeout deadline when the node should be pinged.
@@ -1083,8 +1026,8 @@ mod routing {
         fn timeout(&self) -> &Instant;
     }
 
-    impl<Addr> MyBucket<Node<Addr, transaction::Id, std::time::Instant>>
-        for Bucket<Node<Addr, transaction::Id, std::time::Instant>, std::time::Instant>
+    impl<Addr> MyBucket<Node<Addr, transaction::Id, Instant>>
+        for Bucket<Node<Addr, transaction::Id, Instant>, Instant>
     {
         /// Finds a node which should be pinged.
         ///
@@ -1138,7 +1081,7 @@ mod routing {
     /// Useful to find nodes which a query should be sent to.
     pub(super) fn find_neighbors<Addr>(
         table: &Table<Node<Addr, transaction::Id, Instant>, Instant>,
-        id: Id,
+        id: node::Id,
         now: Instant,
     ) -> impl Iterator<Item = AddrId<Addr>>
     where

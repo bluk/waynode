@@ -1,7 +1,7 @@
 # Sloppy
 
-Sloppy is a library which can help build an application which uses the BitTorrent
-mainline distributed hash table (DHT).
+Sloppy is an application which acts as a node in the BitTorrent distributed hash
+table (DHT).
 
 ## Installation
 
