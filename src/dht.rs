@@ -36,7 +36,7 @@
 
 pub mod find_node_op;
 
-use crate::find_node_op::FindNodeOp;
+use crate::dht::find_node_op::FindNodeOp;
 
 use bt_bencode::Value;
 use cloudburst::dht::{
@@ -269,7 +269,6 @@ impl Config {
 }
 
 const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(3 * 60);
-const MAX_BUCKET_SIZE: usize = 8;
 
 use routing::MyTable;
 
@@ -770,6 +769,8 @@ mod tests {
 }
 
 mod routing {
+    const MAX_BUCKET_SIZE: usize = 8;
+
     use std::time::{Duration, Instant};
 
     use cloudburst::dht::{
@@ -777,8 +778,6 @@ mod routing {
         node::{AddrId, Id},
         routing::{Bucket, Table},
     };
-
-    use crate::MAX_BUCKET_SIZE;
 
     pub(super) const BUCKET_REFRESH_INTERVAL: Duration = Duration::from_secs(3 * 60);
 

@@ -6,8 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::SupportedAddr;
-
 use bt_bencode::Value;
 use cloudburst::dht::{
     krpc::{
@@ -21,6 +19,8 @@ use std::{
     convert::TryFrom,
 };
 use tracing::{error, trace};
+
+use super::SupportedAddr;
 
 #[derive(Debug)]
 pub struct FindNodeOp {
@@ -303,10 +303,10 @@ impl OpsManager {
 
         self.ops.iter_mut().find_map(|(op, count)| {
             if let Some(addr_opt_id) = op.next_addr_opt_id() {
-                trace!(addr_opt_id = ?addr_opt_id, target_id = ?op.target_id, tx_count = *count, "returning address to send find node query to");
+                trace!(addr = %addr_opt_id.addr, node_id = ?addr_opt_id.id, target_id = %op.target_id, tx_count = *count, "returning address to send find node query to");
                 Some((op.target_id, addr_opt_id))
             } else {
-                trace!(target_id = ?op.target_id, tx_count = *count, "no more addresses to send find node query to");
+                trace!(target_id = %op.target_id, tx_count = *count, "no more addresses to send find node query to");
                 None
             }
         })
