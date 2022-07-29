@@ -38,11 +38,11 @@ pub mod find_node_op;
 
 use crate::dht::find_node_op::FindNodeOp;
 
-use bt_bencode::Value;
+use anyhow::Context;
 use cloudburst::dht::{
     krpc::{
         transaction::{self, Transaction, Transactions},
-        CompactAddr, Msg as KrpcMsg, QueryMsg, RespMsg, Ty,
+        CompactAddr, Msg, QueryArgs, RespValues, Ty,
     },
     node::{self, AddrId, AddrOptId, LocalId},
     routing::{Bucket, Table},
@@ -51,108 +51,15 @@ use core::{fmt, time::Duration};
 use find_node_op::OpsManager;
 use tracing::trace;
 
-use std::{net::SocketAddr, time::Instant};
+use std::{convert::TryFrom, net::SocketAddr, time::Instant};
 
-/// Error for KRPC protocol.
-#[derive(Debug)]
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub struct Error {
-    #[cfg_attr(feature = "std", error(transparent))]
-    kind: ErrorKind,
-}
-
-impl Error {
-    #[must_use]
-    pub fn is_bt_bencode_error(&self) -> bool {
-        matches!(self.kind, ErrorKind::BtBencode(_))
-    }
-
-    fn missing_msg_ty(value: Value) -> Self {
-        Self {
-            kind: ErrorKind::MissingMsgTy(value),
-        }
-    }
-
-    fn invalid_input(value: Value) -> Self {
-        Self {
-            kind: ErrorKind::InvalidInput(value),
-        }
-    }
-
-    #[must_use]
-    pub fn msg(&self) -> Option<&Value> {
-        match &self.kind {
-            ErrorKind::BtBencode(_) => None,
-            ErrorKind::InvalidInput(value) | ErrorKind::MissingMsgTy(value) => Some(value),
-        }
-    }
-}
-
-impl From<bt_bencode::Error> for Error {
-    fn from(e: bt_bencode::Error) -> Self {
-        Self {
-            kind: ErrorKind::BtBencode(e),
-        }
-    }
-}
-
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
-#[derive(Debug)]
-enum ErrorKind {
-    BtBencode(
-        #[cfg_attr(feature = "std", from)]
-        #[cfg_attr(feature = "std", source)]
-        #[cfg_attr(feature = "std", transparent)]
-        bt_bencode::Error,
-    ),
-    MissingMsgTy(Value),
-    InvalidInput(Value),
-}
-
-/// Events related to KRPC messages including responses, errors, queries, and timeouts.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MsgEvent {
-    Resp(Value),
-    Error(Value),
-    Query(Value),
-}
-
-/// A deserialized message event with the relevant node information and local
-/// transaction identifier.
-#[derive(Clone, Debug)]
-pub struct ReadEvent<Addr> {
-    addr_opt_id: AddrOptId<Addr>,
-    tx_id: Option<transaction::Id>,
-    msg: MsgEvent,
-}
-
-impl<Addr> ReadEvent<Addr> {
-    /// Returns the relevant node's network address and optional Id.
-    #[must_use]
-    pub fn addr_opt_id(&self) -> &AddrOptId<Addr> {
-        &self.addr_opt_id
-    }
-
-    /// Returns the relevant local transaction Id if the event is related to a query sent by the local node.
-    #[must_use]
-    pub fn tx_id(&self) -> Option<transaction::Id> {
-        self.tx_id
-    }
-
-    /// Returns the message event which may contain a query, response, error, or timeout.
-    #[must_use]
-    pub fn msg(&self) -> &MsgEvent {
-        &self.msg
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// The types of addresses supported.
-pub enum SupportedAddr {
-    Ipv4,
-    Ipv6,
-    Ipv4AndIpv6,
-}
+// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// /// The types of addresses supported.
+// pub enum SupportedAddr {
+//     Ipv4,
+//     Ipv6,
+//     Ipv4AndIpv6,
+// }
 
 /// The configuration for the local DHT node.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,8 +74,6 @@ pub struct Config {
     is_read_only_node: bool,
     /// If responses from queried nodes are strictly checked for expected node ID
     is_response_queried_node_id_strictly_checked: bool,
-    /// The types of socket addresses supported.
-    supported_addr: SupportedAddr,
     routing_table_next_response_interval: Duration,
     routing_table_next_query_interval: Duration,
 }
@@ -185,7 +90,6 @@ impl Config {
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: false,
             is_response_queried_node_id_strictly_checked: true,
-            supported_addr: SupportedAddr::Ipv4AndIpv6,
             routing_table_next_response_interval: Duration::from_secs(15 * 60),
             routing_table_next_query_interval: Duration::from_secs(15 * 60),
         }
@@ -220,11 +124,6 @@ impl Config {
     /// Set to true if the node is read only, false otherwise.
     pub fn set_is_read_only_node(&mut self, is_read_only_node: bool) {
         self.is_read_only_node = is_read_only_node;
-    }
-
-    /// Sets the supported address types.
-    pub fn set_supported_addr(&mut self, supported_addr: SupportedAddr) {
-        self.supported_addr = supported_addr;
     }
 }
 
@@ -325,15 +224,6 @@ where
         self.ops_manager.insert_tx(tx_id, target_id);
     }
 
-    pub fn queried_node_for_target(
-        &mut self,
-        addr_opt_id: AddrOptId<CompactAddr>,
-        target_id: node::Id,
-    ) {
-        self.ops_manager
-            .queried_node_for_target(addr_opt_id, target_id);
-    }
-
     /// Processes a received message.
     ///
     /// When a message is received, use this callback method to process the data.
@@ -345,152 +235,133 @@ where
     /// If the message is malformed, then an error is returned. If a response or
     /// error message does not have a matching `Transaction`, then the message is
     /// considered invalid and an error is returned.
-    pub fn on_recv(&mut self, bytes: &[u8], addr: Addr) -> Result<ReadEvent<Addr>, Error>
+    pub fn on_recv(
+        &mut self,
+        msg: &Msg<'_>,
+        addr: Addr,
+    ) -> anyhow::Result<(AddrOptId<Addr>, Option<(transaction::Id, &'static [u8])>)>
     where
         Addr: fmt::Debug + Clone + PartialEq + Into<CompactAddr>,
     {
-        self.on_recv_with_now(bytes, addr, Instant::now())
+        self.on_recv_with_now(msg, addr, Instant::now())
     }
 
     fn on_recv_with_now(
         &mut self,
-        bytes: &[u8],
+        msg: &Msg<'_>,
         addr: Addr,
         now: Instant,
-    ) -> Result<ReadEvent<Addr>, Error>
+    ) -> anyhow::Result<(AddrOptId<Addr>, Option<(transaction::Id, &'static [u8])>)>
     where
         Addr: fmt::Debug + Clone + PartialEq + Into<CompactAddr>,
     {
-        let value: Value = bt_bencode::from_slice(bytes)?;
+        trace!(
+            addr = ?addr,
+            tx_id = ?msg.t,
+            ty = ?msg.y,
+            client_version = ?msg.v,
+            // node_id = ?tx.addr_opt_id().id(),
+            // method= ?core::str::from_utf8(tx.method).unwrap_or("non-UTF-8 method"),
+            // queried_node_id = ?value.queried_node_id(),
+            "received message"
+        );
+        let kind = msg.ty();
+        match kind {
+            Ty::Response => {
+                let tx_id = transaction::Id::try_from(msg.tx_id())
+                    .context("unrecognized transaction id format in response")?;
+                let Transaction {
+                    addr_opt_id,
+                    tx_id,
+                    method,
+                    timeout_deadline: _timeout_deadline,
+                } = self
+                    .tx_manager
+                    .on_recv(&tx_id)
+                    .context("unknown transaction for response")?;
 
-        if let Some(kind) = value.ty() {
-            match kind {
-                Ty::Response => {
-                    if let Ok(tx) = self.tx_manager.on_recv_resp(
-                        &value,
-                        self.config.is_response_queried_node_id_strictly_checked,
-                        self.config.local_id,
-                    ) {
-                        trace!(
-                            tx_id = ?tx.tx_id(),
-                            addr = ?addr,
-                            node_id = ?tx.addr_opt_id().id(),
-                            client_version_str = ?value.client_version_str(),
-                            queried_node_id = ?value.queried_node_id(),
-                            "received response"
-                        );
-
-                        if let Some(node_id) =
-                            tx.addr_opt_id().id().or_else(|| value.queried_node_id())
-                        {
-                            routing::on_recv(
-                                &mut self.routing_table,
-                                AddrId::new(addr, node_id),
-                                kind,
-                                Some(tx.tx_id()),
-                                now + routing::BUCKET_REFRESH_INTERVAL,
-                                now + self.config.routing_table_next_response_interval,
-                                now + self.config.routing_table_next_query_interval,
-                                now,
-                            );
-                        }
-
-                        let addr_opt_id = tx.addr_opt_id();
-                        self.ops_manager.on_recv(
-                            AddrOptId::new((*addr_opt_id.addr()).into(), addr_opt_id.id()),
-                            *tx.tx_id(),
-                            &value,
-                        );
-
-                        Ok(ReadEvent {
-                            addr_opt_id: *tx.addr_opt_id(),
-                            tx_id: None,
-                            msg: MsgEvent::Resp(value),
-                        })
-                    } else {
-                        trace!(
-                            tx_id = ?value.tx_id(),
-                            addr = ?addr,
-                            client_version_str = ?value.client_version_str(),
-                            queried_node_id = ?value.queried_node_id(),
-                            "no matching transaction for response"
-                        );
-                        Err(Error::invalid_input(value))
-                    }
+                if let Some(node_id) = addr_opt_id.id().or_else(|| {
+                    msg.values::<RespValues<'_>>()
+                        .and_then(|values| values.map(|values| values.id()).ok())
+                        .flatten()
+                }) {
+                    routing::on_recv(
+                        &mut self.routing_table,
+                        AddrId::new(addr, node_id),
+                        kind,
+                        Some(&tx_id),
+                        now + routing::BUCKET_REFRESH_INTERVAL,
+                        now + self.config.routing_table_next_response_interval,
+                        now + self.config.routing_table_next_query_interval,
+                        now,
+                    );
                 }
-                Ty::Error => {
-                    if let Ok(tx) = self.tx_manager.on_recv_error(&value) {
-                        if let Some(node_id) = tx.addr_opt_id().id() {
-                            routing::on_recv(
-                                &mut self.routing_table,
-                                AddrId::new(addr, node_id),
-                                kind,
-                                Some(tx.tx_id()),
-                                now + routing::BUCKET_REFRESH_INTERVAL,
-                                now + self.config.routing_table_next_response_interval,
-                                now + self.config.routing_table_next_query_interval,
-                                now,
-                            );
-                        }
-                        self.ops_manager.on_error(
-                            AddrOptId::new(
-                                (*tx.addr_opt_id().addr()).into(),
-                                tx.addr_opt_id().id(),
-                            ),
-                            *tx.tx_id(),
-                        );
 
-                        Ok(ReadEvent {
-                            addr_opt_id: *tx.addr_opt_id(),
-                            tx_id: None,
-                            msg: MsgEvent::Error(value),
-                        })
-                    } else {
-                        trace!(
-                            tx_id = ?value.tx_id(),
-                            addr = ?addr,
-                            client_version_str = ?value.client_version_str(),
-                            queried_node_id = ?value.queried_node_id(),
-                            "no matching transaction for error"
-                        );
-                        Err(Error::invalid_input(value))
-                    }
-                }
-                Ty::Query | Ty::Unknown(_) => {
-                    let querying_node_id = QueryMsg::querying_node_id(&value);
-                    let addr_opt_id = AddrOptId::new(addr, querying_node_id);
-                    if let Some(node_id) = querying_node_id {
-                        routing::on_recv(
-                            &mut self.routing_table,
-                            AddrId::new(addr, node_id),
-                            kind,
-                            None,
-                            now + routing::BUCKET_REFRESH_INTERVAL,
-                            now + self.config.routing_table_next_response_interval,
-                            now + self.config.routing_table_next_query_interval,
-                            now,
-                        );
-                    }
+                self.ops_manager.on_recv(
+                    AddrOptId::new((*addr_opt_id.addr()).into(), addr_opt_id.id()),
+                    tx_id,
+                    msg,
+                );
 
-                    Ok(ReadEvent {
-                        addr_opt_id,
-                        tx_id: None,
-                        msg: MsgEvent::Query(value),
-                    })
-                }
-                _ => {
-                    unreachable!()
-                }
+                Ok((addr_opt_id, Some((tx_id, method))))
             }
-        } else {
-            trace!(
-                tx_id = ?value.tx_id(),
-                addr = ?addr,
-                client_version_str = ?value.client_version_str(),
-                queried_node_id = ?value.queried_node_id(),
-                "no message type"
-            );
-            Err(Error::missing_msg_ty(value))
+            Ty::Error => {
+                let tx_id = transaction::Id::try_from(msg.tx_id())
+                    .context("unrecognized transaction id format in error")?;
+                let Transaction {
+                    addr_opt_id,
+                    tx_id,
+                    method,
+                    timeout_deadline: _timeout_deadline,
+                } = self
+                    .tx_manager
+                    .on_recv(&tx_id)
+                    .context("unknown transaction for error")?;
+
+                if let Some(node_id) = addr_opt_id.id() {
+                    routing::on_recv(
+                        &mut self.routing_table,
+                        AddrId::new(addr, node_id),
+                        kind,
+                        Some(&tx_id),
+                        now + routing::BUCKET_REFRESH_INTERVAL,
+                        now + self.config.routing_table_next_response_interval,
+                        now + self.config.routing_table_next_query_interval,
+                        now,
+                    );
+                }
+
+                self.ops_manager.on_error(
+                    AddrOptId::new((*addr_opt_id.addr()).into(), addr_opt_id.id()),
+                    tx_id,
+                );
+
+                Ok((addr_opt_id, Some((tx_id, method))))
+            }
+            Ty::Query | Ty::Unknown => {
+                let querying_node_id = msg
+                    .values::<QueryArgs<'_>>()
+                    .and_then(|args| args.map(|args| args.id()).ok())
+                    .flatten();
+                let addr_opt_id = AddrOptId::new(addr, querying_node_id);
+                if let Some(node_id) = querying_node_id {
+                    routing::on_recv(
+                        &mut self.routing_table,
+                        AddrId::new(addr, node_id),
+                        kind,
+                        None,
+                        now + routing::BUCKET_REFRESH_INTERVAL,
+                        now + self.config.routing_table_next_response_interval,
+                        now + self.config.routing_table_next_query_interval,
+                        now,
+                    );
+                }
+
+                Ok((addr_opt_id, None))
+            }
+            _ => {
+                unreachable!()
+            }
         }
     }
 
@@ -547,7 +418,7 @@ where
                 .find_neighbors(target_id, now)
                 .take(8)
                 .map(|a| AddrOptId::new((*a.addr()).into(), Some(a.id())));
-            let find_node_op = FindNodeOp::new(target_id, 8, SupportedAddr::Ipv4, neighbors);
+            let find_node_op = FindNodeOp::new(target_id, 8, neighbors);
             self.ops_manager.insert_op(find_node_op);
         }
     }
@@ -634,15 +505,15 @@ where
     /// Usually a query is directed towards a target hash value. Nodes with
     /// `Id`s which are "closer" to the target value are more likely to have the
     /// data than other nodes.
-    pub fn find_neighbors(&self, id: node::Id, now: Instant) -> impl Iterator<Item = AddrId<Addr>>
+    pub fn find_neighbors(&self, id: node::Id, _now: Instant) -> impl Iterator<Item = AddrId<Addr>>
     where
         Addr: Clone,
     {
-        routing::find_neighbors(&self.routing_table, id, now)
+        routing::find_neighbors(&self.routing_table, id)
     }
 
     #[must_use]
-    fn find_node(&mut self, target_id: node::Id, now: Instant) -> FindNodeOp
+    fn find_node(&mut self, target_id: node::Id, _now: Instant) -> FindNodeOp
     where
         Addr: Into<CompactAddr>,
     {
@@ -661,8 +532,7 @@ where
         FindNodeOp::new(
             target_id,
             8,
-            self.config.supported_addr,
-            routing::find_neighbors(&self.routing_table, target_id, now)
+            routing::find_neighbors(&self.routing_table, target_id)
                 .take(8)
                 .map(|a| AddrOptId::new((*a.addr()).into(), Some(a.id())))
                 .chain(bootstrap_addrs),
@@ -681,6 +551,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use cloudburst::dht::krpc::ping::METHOD_PING;
+
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
@@ -691,7 +563,6 @@ mod tests {
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
             is_response_queried_node_id_strictly_checked: true,
-            supported_addr: SupportedAddr::Ipv4AndIpv6,
             routing_table_next_response_interval: Duration::from_secs(15 * 60),
             routing_table_next_query_interval: Duration::from_secs(15 * 60),
         })
@@ -723,6 +594,7 @@ mod tests {
         node.insert_tx(Transaction::new(
             addr_opt_id,
             tx_id,
+            METHOD_PING,
             Instant::now() + node.config().default_query_timeout,
         ));
     }
@@ -785,7 +657,7 @@ mod routing {
     pub(super) fn on_recv<Addr>(
         table: &mut Table<Node<Addr, transaction::Id, Instant>, Instant>,
         addr_id: AddrId<Addr>,
-        kind: Ty<'_>,
+        kind: Ty,
         tx_id: Option<&transaction::Id>,
         refresh_bucket_deadline: Instant,
         next_response_deadline: Instant,
@@ -797,7 +669,7 @@ mod routing {
         let pivot_id = table.pivot();
         let mut bucket = table.find_mut(&addr_id.id());
         if let Some(node) = bucket.iter_mut().find(|node| *node.addr_id() == addr_id) {
-            node.on_msg_received(&kind, tx_id, next_response_deadline, next_query_deadline);
+            node.on_msg_received(kind, tx_id, next_response_deadline, next_query_deadline);
             return;
         }
 
@@ -946,7 +818,7 @@ mod routing {
         /// questionable.
         pub fn on_msg_received(
             &mut self,
-            kind: &Ty<'_>,
+            kind: Ty,
             tx_id: Option<&TxId>,
             next_response_deadline: Instant,
             next_query_deadline: Instant,
@@ -982,7 +854,7 @@ mod routing {
                     self.next_response_deadline = next_response_deadline;
                     self.karma = self.karma.saturating_sub(1);
                 }
-                Ty::Unknown(_) => {
+                Ty::Unknown => {
                     if let Some(tx_id) = tx_id {
                         if let Some(ping_tx_id) = &self.ping_tx_id {
                             if *ping_tx_id == *tx_id {
@@ -1082,7 +954,6 @@ mod routing {
     pub(super) fn find_neighbors<Addr>(
         table: &Table<Node<Addr, transaction::Id, Instant>, Instant>,
         id: node::Id,
-        now: Instant,
     ) -> impl Iterator<Item = AddrId<Addr>>
     where
         Addr: Clone,

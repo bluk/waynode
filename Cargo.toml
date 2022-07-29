@@ -3,7 +3,7 @@ name = "sloppy"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Bryant Luk <code@bryantluk.com>"]
-edition = "2018"
+edition = "2021"
 description = "A sloppy distributed hash table library"
 repository = "https://github.com/bluk/sloppy"
 readme = "README.md"
@@ -17,8 +17,9 @@ include = [
 
 [dependencies]
 thiserror = "1.0"
+anyhow = "1.0"
 
-bt_bencode = "0.6"
+bt_bencode = { version = "0.7", default-features = false }
 cloudburst = { git = "https://github.com/bluk/cloudburst", branch = "next" }
 
 serde = { version = "1", features=[ "derive" ] }

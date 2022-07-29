@@ -3,11 +3,10 @@
 Sloppy is an application which acts as a node in the BitTorrent distributed hash
 table (DHT).
 
-## Installation
+## Run
 
-```toml
-[dependencies]
-sloppy = "0.1.0"
+```sh
+cargo run
 ```
 
 ## License

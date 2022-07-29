@@ -6,6 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Sloppy is a distributed hash table node.
+
 #![warn(
     rust_2018_idioms,
     missing_docs,
@@ -14,19 +16,21 @@
     unused_qualifications
 )]
 
-use bt_bencode::Value;
 use clap::{Arg, Command};
 use cloudburst::dht::{
     krpc::{
-        self, find_node, ping, transaction::Transaction, CompactAddr, CompactAddrV4, ErrorCode,
-        ErrorVal, Msg, QueryArgs, QueryMsg, RespVal,
+        self,
+        find_node::{self, METHOD_FIND_NODE},
+        ping::{self, METHOD_PING},
+        transaction::Transaction,
+        CompactAddr, CompactAddrV4, ErrorCode, Msg, Ty,
     },
     node::{AddrId, AddrOptId, Id, LocalId},
 };
-use core::{convert::TryFrom, time::Duration};
+use core::time::Duration;
 use serde_bytes::Bytes;
 use std::{
-    io,
+    io::{self, Cursor},
     net::{SocketAddr, SocketAddrV4},
     time::Instant,
 };
@@ -34,6 +38,7 @@ use tokio::{net::UdpSocket, time};
 use tracing::{debug, error, info, trace};
 
 mod dht;
+mod http;
 
 use dht::Node;
 
@@ -98,7 +103,6 @@ fn get_config(local_id: LocalId) -> dht::Config {
     let mut config = dht::Config::new(local_id);
     config.set_client_version(Some("ab12".into()));
     config.set_is_read_only_node(true);
-    config.set_supported_addr(dht::SupportedAddr::Ipv4);
     config
 }
 
@@ -129,7 +133,8 @@ async fn main() -> io::Result<()> {
         Instant::now(),
     );
 
-    let mut buf = [0; 4096];
+    let mut read_buf = [0; 4096];
+    let mut write_buf = [0; 4096];
 
     loop {
         send_find_node_queries(&mut node, &mut socket).await?;
@@ -145,8 +150,8 @@ async fn main() -> io::Result<()> {
         tokio::pin!(sleep);
 
         tokio::select! {
-            res = socket.recv_from(&mut buf) => {
-                on_recv(res, &mut buf, &mut socket, &mut node, Instant::now()).await?;
+            res = socket.recv_from(&mut read_buf) => {
+                on_recv(res, &mut read_buf, &mut write_buf, &mut socket, &mut node, Instant::now()).await?;
             }
             _ = sleep => {
                 let now = Instant::now();
@@ -157,9 +162,10 @@ async fn main() -> io::Result<()> {
                     let Transaction {
                         addr_opt_id,
                         tx_id,
+                        method,
                         timeout_deadline,
                     } = tx;
-                    trace!(tx_id = ?tx_id, addr = %addr_opt_id.addr(), node_id = ?addr_opt_id.id(), ?timeout_deadline, "tx timed out");
+                    trace!(tx_id = ?tx_id, addr = %addr_opt_id.addr(), node_id = ?addr_opt_id.id(), ?timeout_deadline, ?method, "tx timed out");
                     // normally, look at any locally initiated transactions and
                     // considered them timed out if they match the read event
                 }
@@ -172,7 +178,8 @@ async fn main() -> io::Result<()> {
 
 async fn on_recv(
     recv_from_result: io::Result<(usize, SocketAddr)>,
-    buf: &mut [u8],
+    read_buf: &mut [u8],
+    write_buf: &mut [u8],
     socket: &mut UdpSocket,
     node: &mut Node<SocketAddrV4>,
     now: Instant,
@@ -191,21 +198,22 @@ async fn on_recv(
 
     debug!(%src_addr, %bytes_read, "received");
 
-    let filled_buf = &buf[..bytes_read];
+    let filled_buf = &read_buf[..bytes_read];
 
-    match src_addr {
-        SocketAddr::V6(_) => {}
-        SocketAddr::V4(src_addr) => match node.on_recv(filled_buf, src_addr) {
-            Ok(inbound_msg) => match inbound_msg.msg() {
-                dht::MsgEvent::Query(msg) => {
-                    reply_to_query(node, socket, *inbound_msg.addr_opt_id(), msg, now).await?;
+    if let Ok(msg) = bt_bencode::from_slice::<Msg<'_>>(filled_buf) {
+        match src_addr {
+            SocketAddr::V6(_) => {}
+            SocketAddr::V4(src_addr) => match node.on_recv(&msg, src_addr) {
+                Ok((addr_opt_id, existing_tx)) => {
+                    if let Ty::Query = msg.ty() {
+                        reply_to_query(node, socket, addr_opt_id, &msg, write_buf, now).await?;
+                    }
                 }
-                dht::MsgEvent::Resp(_) | dht::MsgEvent::Error(_) => {}
+                Err(e) => {
+                    error!(?e, "on_recv error");
+                }
             },
-            Err(e) => {
-                error!(?e, "on_recv error");
-            }
-        },
+        }
     }
     Ok(())
 }
@@ -214,148 +222,117 @@ async fn reply_to_query(
     node: &mut Node<SocketAddrV4>,
     socket: &mut UdpSocket,
     addr_opt_id: AddrOptId<SocketAddrV4>,
-    msg: &Value,
+    msg: &Msg<'_>,
+    write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
-    let method_name = msg.method_name();
-    if let Some(s) = method_name.and_then(|v| core::str::from_utf8(v).ok()) {
-        debug!(s, "received query");
-    }
-    match msg.method_name() {
-        Some(ping::METHOD_PING) => {
-            if let Some(tx_id) = msg.tx_id() {
-                let ping_resp = ping::RespValues::new(node.config().local_id());
-                let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                    r: Some(&ping_resp.to_value()),
-                    t: Bytes::new(tx_id),
-                    v: node.config().client_version().map(Bytes::new),
-                })?;
+    async fn send_to_socket(
+        buf: &[u8],
+        addr: SocketAddrV4,
+        socket: &mut UdpSocket,
+    ) -> io::Result<()> {
+        match socket.send_to(buf, addr).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.kind() == io::ErrorKind::WouldBlock {
+                    return Ok(());
+                }
 
-                let AddrOptId { addr, id: _ } = addr_opt_id;
-
-                debug!(%addr, ?tx_id, "sending ping response reply");
-
-                match socket.send_to(&out, addr).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        if e.kind() == io::ErrorKind::WouldBlock {
-                            return Ok(());
-                        }
-
-                        error!(%e, "send_to io error");
-                        return Err(e);
-                    }
-                };
+                error!(%e, "send_to io error");
+                Err(e)
             }
         }
-        Some(find_node::METHOD_FIND_NODE) => {
-            if let Some(tx_id) = msg.tx_id() {
-                if let Ok(find_node_query) = find_node::QueryArgs::try_from(msg) {
-                    let mut nodes = Vec::with_capacity(8);
-                    for neighbor in node.find_neighbors(find_node_query.target(), now) {
+    }
+
+    let method_name = msg.method_name_str();
+    debug!(?method_name, "received query");
+
+    let mut cursor = Cursor::new(write_buf);
+    let AddrOptId { addr, id: _ } = addr_opt_id;
+
+    match msg.method_name() {
+        Some(METHOD_PING) => {
+            bt_bencode::to_writer(
+                &mut cursor,
+                &krpc::ser::RespMsg {
+                    r: ping::RespValues::new(&node.config().local_id()),
+                    t: Bytes::new(msg.tx_id()),
+                    v: node.config().client_version().map(Bytes::new),
+                },
+            )?;
+
+            debug!(%addr, tx_id = ?msg.tx_id(), "sending ping response reply");
+        }
+        Some(METHOD_FIND_NODE) => {
+            if let Some(Ok(query_args)) = msg.args::<find_node::QueryArgs<'_>>() {
+                if let Some(target) = query_args.target() {
+                    let mut nodes = Vec::with_capacity(8 * 26);
+                    for neighbor in node.find_neighbors(target, now).take(8) {
                         let AddrId { addr, id } = neighbor;
-                        nodes.push(AddrId {
-                            addr: CompactAddrV4::from(addr),
-                            id,
-                        });
-                        if nodes.len() == 8 {
-                            break;
-                        }
+                        nodes.extend_from_slice(&id.0);
+                        nodes.extend_from_slice(&CompactAddrV4::from(addr).0);
                     }
 
                     if !nodes.is_empty() {
-                        while nodes.len() < 8 {
-                            let copy = nodes[0];
-                            nodes.push(copy);
+                        while nodes.len() < 8 * 26 {
+                            nodes.extend_from_within(0..26);
                         }
                     }
 
-                    let find_node_resp = find_node::RespValues::with_id_and_nodes_and_nodes6(
-                        node.config().local_id(),
-                        Some(nodes),
-                        None,
-                    );
-                    let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                        r: Some(&find_node_resp.to_value()),
-                        t: Bytes::new(tx_id),
-                        v: node.config().client_version().map(Bytes::new),
-                    })?;
+                    bt_bencode::to_writer(
+                        &mut cursor,
+                        &krpc::ser::RespMsg {
+                            r: find_node::RespValues::new(
+                                &node.config().local_id(),
+                                Some(Bytes::new(&nodes)),
+                                None,
+                            ),
+                            t: Bytes::new(msg.tx_id()),
+                            v: node.config().client_version().map(Bytes::new),
+                        },
+                    )?;
 
-                    let AddrOptId { addr, id: _ } = addr_opt_id;
-
-                    debug!(%addr, ?tx_id, "sending find node response reply");
-
-                    match socket.send_to(&out, addr).await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            if e.kind() == io::ErrorKind::WouldBlock {
-                                return Ok(());
-                            }
-
-                            error!(%e, "send_to io error");
-                            return Err(e);
-                        }
-                    };
+                    debug!(%addr, tx_id = ?msg.tx_id(), "sending find node response reply");
+                } else {
+                    return Ok(());
                 }
+            } else {
+                return Ok(());
             }
         }
         Some(method_name) => {
-            if let Some(tx_id) = msg.tx_id() {
-                let error = cloudburst::dht::krpc::error::Values::new(
-                    ErrorCode::MethodUnknown,
-                    core::str::from_utf8(method_name).unwrap_or("").to_string(),
-                );
-                let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                    r: Some(&error.to_value()),
-                    t: Bytes::new(tx_id),
+            bt_bencode::to_writer(
+                &mut cursor,
+                &krpc::ser::ErrMsg {
+                    e: (
+                        ErrorCode::MethodUnknown,
+                        core::str::from_utf8(method_name).unwrap_or(""),
+                    ),
+                    t: Bytes::new(msg.tx_id()),
                     v: node.config().client_version().map(Bytes::new),
-                })?;
+                },
+            )?;
 
-                let AddrOptId { addr, id: _ } = addr_opt_id;
-
-                let method_name = core::str::from_utf8(method_name).unwrap_or("unknown");
-                debug!(%addr, %method_name, ?tx_id, "sending find node response reply");
-
-                match socket.send_to(&out, addr).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        if e.kind() == io::ErrorKind::WouldBlock {
-                            return Ok(());
-                        }
-
-                        error!(%e, "send_to io error");
-                        return Err(e);
-                    }
-                };
-            }
+            debug!(%addr, tx_id = ?msg.tx_id(), "sending unknown method reply");
         }
         None => {
-            if let Some(tx_id) = msg.tx_id() {
-                let error = cloudburst::dht::krpc::error::Values::new(
-                    ErrorCode::ProtocolError,
-                    String::from("method name not listed"),
-                );
-                let out = bt_bencode::to_vec(&krpc::ser::RespMsg {
-                    r: Some(&error.to_value()),
-                    t: Bytes::new(tx_id),
+            bt_bencode::to_writer(
+                &mut cursor,
+                &krpc::ser::ErrMsg {
+                    e: (
+                        ErrorCode::ProtocolError,
+                        String::from("method name not listed"),
+                    ),
+                    t: Bytes::new(msg.tx_id()),
                     v: node.config().client_version().map(Bytes::new),
-                })?;
-
-                match socket.send_to(&out, *addr_opt_id.addr()).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        if e.kind() == io::ErrorKind::WouldBlock {
-                            return Ok(());
-                        }
-
-                        error!(%e, "send_to io error");
-                        return Err(e);
-                    }
-                };
-            }
+                },
+            )?;
         }
     }
-    Ok(())
+
+    let end = usize::try_from(cursor.position()).expect("wrote too much data in reply");
+    let write_buf = cursor.into_inner();
+    send_to_socket(&write_buf[..end], addr, socket).await
 }
 
 async fn send_pings_to_nodes(
@@ -365,8 +342,8 @@ async fn send_pings_to_nodes(
 ) -> io::Result<()> {
     let local_id = node.config().local_id();
     let client_version = node.config().client_version().map(<[u8]>::to_vec);
-    let query_args = Some(ping::QueryArgs::new(local_id).to_value());
-    let ping_method = Bytes::new(ping::METHOD_PING);
+    let query_args = ping::QueryArgs::new(&local_id);
+    let ping_method = Bytes::new(METHOD_PING);
     loop {
         let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
         if let Some(node_to_ping) = node.find_node_to_ping(now) {
@@ -376,7 +353,7 @@ async fn send_pings_to_nodes(
             debug!(%addr, ?tx_id, "sending ping query");
 
             let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
-                a: query_args.as_ref(),
+                a: &query_args,
                 q: ping_method,
                 t: Bytes::new(tx_id.as_ref()),
                 v: client_version.as_deref().map(Bytes::new),
@@ -399,6 +376,7 @@ async fn send_pings_to_nodes(
             node.insert_tx(Transaction::new(
                 addr_id.into(),
                 tx_id,
+                METHOD_PING,
                 Instant::now() + node.config().default_query_timeout(),
             ));
         } else {
@@ -423,8 +401,8 @@ async fn send_find_node_queries(
         debug!(%addr, ?tx_id, %target_id, "sending find node query");
 
         let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
-            a: Some(&find_node::QueryArgs::new(node.config().local_id(), target_id).to_value()),
-            q: Bytes::new(find_node::METHOD_FIND_NODE),
+            a: &find_node::QueryArgs::new(&node.config().local_id(), &target_id),
+            q: Bytes::new(METHOD_FIND_NODE),
             t: Bytes::new(tx_id.as_ref()),
             v: node.config().client_version().map(Bytes::new),
         })?;
@@ -444,10 +422,10 @@ async fn send_find_node_queries(
         node.insert_tx(Transaction::new(
             AddrOptId::new(addr, addr_opt_id.id()),
             tx_id,
+            METHOD_FIND_NODE,
             Instant::now() + node.config().default_query_timeout(),
         ));
         node.insert_tx_for_find_node(tx_id, target_id);
-        node.queried_node_for_target(AddrOptId::new(addr.into(), addr_opt_id.id()), target_id);
     }
 
     Ok(())
