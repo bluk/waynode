@@ -55,42 +55,51 @@ fn get_args() -> Args {
             Arg::new("dht-ip")
                 .long("dht-ip-address")
                 .value_name("DHT_IP")
-                .help("The IP address to bind to for the DHT service")
                 .required(false)
-                .takes_value(true),
+                .num_args(1)
+                .help("The IP address to bind to for the DHT service"),
         )
         .arg(
             Arg::new("dht-port")
                 .long("dht-port")
                 .value_name("DHT_PORT")
-                .help("The port to bind to for the DHT service")
+                .value_parser(clap::value_parser!(u16))
                 .required(false)
-                .takes_value(true),
+                .num_args(1)
+                .help("The port to bind to for the DHT service"),
         )
         .arg(
             Arg::new("http-ip")
                 .long("http-ip-address")
                 .value_name("HTTP_IP")
-                .help("The IP address to bind to for the HTTP service")
                 .required(false)
-                .takes_value(true),
+                .num_args(1)
+                .help("The IP address to bind to for the HTTP service"),
         )
         .arg(
             Arg::new("http-port")
                 .long("http-port")
                 .value_name("HTTP_PORT")
-                .help("The port to bind to for the HTTP service")
+                .value_parser(clap::value_parser!(u16))
                 .required(false)
-                .takes_value(true),
+                .num_args(1)
+                .valu2(1)
+                .help("The port to bind to for the HTTP service"),
         )
         .get_matches();
 
-    let dht_ip = matches.value_of("dht-ip").unwrap_or("0.0.0.0");
-    let dht_port = matches.value_of("dht-port").unwrap_or("6881");
+    let dht_ip: String = matches
+        .get_one("dht-ip")
+        .unwrap_or(&"0.0.0.0".to_string())
+        .to_string();
+    let dht_port: u16 = *matches.get_one("dht-port").unwrap_or(&6881);
     let dht_bind_socket = format!("{}:{}", dht_ip, dht_port).parse().unwrap();
 
-    let http_ip = matches.value_of("http-ip").unwrap_or("0.0.0.0");
-    let http_port = matches.value_of("http-port").unwrap_or("8080");
+    let http_ip: String = matches
+        .get_one("http-ip")
+        .unwrap_or(&"0.0.0.0".to_string())
+        .to_string();
+    let http_port: u16 = *matches.get_one("http-port").unwrap_or(&8080);
     let http_bind_socket = format!("{}:{}", http_ip, http_port).parse().unwrap();
 
     Args {
