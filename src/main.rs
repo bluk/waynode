@@ -83,7 +83,6 @@ fn get_args() -> Args {
                 .value_parser(clap::value_parser!(u16))
                 .required(false)
                 .num_args(1)
-                .valu2(1)
                 .help("The port to bind to for the HTTP service"),
         )
         .get_matches();
@@ -93,14 +92,14 @@ fn get_args() -> Args {
         .unwrap_or(&"0.0.0.0".to_string())
         .to_string();
     let dht_port: u16 = *matches.get_one("dht-port").unwrap_or(&6881);
-    let dht_bind_socket = format!("{}:{}", dht_ip, dht_port).parse().unwrap();
+    let dht_bind_socket = format!("{dht_ip}:{dht_port}").parse().unwrap();
 
     let http_ip: String = matches
         .get_one("http-ip")
         .unwrap_or(&"0.0.0.0".to_string())
         .to_string();
     let http_port: u16 = *matches.get_one("http-port").unwrap_or(&8080);
-    let http_bind_socket = format!("{}:{}", http_ip, http_port).parse().unwrap();
+    let http_bind_socket = format!("{http_ip}:{http_port}").parse().unwrap();
 
     Args {
         dht_bind_socket,
@@ -146,7 +145,7 @@ async fn main() -> io::Result<()> {
     let mut write_buf = [0; 4096];
 
     loop {
-        send_find_node_queries(&mut node, &mut socket).await?;
+        send_find_node_queries(&mut node, &mut socket, Instant::now()).await?;
 
         let now = Instant::now();
         let timeout_deadline = node.timeout().map_or(
@@ -399,8 +398,9 @@ async fn send_pings_to_nodes(
 async fn send_find_node_queries(
     node: &mut Node<SocketAddrV4>,
     socket: &mut UdpSocket,
+    now: Instant,
 ) -> io::Result<()> {
-    while let Some((target_id, addr_opt_id)) = node.find_node_to_find_node() {
+    while let Some((target_id, addr_opt_id)) = node.next_find_node_query(now) {
         let addr: SocketAddrV4 = match addr_opt_id.addr() {
             CompactAddr::V4(addr) => (*addr).into(),
             CompactAddr::V6(_) => continue,
@@ -434,7 +434,7 @@ async fn send_find_node_queries(
             METHOD_FIND_NODE,
             Instant::now() + node.config().default_query_timeout(),
         ));
-        node.insert_tx_for_find_node(tx_id, target_id);
+        node.insert_tx_for_find_node(tx_id, target_id, addr_opt_id);
     }
 
     Ok(())

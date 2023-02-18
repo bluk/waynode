@@ -87,7 +87,7 @@ impl Config {
         Self {
             local_id: id.into(),
             client_version: None,
-            default_query_timeout: Duration::from_secs(60),
+            default_query_timeout: Duration::from_secs(5 * 60),
             is_read_only_node: false,
             is_response_queried_node_id_strictly_checked: true,
             routing_table_next_response_interval: Duration::from_secs(15 * 60),
@@ -220,8 +220,13 @@ where
         self.tx_manager.insert(tx);
     }
 
-    pub fn insert_tx_for_find_node(&mut self, tx_id: transaction::Id, target_id: node::Id) {
-        self.ops_manager.insert_tx(tx_id, target_id);
+    pub fn insert_tx_for_find_node(
+        &mut self,
+        tx_id: transaction::Id,
+        target_id: node::Id,
+        addr_opt_id: AddrOptId<CompactAddr>,
+    ) {
+        self.ops_manager.insert_tx(tx_id, target_id, addr_opt_id);
     }
 
     /// Processes a received message.
@@ -301,6 +306,7 @@ where
                     AddrOptId::new((*addr_opt_id.addr()).into(), addr_opt_id.id()),
                     tx_id,
                     msg,
+                    now,
                 );
 
                 Ok((addr_opt_id, Some((tx_id, method))))
@@ -334,6 +340,7 @@ where
                 self.ops_manager.on_error(
                     AddrOptId::new((*addr_opt_id.addr()).into(), addr_opt_id.id()),
                     tx_id,
+                    now,
                 );
 
                 Ok((addr_opt_id, Some((tx_id, method))))
@@ -418,7 +425,7 @@ where
                 .find_neighbors(target_id, now)
                 .take(8)
                 .map(|a| AddrOptId::new((*a.addr()).into(), Some(a.id())));
-            let find_node_op = FindNodeOp::new(target_id, 8, neighbors);
+            let find_node_op = FindNodeOp::new(target_id, 8, neighbors, now);
             self.ops_manager.insert_op(find_node_op);
         }
     }
@@ -475,6 +482,7 @@ where
             self.ops_manager.on_tx_timeout(
                 AddrOptId::new((*tx.addr_opt_id().addr()).into(), tx.addr_opt_id().id()),
                 *tx.tx_id(),
+                now,
             );
 
             Some(tx)
@@ -484,8 +492,11 @@ where
     }
 
     /// Finds a node to query for a find node target.
-    pub fn find_node_to_find_node(&mut self) -> Option<(node::Id, AddrOptId<CompactAddr>)> {
-        self.ops_manager.next_addr_to_query()
+    pub fn next_find_node_query(
+        &mut self,
+        now: Instant,
+    ) -> Option<(node::Id, AddrOptId<CompactAddr>)> {
+        self.ops_manager.next_addr_to_query(now)
     }
 
     /// Finds a node to ping.
@@ -513,7 +524,7 @@ where
     }
 
     #[must_use]
-    fn find_node(&mut self, target_id: node::Id, _now: Instant) -> FindNodeOp
+    fn find_node(&mut self, target_id: node::Id, now: Instant) -> FindNodeOp
     where
         Addr: Into<CompactAddr>,
     {
@@ -536,6 +547,7 @@ where
                 .take(8)
                 .map(|a| AddrOptId::new((*a.addr()).into(), Some(a.id())))
                 .chain(bootstrap_addrs),
+            now,
         )
     }
 
