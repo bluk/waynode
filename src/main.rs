@@ -34,7 +34,7 @@ use std::{
     net::{SocketAddr, SocketAddrV4},
     time::Instant,
 };
-use tokio::{net::UdpSocket, time};
+use tokio::{net::UdpSocket, signal, time};
 use tracing::{debug, error, info, trace};
 
 mod dht;
@@ -114,35 +114,9 @@ fn get_config(local_id: LocalId) -> dht::Config {
     config
 }
 
-#[tokio::main]
-async fn main() -> io::Result<()> {
-    tracing_subscriber::fmt::init();
-
-    let args = get_args();
-    let mut socket = UdpSocket::bind(args.dht_bind_socket).await?;
-
-    let mut rng = rand::thread_rng();
-
-    let local_id = Id::rand(&mut rng).unwrap();
-
-    info!(dht_bind_socket = %args.dht_bind_socket, %local_id, "listening...");
-
-    let config = get_config(LocalId::from(local_id));
-
-    let mut node: Node<SocketAddrV4> = dht::Node::new(
-        config,
-        std::iter::empty(),
-        vec![
-            String::from("router.magnets.im:6881"),
-            String::from("router.bittorent.com:6881"),
-            String::from("router.utorrent.com:6881"),
-            String::from("dht.transmissionbt.com:6881"),
-        ],
-        Instant::now(),
-    );
-
-    let mut read_buf = [0; 4096];
-    let mut write_buf = [0; 4096];
+async fn dht_handler(mut socket: UdpSocket, mut node: Node<SocketAddrV4>) -> io::Result<()> {
+    let mut read_buf = vec![0; 4096];
+    let mut write_buf = vec![0; 4096];
 
     loop {
         send_find_node_queries(&mut node, &mut socket, &mut write_buf, Instant::now()).await?;
@@ -164,7 +138,7 @@ async fn main() -> io::Result<()> {
             _ = sleep => {
                 let now = Instant::now();
                 trace!(?now, "timed out");
-                node.on_timeout(&mut rng);
+                node.on_timeout(&mut rand::thread_rng());
 
                 while let Some(tx) = node.pop_timed_out_tx(now) {
                     let Transaction {
@@ -181,6 +155,70 @@ async fn main() -> io::Result<()> {
                 send_pings_to_nodes(&mut node, &mut socket, &mut write_buf, now).await?;
             }
         };
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("signal received, starting graceful shutdown");
+}
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let args = get_args();
+
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+
+    let socket = UdpSocket::bind(args.dht_bind_socket).await?;
+    let local_id = Id::rand(&mut rand::thread_rng()).unwrap();
+    info!(dht_bind_socket = %args.dht_bind_socket, %local_id, "listening...");
+
+    let config = get_config(LocalId::from(local_id));
+    let node: Node<SocketAddrV4> = dht::Node::new(
+        config,
+        std::iter::empty(),
+        vec![
+            String::from("router.magnets.im:6881"),
+            String::from("router.bittorent.com:6881"),
+            String::from("router.utorrent.com:6881"),
+            String::from("dht.transmissionbt.com:6881"),
+        ],
+        Instant::now(),
+    );
+
+    let dht_handle = tokio::spawn(dht_handler(socket, node));
+
+    tokio::select! {
+        res = dht_handle => {
+            res.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        }
+        _ = &mut shutdown => {
+            Ok(())
+        }
     }
 }
 
