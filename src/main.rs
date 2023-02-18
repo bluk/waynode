@@ -145,7 +145,7 @@ async fn main() -> io::Result<()> {
     let mut write_buf = [0; 4096];
 
     loop {
-        send_find_node_queries(&mut node, &mut socket, Instant::now()).await?;
+        send_find_node_queries(&mut node, &mut socket, &mut write_buf, Instant::now()).await?;
 
         let now = Instant::now();
         let timeout_deadline = node.timeout().map_or(
@@ -159,7 +159,7 @@ async fn main() -> io::Result<()> {
 
         tokio::select! {
             res = socket.recv_from(&mut read_buf) => {
-                on_recv(res, &mut read_buf, &mut write_buf, &mut socket, &mut node, Instant::now()).await?;
+                on_recv(&mut node, &mut socket, &mut read_buf, &mut write_buf, res, Instant::now()).await?;
             }
             _ = sleep => {
                 let now = Instant::now();
@@ -178,18 +178,18 @@ async fn main() -> io::Result<()> {
                     // considered them timed out if they match the read event
                 }
 
-                send_pings_to_nodes(&mut node, &mut socket, now).await?;
+                send_pings_to_nodes(&mut node, &mut socket, &mut write_buf, now).await?;
             }
         };
     }
 }
 
 async fn on_recv(
-    recv_from_result: io::Result<(usize, SocketAddr)>,
+    node: &mut Node<SocketAddrV4>,
+    socket: &mut UdpSocket,
     read_buf: &mut [u8],
     write_buf: &mut [u8],
-    socket: &mut UdpSocket,
-    node: &mut Node<SocketAddrV4>,
+    recv_from_result: io::Result<(usize, SocketAddr)>,
     now: Instant,
 ) -> io::Result<()> {
     let (bytes_read, src_addr) = match recv_from_result {
@@ -346,6 +346,7 @@ async fn reply_to_query(
 async fn send_pings_to_nodes(
     node: &mut Node<SocketAddrV4>,
     socket: &mut UdpSocket,
+    mut write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
     let local_id = node.config().local_id();
@@ -360,14 +361,22 @@ async fn send_pings_to_nodes(
 
             debug!(%addr, ?tx_id, "sending ping query");
 
-            let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
-                a: &query_args,
-                q: ping_method,
-                t: Bytes::new(tx_id.as_ref()),
-                v: client_version.as_deref().map(Bytes::new),
-            })?;
+            let mut cursor = Cursor::new(write_buf);
 
-            match socket.send_to(&out, addr).await {
+            bt_bencode::to_writer(
+                &mut cursor,
+                &krpc::ser::QueryMsg {
+                    a: &query_args,
+                    q: ping_method,
+                    t: Bytes::new(tx_id.as_ref()),
+                    v: client_version.as_deref().map(Bytes::new),
+                },
+            )?;
+
+            let end = usize::try_from(cursor.position()).expect("wrote too much data");
+            write_buf = cursor.into_inner();
+
+            match socket.send_to(&write_buf[..end], addr).await {
                 Ok(v) => v,
                 Err(e) => {
                     if e.kind() == io::ErrorKind::WouldBlock {
@@ -398,6 +407,7 @@ async fn send_pings_to_nodes(
 async fn send_find_node_queries(
     node: &mut Node<SocketAddrV4>,
     socket: &mut UdpSocket,
+    mut write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
     while let Some((target_id, addr_opt_id)) = node.next_find_node_query(now) {
@@ -409,14 +419,22 @@ async fn send_find_node_queries(
         let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
         debug!(%addr, ?tx_id, %target_id, "sending find node query");
 
-        let out = bt_bencode::to_vec(&krpc::ser::QueryMsg {
-            a: &find_node::QueryArgs::new(&node.config().local_id(), &target_id),
-            q: Bytes::new(METHOD_FIND_NODE),
-            t: Bytes::new(tx_id.as_ref()),
-            v: node.config().client_version().map(Bytes::new),
-        })?;
+        let mut cursor = Cursor::new(write_buf);
 
-        match socket.send_to(&out, addr).await {
+        bt_bencode::to_writer(
+            &mut cursor,
+            &krpc::ser::QueryMsg {
+                a: &find_node::QueryArgs::new(&node.config().local_id(), &target_id),
+                q: Bytes::new(METHOD_FIND_NODE),
+                t: Bytes::new(tx_id.as_ref()),
+                v: node.config().client_version().map(Bytes::new),
+            },
+        )?;
+
+        let end = usize::try_from(cursor.position()).expect("wrote too much data");
+        write_buf = cursor.into_inner();
+
+        match socket.send_to(&write_buf[..end], addr).await {
             Ok(v) => v,
             Err(e) => {
                 if e.kind() == io::ErrorKind::WouldBlock {
