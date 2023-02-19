@@ -22,7 +22,9 @@ anyhow = "1.0"
 bt_bencode = { version = "0.7", default-features = false }
 cloudburst = { git = "https://github.com/bluk/cloudburst", branch = "next" }
 
-serde = { version = "1", features=[ "derive" ] }
+serde = { version = "1", default-features = false }
+serde_json = { version = "1", default-features = false }
+serde_derive = { version = "1", default-features = false }
 serde_bytes = "0.11"
 
 rand = "0.8"
@@ -35,10 +37,6 @@ clap = "4.1"
 tokio = { version = "1.25.0", features = ["macros", "net", "rt", "rt-multi-thread", "signal"] }
 
 axum = "0.6"
-hyper = { version = "0.14.19", features = ["full"] }
-http = { version = "0.2.6" }
-tower = "0.4.12"
-tower-http = { version = "0.3.2", features = ["request-id", "trace", "util"] }
 
 [dev-dependencies]
 hex-literal = "0.3.4"
