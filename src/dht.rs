@@ -426,17 +426,17 @@ async fn send_find_node_queries(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Config {
     /// Local node id
-    local_id: LocalId,
+    pub local_id: LocalId,
     /// Client version identifier
-    client_version: Option<Vec<u8>>,
+    pub client_version: Option<Vec<u8>>,
     /// The default amount of time before a query without a response is considered timed out
-    default_query_timeout: Duration,
+    pub default_query_timeout: Duration,
     /// If the node is read only
-    is_read_only_node: bool,
+    pub is_read_only_node: bool,
     /// If responses from queried nodes are strictly checked for expected node ID
-    is_response_queried_node_id_strictly_checked: bool,
-    routing_table_next_response_interval: Duration,
-    routing_table_next_query_interval: Duration,
+    pub is_response_queried_node_id_strictly_checked: bool,
+    pub routing_table_next_response_interval: Duration,
+    pub routing_table_next_query_interval: Duration,
 }
 
 impl Config {
