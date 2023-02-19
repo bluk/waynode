@@ -114,7 +114,25 @@ fn get_config(local_id: LocalId) -> dht::Config {
     config
 }
 
-async fn dht_handler(mut socket: UdpSocket, mut node: Node<SocketAddrV4>) -> io::Result<()> {
+#[derive(Debug)]
+enum DhtCmd {}
+
+async fn dht_task(
+    socket: UdpSocket,
+    node: Node<SocketAddrV4>,
+    cmd_rx: tokio::sync::mpsc::Receiver<DhtCmd>,
+    completion_tx: tokio::sync::oneshot::Sender<()>,
+) -> io::Result<()> {
+    let result = dht_handler(socket, node, cmd_rx).await;
+    let _ = completion_tx.send(());
+    result
+}
+
+async fn dht_handler(
+    mut socket: UdpSocket,
+    mut node: Node<SocketAddrV4>,
+    mut cmd_rx: tokio::sync::mpsc::Receiver<DhtCmd>,
+) -> io::Result<()> {
     let mut read_buf = vec![0; 4096];
     let mut write_buf = vec![0; 4096];
 
@@ -134,6 +152,17 @@ async fn dht_handler(mut socket: UdpSocket, mut node: Node<SocketAddrV4>) -> io:
         tokio::select! {
             res = socket.recv_from(&mut read_buf) => {
                 on_recv(&mut node, &mut socket, &mut read_buf, &mut write_buf, res, Instant::now()).await?;
+            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(_) => {
+                        panic!()
+                    }
+                    None => {
+                        // TODO: Serialize the DHT state
+                        return Ok(());
+                    }
+                }
             }
             _ = sleep => {
                 let now = Instant::now();
@@ -210,16 +239,22 @@ async fn main() -> io::Result<()> {
         Instant::now(),
     );
 
-    let dht_handle = tokio::spawn(dht_handler(socket, node));
+    let (dht_cmd_tx, dht_cmd_rx) = tokio::sync::mpsc::channel(32);
+    let (dht_completion_tx, dht_completion_rx) = tokio::sync::oneshot::channel();
+    let dht_handle = tokio::spawn(dht_task(socket, node, dht_cmd_rx, dht_completion_tx));
 
     tokio::select! {
-        res = dht_handle => {
-            res.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        _ = dht_completion_rx => {
+            drop(dht_cmd_tx);
         }
         _ = &mut shutdown => {
-            Ok(())
+            drop(dht_cmd_tx);
         }
     }
+
+    dht_handle
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
 }
 
 async fn on_recv(
