@@ -176,7 +176,7 @@ async fn on_recv(
         match src_addr {
             SocketAddr::V6(_) => {}
             SocketAddr::V4(src_addr) => match node.on_recv(&msg, src_addr) {
-                Ok((addr_opt_id, existing_tx)) => {
+                Ok((addr_opt_id, _existing_tx)) => {
                     if let Ty::Query = msg.ty() {
                         reply_to_query(node, socket, addr_opt_id, &msg, write_buf, now).await?;
                     }
@@ -488,6 +488,26 @@ const FIND_LOCAL_ID_INTERVAL: Duration = Duration::from_secs(3 * 60);
 
 use routing::MyTable;
 
+type MethodName = &'static [u8];
+type TxWithMethod = (transaction::Id, MethodName);
+
+#[derive(Debug)]
+struct Deadlines {
+    refresh_bucket: Instant,
+    next_response: Instant,
+    next_query: Instant,
+}
+
+impl Deadlines {
+    fn new(config: &Config, now: Instant) -> Self {
+        Self {
+            refresh_bucket: now + routing::BUCKET_REFRESH_INTERVAL,
+            next_response: now + config.routing_table_next_response_interval,
+            next_query: now + config.routing_table_next_query_interval,
+        }
+    }
+}
+
 /// The distributed hash table.
 #[derive(Debug)]
 pub struct Node<Addr> {
@@ -601,7 +621,7 @@ where
         &mut self,
         msg: &Msg<'_>,
         addr: Addr,
-    ) -> anyhow::Result<(AddrOptId<Addr>, Option<(transaction::Id, &'static [u8])>)>
+    ) -> anyhow::Result<(AddrOptId<Addr>, Option<TxWithMethod>)>
     where
         Addr: fmt::Debug + Clone + PartialEq + Into<CompactAddr>,
     {
@@ -613,7 +633,7 @@ where
         msg: &Msg<'_>,
         addr: Addr,
         now: Instant,
-    ) -> anyhow::Result<(AddrOptId<Addr>, Option<(transaction::Id, &'static [u8])>)>
+    ) -> anyhow::Result<(AddrOptId<Addr>, Option<TxWithMethod>)>
     where
         Addr: fmt::Debug + Clone + PartialEq + Into<CompactAddr>,
     {
@@ -652,9 +672,7 @@ where
                         AddrId::new(addr, node_id),
                         kind,
                         Some(&tx_id),
-                        now + routing::BUCKET_REFRESH_INTERVAL,
-                        now + self.config.routing_table_next_response_interval,
-                        now + self.config.routing_table_next_query_interval,
+                        &Deadlines::new(&self.config, now),
                         now,
                     );
                 }
@@ -687,9 +705,7 @@ where
                         AddrId::new(addr, node_id),
                         kind,
                         Some(&tx_id),
-                        now + routing::BUCKET_REFRESH_INTERVAL,
-                        now + self.config.routing_table_next_response_interval,
-                        now + self.config.routing_table_next_query_interval,
+                        &Deadlines::new(&self.config, now),
                         now,
                     );
                 }
@@ -714,9 +730,7 @@ where
                         AddrId::new(addr, node_id),
                         kind,
                         None,
-                        now + routing::BUCKET_REFRESH_INTERVAL,
-                        now + self.config.routing_table_next_response_interval,
-                        now + self.config.routing_table_next_query_interval,
+                        &Deadlines::new(&self.config, now),
                         now,
                     );
                 }
@@ -980,6 +994,8 @@ mod routing {
         routing::{Bucket, Table},
     };
 
+    use super::Deadlines;
+
     pub(super) const BUCKET_REFRESH_INTERVAL: Duration = Duration::from_secs(3 * 60);
 
     pub(super) fn new_routing_table<A, Addr, TxId>(
@@ -1028,9 +1044,7 @@ mod routing {
         addr_id: AddrId<Addr>,
         kind: Ty,
         tx_id: Option<&transaction::Id>,
-        refresh_bucket_deadline: Instant,
-        next_response_deadline: Instant,
-        next_query_deadline: Instant,
+        deadlines: &Deadlines,
         now: Instant,
     ) where
         Addr: PartialEq,
@@ -1038,7 +1052,7 @@ mod routing {
         let pivot_id = table.pivot();
         let mut bucket = table.find_mut(&addr_id.id());
         if let Some(node) = bucket.iter_mut().find(|node| *node.addr_id() == addr_id) {
-            node.on_msg_received(kind, tx_id, next_response_deadline, next_query_deadline);
+            node.on_msg_received(kind, tx_id, deadlines.next_response, deadlines.next_query);
             return;
         }
 
@@ -1058,10 +1072,10 @@ mod routing {
         if bucket_len < MAX_BUCKET_SIZE {
             bucket.insert(Node::new(
                 addr_id,
-                next_response_deadline,
-                next_query_deadline,
+                deadlines.next_response,
+                deadlines.next_query,
             ));
-            bucket.set_refresh_deadline(refresh_bucket_deadline);
+            bucket.set_refresh_deadline(deadlines.refresh_bucket);
             return;
         }
         assert_eq!(bucket_len, MAX_BUCKET_SIZE);
@@ -1074,10 +1088,10 @@ mod routing {
         if bucket.len() < MAX_BUCKET_SIZE {
             bucket.insert(Node::new(
                 addr_id,
-                next_response_deadline,
-                next_query_deadline,
+                deadlines.next_response,
+                deadlines.next_query,
             ));
-            bucket.set_refresh_deadline(refresh_bucket_deadline);
+            bucket.set_refresh_deadline(deadlines.refresh_bucket);
         }
     }
 
