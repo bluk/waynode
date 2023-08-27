@@ -86,7 +86,7 @@ pub(super) async fn dht_task(
 }
 
 async fn dht_handler(
-    mut socket: UdpSocket,
+    socket: UdpSocket,
     mut node: Node<SocketAddrV4>,
     mut cmd_rx: mpsc::Receiver<Cmd>,
 ) -> io::Result<()> {
@@ -94,7 +94,7 @@ async fn dht_handler(
     let mut write_buf = vec![0; 4096];
 
     loop {
-        send_find_node_queries(&mut node, &mut socket, &mut write_buf, Instant::now()).await?;
+        send_find_node_queries(&mut node, &socket, &mut write_buf, Instant::now()).await?;
 
         let now = Instant::now();
         let timeout_deadline = node.timeout().map_or(
@@ -108,7 +108,7 @@ async fn dht_handler(
 
         tokio::select! {
             res = socket.recv_from(&mut read_buf) => {
-                on_recv(&mut node, &mut socket, &mut read_buf, &mut write_buf, res, Instant::now()).await?;
+                on_recv(&mut node, &socket, &read_buf, &mut write_buf, res, Instant::now()).await?;
             }
             cmd = cmd_rx.recv() => {
                 match cmd {
@@ -125,7 +125,7 @@ async fn dht_handler(
                     }
                 }
             }
-            _ = sleep => {
+            () = sleep => {
                 let now = Instant::now();
                 trace!(?now, "timed out");
                 node.on_timeout(&mut rand::thread_rng());
@@ -142,7 +142,7 @@ async fn dht_handler(
                     // considered them timed out if they match the read event
                 }
 
-                send_pings_to_nodes(&mut node, &mut socket, &mut write_buf, now).await?;
+                send_pings_to_nodes(&mut node, &socket, &mut write_buf, now).await?;
             }
         };
     }
@@ -150,8 +150,8 @@ async fn dht_handler(
 
 async fn on_recv(
     node: &mut Node<SocketAddrV4>,
-    socket: &mut UdpSocket,
-    read_buf: &mut [u8],
+    socket: &UdpSocket,
+    read_buf: &[u8],
     write_buf: &mut [u8],
     recv_from_result: io::Result<(usize, SocketAddr)>,
     now: Instant,
@@ -191,18 +191,14 @@ async fn on_recv(
 }
 
 async fn reply_to_query(
-    node: &mut Node<SocketAddrV4>,
-    socket: &mut UdpSocket,
+    node: &Node<SocketAddrV4>,
+    socket: &UdpSocket,
     addr_opt_id: AddrOptId<SocketAddrV4>,
     msg: &Msg<'_>,
     write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
-    async fn send_to_socket(
-        buf: &[u8],
-        addr: SocketAddrV4,
-        socket: &mut UdpSocket,
-    ) -> io::Result<()> {
+    async fn send_to_socket(buf: &[u8], addr: SocketAddrV4, socket: &UdpSocket) -> io::Result<()> {
         match socket.send_to(buf, addr).await {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -309,7 +305,7 @@ async fn reply_to_query(
 
 async fn send_pings_to_nodes(
     node: &mut Node<SocketAddrV4>,
-    socket: &mut UdpSocket,
+    socket: &UdpSocket,
     mut write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
@@ -370,7 +366,7 @@ async fn send_pings_to_nodes(
 
 async fn send_find_node_queries(
     node: &mut Node<SocketAddrV4>,
-    socket: &mut UdpSocket,
+    socket: &UdpSocket,
     mut write_buf: &mut [u8],
     now: Instant,
 ) -> io::Result<()> {
