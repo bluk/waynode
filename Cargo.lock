@@ -209,8 +209,8 @@ checksum = "8a2dd5a6fe8c6e3502f568a6353e5273bbb15193ad9a89e457b9970798efbea1"
 
 [[package]]
 name = "cloudburst"
-version = "0.0.4-alpha.6"
-source = "git+https://github.com/bluk/cloudburst?branch=next#ba4b37185b5545bcb71553538a1a62c1228af7ef"
+version = "0.0.4-alpha.11"
+source = "git+https://github.com/bluk/cloudburst?branch=next#1ef1d9fe5167ccc2ad5da52c5d504b30710070c3"
 dependencies = [
  "bitvec",
  "bt_bencode",
