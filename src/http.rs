@@ -3,8 +3,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use hyper::{body::Incoming, Request};
+use hyper_util::rt::TokioIo;
 use serde_derive::Serialize;
 use std::{fmt, io, net::SocketAddr, time::Duration};
+use tokio::{net::TcpListener, sync::watch};
+use tower::Service;
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::dht::{self, Cmd};
 
@@ -66,7 +71,7 @@ async fn get_config(cmd_tx: tokio::sync::mpsc::Sender<Cmd>) -> Response {
 pub(super) async fn http_task(
     socket_addr: SocketAddr,
     cmd_tx: tokio::sync::mpsc::Sender<Cmd>,
-    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     completion_tx: tokio::sync::oneshot::Sender<()>,
 ) -> io::Result<()> {
     use axum::{routing::get, Router};
@@ -76,17 +81,69 @@ pub(super) async fn http_task(
         .route(
             "/config",
             get(|| async move { get_config(cmd_tx.clone()).await }),
-        );
+        )
+        .layer((
+            TraceLayer::new_for_http(),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ));
 
-    let result = axum::Server::bind(&socket_addr)
-        .serve(app.into_make_service())
-        .with_graceful_shutdown(async {
-            shutdown_rx.await.unwrap();
-        })
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    let listener = TcpListener::bind(socket_addr).await.unwrap();
+
+    let (close_tx, close_rx) = watch::channel(());
+
+    loop {
+        let (socket, _) = tokio::select! {
+            result = listener.accept() => {
+                result.unwrap()
+            }
+            _ = &mut shutdown_rx => {
+                break;
+            }
+        };
+
+        let service = app.clone();
+
+        let mut close_rx = close_rx.clone();
+
+        tokio::spawn(async move {
+            let socket = TokioIo::new(socket);
+
+            let hyper_service = hyper::service::service_fn(move |request: Request<Incoming>| {
+                service.clone().call(request)
+            });
+
+            let conn = hyper::server::conn::http1::Builder::new()
+                .serve_connection(socket, hyper_service)
+                .with_upgrades();
+
+            let mut conn = std::pin::pin!(conn);
+
+            loop {
+                tokio::select! {
+                    result = conn.as_mut() => {
+                        if let Err(err) = result {
+                            tracing::debug!("http connection failed: {err}");
+                        }
+                        break;
+                    }
+                    _ = close_rx.changed() => {
+                        conn.as_mut().graceful_shutdown();
+                    }
+                }
+            }
+
+            drop(close_rx);
+        });
+    }
+
+    close_tx.send(()).unwrap();
+
+    drop(close_rx);
+    drop(listener);
+
+    close_tx.closed().await;
 
     let _ = completion_tx.send(());
 
-    result
+    Ok(())
 }
