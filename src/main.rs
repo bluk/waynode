@@ -1,4 +1,4 @@
-//! Sloppy is a distributed hash table node.
+//! Waynode is a distributed hash table node.
 
 #![warn(
     rust_2018_idioms,

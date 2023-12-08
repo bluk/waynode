@@ -1,5 +1,4 @@
-//! Sloppy is a library which can help build an application using the [`BitTorrent`][bittorrent]
-//! [Distributed Hash Table][bep_0005].
+//! A [`BitTorrent`][bittorrent] [Distributed Hash Table][bep_0005] node.
 //!
 //! # Features
 //!
@@ -798,7 +797,7 @@ where
     /// To refresh a bucket, find a random node with an `Id` in the bucket's range.
     ///
     /// ```no_run
-    /// # use sloppy::{Node, SupportedAddr, find_node_op::FindNodeOp};
+    /// # use waynode::dht::{Node, SupportedAddr, find_node_op::FindNodeOp};
     /// # use std::{time::{Duration, Instant}, net::SocketAddr};
     /// # use cloudburst::dht::{krpc::CompactAddr, node::AddrOptId};
     /// #

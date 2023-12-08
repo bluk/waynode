@@ -969,33 +969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sloppy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bt_bencode",
- "clap",
- "cloudburst",
- "hex-literal",
- "hyper",
- "hyper-util",
- "libsystemd",
- "rand",
- "serde",
- "serde_bytes",
- "serde_derive",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-journald",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1279,6 +1252,33 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "waynode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bt_bencode",
+ "clap",
+ "cloudburst",
+ "hex-literal",
+ "hyper",
+ "hyper-util",
+ "libsystemd",
+ "rand",
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-journald",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "winapi"

@@ -1,6 +1,6 @@
 [package]
 authors = ["Bryant Luk <code@bryantluk.com>"]
-description = "A sloppy distributed hash table library"
+description = "A distributed hash table node"
 edition = "2021"
 include = [
   "src/**/*.rs",
@@ -10,9 +10,9 @@ include = [
   "LICENSE-MIT",
 ]
 license = "MIT OR Apache-2.0"
-name = "sloppy"
+name = "waynode"
 readme = "README.md"
-repository = "https://github.com/bluk/sloppy"
+repository = "https://github.com/bluk/waynode"
 rust-version = "1.70.0"
 version = "0.1.0"
 

@@ -1,12 +1,12 @@
-# Sloppy
+# Waynode
 
-Sloppy is an application which acts as a node in the BitTorrent distributed hash
+Waynode is an application which acts as a node in the BitTorrent distributed hash
 table (DHT).
 
 ## Run
 
 ```sh
-cargo run
+cargo run --release
 ```
 
 ## License
