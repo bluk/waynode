@@ -216,7 +216,7 @@ async fn reply_to_query(
                 &krpc::ser::RespMsg {
                     r: ping::RespValues::new(&node.config().local_id()),
                     t: Bytes::new(msg.tx_id()),
-                    v: node.config().client_version().map(Bytes::new),
+                    v: node.config().client_version(),
                 },
             )?;
 
@@ -247,7 +247,7 @@ async fn reply_to_query(
                                 None,
                             ),
                             t: Bytes::new(msg.tx_id()),
-                            v: node.config().client_version().map(Bytes::new),
+                            v: node.config().client_version(),
                         },
                     )?;
 
@@ -268,7 +268,7 @@ async fn reply_to_query(
                         core::str::from_utf8(method_name).unwrap_or(""),
                     ),
                     t: Bytes::new(msg.tx_id()),
-                    v: node.config().client_version().map(Bytes::new),
+                    v: node.config().client_version(),
                 },
             )?;
 
@@ -283,7 +283,7 @@ async fn reply_to_query(
                         String::from("method name not listed"),
                     ),
                     t: Bytes::new(msg.tx_id()),
-                    v: node.config().client_version().map(Bytes::new),
+                    v: node.config().client_version(),
                 },
             )?;
         }
@@ -320,7 +320,7 @@ async fn send_pings_to_nodes(
                     a: &query_args,
                     q: ping_method,
                     t: Bytes::new(tx_id.as_ref()),
-                    v: client_version.as_deref().map(Bytes::new),
+                    v: client_version.as_deref(),
                 },
             )?;
 
@@ -378,7 +378,7 @@ async fn send_find_node_queries(
                 a: &find_node::QueryArgs::new(&node.config().local_id(), &target_id),
                 q: Bytes::new(METHOD_FIND_NODE),
                 t: Bytes::new(tx_id.as_ref()),
-                v: node.config().client_version().map(Bytes::new),
+                v: node.config().client_version(),
             },
         )?;
 
