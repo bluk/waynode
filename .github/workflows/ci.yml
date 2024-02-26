@@ -19,7 +19,7 @@ jobs:
           - windows-latest
         rust:
           - stable
-          - 1.70.0
+          - 1.74.0
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout sources
@@ -44,7 +44,7 @@ jobs:
           - windows-latest
         rust:
           - stable
-          - 1.70.0
+          - 1.74.0
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout sources
