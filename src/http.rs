@@ -30,7 +30,7 @@ impl From<dht::Config> for Config {
             version: &'a [u8],
         }
 
-        impl<'a> fmt::Display for ClientVersion<'a> {
+        impl fmt::Display for ClientVersion<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 for b in self.version {
                     write!(f, "{b:02X}")?;
