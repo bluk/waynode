@@ -1,9 +1,9 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use hyper::{body::Incoming, Request};
+use hyper::{Request, body::Incoming};
 use hyper_util::rt::TokioIo;
 use serde_derive::Serialize;
 use std::{fmt, io, net::SocketAddr, time::Duration};
@@ -74,7 +74,7 @@ pub(super) async fn http_task(
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     completion_tx: tokio::sync::oneshot::Sender<()>,
 ) -> io::Result<()> {
-    use axum::{routing::get, Router};
+    use axum::{Router, routing::get};
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))

@@ -32,11 +32,10 @@ use crate::dht::find_node_op::FindNodeOp;
 use anyhow::Context;
 use cloudburst::dht::{
     krpc::{
-        self,
+        self, CompactAddr, CompactAddrV4, ErrorCode, Msg, QueryArgs, RespValues, Ty,
         find_node::{self, METHOD_FIND_NODE},
         ping::{self, METHOD_PING},
         transaction::{self, Transaction, Transactions},
-        CompactAddr, CompactAddrV4, ErrorCode, Msg, QueryArgs, RespValues, Ty,
     },
     node::{self, AddrId, AddrOptId, LocalId},
     routing::{Bucket, Table},
@@ -985,7 +984,7 @@ mod routing {
     use std::time::{Duration, Instant};
 
     use cloudburst::dht::{
-        krpc::{transaction, Ty},
+        krpc::{Ty, transaction},
         node::{self, AddrId},
         routing::{Bucket, Table},
     };

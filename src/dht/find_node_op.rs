@@ -1,5 +1,5 @@
 use cloudburst::dht::{
-    krpc::{find_node::RespValues, transaction, CompactAddr, Msg},
+    krpc::{CompactAddr, Msg, find_node::RespValues, transaction},
     node::{self, AddrId, AddrOptId},
 };
 use std::{
@@ -93,7 +93,7 @@ impl FindNodeOp {
             self.addrs.retain(|potential_addr_opt_id, _| {
                 potential_addr_opt_id
                     .id()
-                    .map_or(true, |id| id.distance(target_id) < max_distance)
+                    .is_none_or(|id| id.distance(target_id) < max_distance)
             });
         }
     }
