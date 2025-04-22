@@ -1,7 +1,7 @@
 [package]
 authors = ["Bryant Luk <code@bryantluk.com>"]
 description = "A distributed hash table node"
-edition = "2021"
+edition = "2024"
 include = [
   "src/**/*.rs",
   "Cargo.toml",
@@ -13,7 +13,7 @@ license = "MIT OR Apache-2.0"
 name = "waynode"
 readme = "README.md"
 repository = "https://github.com/bluk/waynode"
-rust-version = "1.74.0"
+rust-version = "1.85.0"
 version = "0.1.0"
 
 [dependencies]
