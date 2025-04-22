@@ -118,7 +118,7 @@ async fn dht_handler(
             () = sleep => {
                 let now = Instant::now();
                 trace!(?now, "timed out");
-                node.on_timeout(&mut rand::thread_rng());
+                node.on_timeout(&mut rand::rng());
 
                 while let Some(tx) = node.pop_timed_out_tx(now) {
                     let Transaction {
@@ -304,7 +304,7 @@ async fn send_pings_to_nodes(
     let query_args = ping::QueryArgs::new(&local_id);
     let ping_method = Bytes::new(METHOD_PING);
     loop {
-        let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
+        let tx_id = node.next_tx_id(&mut rand::rng())?;
         if let Some(node_to_ping) = node.find_node_to_ping(now) {
             let addr_id = *node_to_ping.addr_id();
             let addr = *addr_id.addr();
@@ -366,7 +366,7 @@ async fn send_find_node_queries(
             CompactAddr::V6(_) => continue,
         };
 
-        let tx_id = node.next_tx_id(&mut rand::thread_rng())?;
+        let tx_id = node.next_tx_id(&mut rand::rng())?;
         debug!(%addr, ?tx_id, %target_id, "sending find node query");
 
         let mut cursor = Cursor::new(write_buf);
@@ -555,16 +555,19 @@ where
     ///
     /// If a random number cannot be generated, an error will be returned.
     #[inline]
-    pub fn next_tx_id<R>(&self, rng: &mut R) -> Result<transaction::Id, rand::Error>
+    pub fn next_tx_id<R>(&self, rng: &mut R) -> io::Result<transaction::Id>
     where
         R: rand::Rng,
     {
         if self.tx_manager.len() == usize::from(u16::MAX) {
             // Outbound transactions are full.
-            return Err(rand::Error::new("all transaction IDs are used"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "all transaction IDs are used",
+            ));
         }
 
-        let mut num: u16 = rng.gen();
+        let mut num: u16 = rng.random();
         loop {
             let tx_id = transaction::Id::from(num);
             if !self.tx_manager.contains(&tx_id) {
@@ -927,11 +930,14 @@ mod tests {
     use cloudburst::dht::krpc::ping::METHOD_PING;
 
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::{
+        convert::Infallible,
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    };
 
-    fn new_config() -> Result<Config, rand::Error> {
+    fn new_config() -> Result<Config, Infallible> {
         Ok(Config {
-            local_id: LocalId::from(node::Id::rand(&mut rand::thread_rng())?),
+            local_id: LocalId::from(node::Id::rand(&mut rand::rng())?),
             client_version: None,
             default_query_timeout: Duration::from_secs(60),
             is_read_only_node: true,
@@ -946,7 +952,7 @@ mod tests {
     }
 
     fn node_id() -> node::Id {
-        node::Id::rand(&mut rand::thread_rng()).unwrap()
+        node::Id::rand(&mut rand::rng()).unwrap()
     }
 
     #[test]
@@ -963,7 +969,7 @@ mod tests {
             std::iter::empty(),
             Instant::now(),
         );
-        let tx_id = node.next_tx_id(&mut rand::thread_rng()).unwrap();
+        let tx_id = node.next_tx_id(&mut rand::rng()).unwrap();
         node.insert_tx(Transaction::new(
             addr_opt_id,
             tx_id,

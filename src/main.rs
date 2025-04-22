@@ -104,7 +104,7 @@ async fn main() -> io::Result<()> {
     tokio::pin!(shutdown);
 
     let socket = UdpSocket::bind(dht_socket).await?;
-    let local_id = Id::rand(&mut rand::thread_rng()).unwrap();
+    let local_id = Id::rand(&mut rand::rng()).unwrap();
     info!(dht_socket = %dht_socket, %local_id, "listening...");
 
     let config = get_config(LocalId::from(local_id));
