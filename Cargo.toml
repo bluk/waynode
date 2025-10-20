@@ -20,7 +20,7 @@ version = "0.1.0"
 anyhow = "1.0"
 axum = "0.8.1"
 bt_bencode = "0.8"
-clap = { version = "4.4.7", features = ["derive", "env"] }
+clap = { version = "4.5.50", features = ["derive", "env"] }
 cloudburst = { git = "https://github.com/bluk/cloudburst", branch = "next" }
 hyper = "1.0.1"
 hyper-util = { version = "0.1.1", features = ["tokio", "server-auto", "http1", "http2"] }
