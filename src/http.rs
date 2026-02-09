@@ -84,7 +84,7 @@ pub(super) async fn http_task(
         )
         .layer((
             TraceLayer::new_for_http(),
-            TimeoutLayer::new(Duration::from_secs(10)),
+            TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(10)),
         ));
 
     let listener = TcpListener::bind(socket_addr).await.unwrap();

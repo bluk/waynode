@@ -42,6 +42,7 @@ use cloudburst::dht::{
 };
 use core::{fmt, time::Duration};
 use find_node_op::OpsManager;
+use rand::RngExt;
 use serde_bytes::Bytes;
 use serde_derive::Serialize;
 use std::{
@@ -560,10 +561,7 @@ where
     {
         if self.tx_manager.len() == usize::from(u16::MAX) {
             // Outbound transactions are full.
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "all transaction IDs are used",
-            ));
+            return Err(io::Error::other("all transaction IDs are used"));
         }
 
         let mut num: u16 = rng.random();
@@ -1356,7 +1354,6 @@ mod routing {
         ///
         /// Once a timeout is reached, call [`Table::find_refreshable_bucket()`] to
         /// find a bucket to refresh.
-        #[must_use]
         fn timeout(&self) -> Option<Instant> {
             self.iter().map(Bucket::timeout).min().copied()
         }

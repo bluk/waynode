@@ -140,10 +140,6 @@ async fn main() -> io::Result<()> {
     drop(dht_cmd_tx);
     http_shutdown_tx.send(()).unwrap();
 
-    dht_handle
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
-    http_handle
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+    dht_handle.await.map_err(io::Error::other)??;
+    http_handle.await.map_err(io::Error::other)?
 }
